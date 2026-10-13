@@ -5,6 +5,8 @@
 ## 事件
 
 
+- 2026-10-14：**zcode-provider 0.1.22 纠正「激活开通」错误承诺，改为如实的 Start Plan 领取指引并全链路发布生产**——用户拍板只做「📖 领取指引」形态（授权登录本身即完成账号绑定，每日额度领取是官方在 ZCode 客户端内的独立一步，插件不该承诺「点击即下发额度」）。根因实证：官方每日 800 万 Start Plan **并非授权登录时自动下发**，而是由 ZCode 桌面客户端内的服务端活动弹窗引导用户**手动领取**（`POST /api/v1/zcode-plan/billing/claim`），该接口强制校验阿里云人机验证头（`X-Aliyun-Captcha-Verify-Param`，`captcha.enabled=true`，sceneId `11xygtvd`）；无头 / 伪造验证头 / 换 token 一律 `400 3007 captcha verify failed`，网页端与插件端均无领取入口。另实测推翻旧结论：`authorize` 层**不做** redirect_uri 白名单（三臂候选均 307 通过），真因是桌面端 deep-link 唤起本地客户端致 CPA 拿不到授权码，故仍应复用官方 CLI 轮询链路。实现（仅 5 个 zcode 文件）：① 卡片未领取态徽标「未激活」→「未领取」、按钮「⚡ 激活开通」→「📖 领取指引」（`data-action="guide"`）；② 新增 `guideModal` 领取指引弹窗（官方领取四步 + 「刷新额度」复查），移除失效的 `activateAccount` 一键下发交互；③ `handleActivatePoll` 与 OAuth 弹窗成功文案统一为「授权登录成功」语义。门禁：面板脚本语法与事件链静态校验通过；`cgo-shim-build.py zcode` build/vet/test 全绿。发布链：`9655225`(fix) → CI run `38439920222` 64/64 success → `d859616`(8 assets) → `2d6d7f8`(registry) → `0cd3060`(prune 0.1.21)；远端 0.1.22 七平台 sha256+size 7/7 ALL PASS、0.1.21 raw URL 已 404；生产 `plugin-store/zcode-provider/install?version=0.1.22` → `restart_required=false`，日志 `plugin hot reloaded active_version=0.1.22 retired_version=0.1.21`，**零容器重启**（容器 Up 4 hours），落盘 `.so` sha256 `d5d10e85…` 与本地 linux_amd64 zip 逐字节一致；`/v0/resource/plugins/zcode-provider/panel` 200 且新文案生效（`领取指引`×7、旧文案 0），accounts 200（3 账号）。版本排序：上一轮 0.1.21 已由并行会话发布完毕（registry/release/assets 三处一致），故本轮直接发 0.1.22，无冲突。
+
 - 2026-10-13：**六插件统一 32768 最低输出底线 + zcode 规格矩阵全扩 + 四插件定时探活改全量按序，并全链路发布生产（六插件各 +1 patch）**——用户四轮诉求递进：① 收口「插件兜底 ReasoningMax 8192 与 traework 20000 口径不一」；② 明确「所有模型最小 max_tokens 都应是 32768，这是底线」；③ 定时探活由「随机取 ≤5 个模型」改为「全量模型按序测试，任一成功即健康、不打 test_failed，仅全败才打标」（qoder 两插件不探活、zcode 需新增）。实现：① 六插件 `model_specs.go` 新增 `minMaxTokensFloor=32768` + `applyMaxTokensFloor` 纯函数，兜底 `ReasoningMax` 8192→32768，`computeAdaptiveMaxTokens` 四出口全部经 floor 收敛，广播层 `models.go` 的 `MaxCompletionTokens` 与 traework `upstream.go` payload 层同步保底；② zcode 规格表 14→64 条（GLM 4.5/4.6/4.7 全系 + Claude/GPT/Gemini/DeepSeek/Qwen），匹配改最长前缀优先 + `vendor/` 前缀剥离；③ workbuddy/workbuddy-ai/traework 新增 `orderedAllWorkbuddyModels`/`orderedAllTraeModels` 返回全量候选按序测试，废除「随机 ≤5 + 30s 整轮预算熔断」，zcode 新增定时探活（30 分钟节流 + 20s 单请求超时 + 全量按序 any-success），抽出 `pingUpstreamOnce` 纯传输内核供面板测试与定时探活复用（避免调度探活污染用量/冷却）。版本：workbuddy 0.15.8 / workbuddy-ai 0.1.14 / qoder-ai 0.1.15 / qoderwork 0.9.35 / traework 0.2.11 / zcode 0.1.21。发布链：`7ec23c0`(feat 52 文件) → `0aaaa65`/`b2b82e7`(assets) → `02e7375`(registry) → `82e437f`(prune 6 个旧版本)；远端六插件各 7/7 artifacts sha256+size ALL PASS；**CI 处置**：六插件并发 dispatch，workbuddy-provider 首个 run 因 `token-usage-tracker` 既有 flaky 测试（`TestFeedImporterLoopSurvivesHandleSwapAndResumes`，本轮未改该目录、本地全绿）失败 → 单插件重跑成功，其余 5 个一次通过；**生产**：六插件 `plugin-store install` 均 `restart_required=false` 且日志确认 `plugin hot reloaded`（active_version 全为目标版本），零容器重启，落盘 `.so` sha256 与本地 release zip 逐字节一致，accounts/panel 全 200。并行会话保护：`scheduler.go`（High-Credit-First 注释）、`zcode/panel.html`、`zcode/management.go` 及 zcode 0.1.22 bump 为其他会话在途改动，按路径限定 `git commit -- <路径>` 只提交本轮文件。门禁：六插件 `cgo-shim-build.py` build/vet/test 全绿；三份 6-review `STYLE: PASS`。
 
 - 2026-10-12：**qoder-ai-provider 0.1.9 / qoderwork-provider 0.9.30 修复「上游 HTTP 200 顶层 code 排队帧未被识别致 qwen3.8 大上下文 60s 挂死」**——用户报「还是不能从 new-api 请求 cpa 的 qwen-3.8-flash、qwen-3.8 模型，但 cpa 本身测试可以」。生产直测复现决定性判据：同一模型名仅 prompt 长度不同行为相反（`hi` 1.47s 成功、67KB 3.49s 成功、112KB **3/3 稳定挂死 60.5s**）；挂死响应体首行即 `data: {"code":"403","message":"{...10605...isQueued:true...retryAfterSeconds:30}"}`，随后 3 条 `: keep-alive`，约 60s 后对端 `INTERNAL_ERROR` 复位（new-api 侧 `client_gone`、`frt=-1000`、`completion_tokens=0`）。根因（数据面解析器侧，上一轮未收敛）：`parseQoderSSEChunk` 只认 `[DONE]`/嵌套 `body`/扁平 `choices`·`id`/`error` 四类形态，顶层 `code` 帧落入兜底 `return "", false` 被 `continue` 跳过 → 读不到终止信号死等 Keep-Alive；面板探活因 prompt 极小不触发排队 + 首字节盲判而显示成功，形成「测试通过、真实不可用」假象（同一错误帧的两条路径）。排队性质经 feed 全量 259 条确认为**请求级 + 时段性**（同账号 ok/bad 混合 `01a003c5` 25:39、成功请求 input 达 289,424、97 条挂死集中 23:36–00:13 两账号交替）。修复：解析器增第 4 类顶层 `code` 形态；`sseErrorFrame` 增顶层 `code`+`message` 识别并新增 `unwrapNestedMessage` 逐层展开（保留首层业务码 10605）；`pumpUpstreamStream`/`collectUpstreamStreamQoder`/`aggregateQoderSSE` 三路径循环内即刻收尾（非流式聚合的物化循环也须退出）；`sendActivePingQoder` 改首帧内容校验。行为统一「立即报错」（`shouldRotateOnUpstreamErr` 对排队帧天然 false，不换号）。门禁：两插件 `cgo-shim-build.py` build/vet/test 全绿；新增 `stream_queue_frame_test.go`（`hangingReader` 模拟 Keep-Alive），**哨兵反证移除识别分支后该用例耗时 10.00s 精确复现挂死**；6-review `STYLE: PASS`；`POLLUTION: PASS`。文档：Bug 主文档 `doc/4-bugs/2026-10-12_001641_Qoder上游200排队帧未被识别致new-api调用qwen3.8挂死根因诊断.md`、测试主文档 `doc/5-tests/2026-10-11_164802_Qoder排队帧识别回归.md`、6-review `doc/6-review/2026-10-11_164802_Qoder排队帧识别修复_6-review.md`；skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules` 规则一新增契约；知识库 `HTTP200不等于流式协议成功-有效终止契约.md` 追加 2026-10-12 补充。
@@ -41,8 +43,6 @@
 
 - 2026-10-07：发布后清理规则固化与 release-assets 瘦身——把「每次发布后清理不需要的垃圾」吸收为项目规则与 skill：新增项目 skill project-cpa-workbuddy-plugin-release-asset-prune-rules（保留集=registry 每插件当前版本目录）+ 通用脚本 scripts/prune-release-assets.py（--dry-run/--apply，受跟踪目录 git rm、空目录 rmdir）；AGENTS.md/CLAUDE.md「仓库与发布」小节新增「发布后清理」条；发布 skill 增 Step 13.5。实操：release-assets 从 3.75 GB（191 版本目录）清理到 0.13 GB（保留 registry 当前 6 个版本目录：workbuddy-provider-0.15.3 / qoderwork-provider-0.9.22 / traework-provider-0.2.2 / workbuddy-ai-provider-0.1.7 / workbuddy-token-usage-0.2.3 / gemini-provider-0.1.1），删 185 个历史版本目录 / 1469 文件，提交 095f4a4 推送 origin/main；远端抽查当前版本 raw 200、旧版本 404。
 
-- 2026-10-07：cursor-provider **0.1.0** 移植与 Token 导入——新增第六个插件 cursor-provider（来源 yobo2u/omsub cursor-plugin，按 workbuddy 面板口径全量移植，落 cursor/，不依赖 CLIProxyAPI SDK），并新增会话 Token 导入账号能力：粘贴 user_<id>::<jwt>（或 URL 编码 / Cookie 前缀 / 裸 JWT）→ 取 :: 后段 JWT → POST https://api2.cursor.sh/oauth/token（grant_type=refresh_token + client_id + refresh_token）兑换 access_token → host.auth.save 落盘 cursor-<hash8>.json（顶层 type=cursor-provider），按 account_id/email 去重；管理面板增 import/export/delete/enable/disable 五路由与卡片删除/启停、全部启停、导入弹窗、导出、双语 i18n、key 三回退；保留 OAuth 轮询登录、executor tool-loop、checkpoint/会话粘性、图片输入、上下文准入。本地 cgo-shim build/vet/test 全绿（含必失败哨兵），面板 node --check 通过，cursor 全量 LF 镜像 gofmt 清零，6-review STYLE: PASS；registry.json 增 cursor-provider 0.1.0（7 平台 artifacts 占位待 CI 回填），待发布。
-
 ## 计数锚点区
 
 > 本区由 `memory-usage-tracking-rules` 收口闸门维护：HISTORY 仅窄读计入，会话启动不读不计；被裁剪事件的锚点随事件一起删除（不保留 retired）；本区计数仅作主题热度弱信号。锚点 key 用事件 `- YYYY-MM-DD：` 后的核心主题短语（约前 12 字符，可前缀匹配）。
@@ -50,6 +50,11 @@
 ```yaml
 version: 1
 anchors:
+- title: 'zcode-provider **0.1.22 纠正「激活开通」'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
 - title: '**六插件统一 32768 最低输出底线'
   usage_count: 0
   usage_days: 0
@@ -129,10 +134,5 @@ anchors:
   usage_count: 1
   usage_days: 1
   last_used_at: 2026-10-09
-  absorbed_to: null
-- title: 'cursor-provider **0.1.0** 移植与 Token 导入'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
   absorbed_to: null
 ```

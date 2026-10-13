@@ -17,7 +17,7 @@
 ## 项目概况
 
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
-  - `zcode-provider`: **0.1.21**（新增定时探活全量模型按序 any-success + max_tokens 32768 底线 + 官方规格矩阵全扩至通用家族；0.1.22 由并行会话在制「Start Plan 领取指引」修复）
+  - `zcode-provider`: **0.1.22**（纠正「激活开通」错误承诺，改为如实的 Start Plan 领取指引；0.1.21 定时探活全量按序 any-success + max_tokens 32768 底线 + 官方规格矩阵全扩）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoderwork-provider`: **0.9.35**（max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00；移除自动探活与 test_failed）
   - `qoder-ai-provider`: **0.1.15**（max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册；签到 10:00/22:00；移除自动探活与 test_failed）
@@ -30,7 +30,22 @@
 
 ## 活动会话进展摘要
 
-- 当前会话（2026-10-13）：**六插件 max_tokens 统一 32768 最低输出底线 + zcode 规格矩阵全扩 + 四插件定时探活改全量按序并全链路发布生产**：
+- 当前会话（2026-10-14）：**zcode-provider 0.1.22：纠正「激活开通」错误承诺，改为如实的 Start Plan 领取指引并全链路发布生产**：
+  - 需求背景：用户拍板只做「📖 领取指引」形态——授权登录本身就已完成账号绑定，每日额度的领取是官方在 ZCode 客户端内的独立一步，插件不该承诺「点击即下发额度」。
+  - 根因实证（推翻上一轮「激活」语义）：官方每日 800 万 Start Plan 并非授权登录时自动下发，而是由 ZCode 桌面客户端内的服务端活动弹窗引导用户**手动领取**（`POST /api/v1/zcode-plan/billing/claim`），该接口强制校验阿里云人机验证头（`X-Aliyun-Captcha-Verify-Param`，`captcha.enabled=true`，sceneId `11xygtvd`）；无头 / 伪造验证头 / 换 token 一律 `400 3007 captcha verify failed`，网页端与插件端均无领取入口。另实测推翻旧结论：`authorize` 层不做 redirect_uri 白名单（三臂候选均 307 通过）。
+  - 实施（v0.1.22，仅 5 个 zcode 文件）：
+    1. 卡片未领取态徽标「未激活」→「未领取」，按钮「⚡ 激活开通」→「📖 领取指引」（`data-action="guide"`）；
+    2. 新增 `guideModal` 领取指引弹窗（官方领取四步 + 「刷新额度」复查），移除失效的 `activateAccount` 一键下发交互；
+    3. `handleActivatePoll` 与 OAuth 弹窗成功文案统一为「授权登录成功」语义，`quotaHTML` 未领取文案同步；
+    4. 面板脚本语法、事件链（action↔handler）静态校验全通过；`python scripts/cgo-shim-build.py zcode` build/vet/test 全绿。
+  - 发布与生产闭环：
+    1. **提交链**：`9655225`(fix 5 文件) → CI run `38439920222` 64/64 success → `d859616`(8 assets) → `2d6d7f8`(registry) → `0cd3060`(prune 0.1.21)；
+    2. **远端验证**：0.1.22 七平台 artifacts sha256+size 7/7 ALL PASS；远端 0.1.22 raw URL 200、0.1.21 已 404；
+    3. **生产热重载**：`plugin-store/zcode-provider/install?version=0.1.22` → `status=installed, restart_required=false`；宿主日志 `plugin hot reloaded active_version=0.1.22 retired_version=0.1.21`，**零容器重启**（容器 Up 4 hours）；落盘 `.so` sha256 `d5d10e85…` 与本地 linux_amd64 zip 逐字节一致；
+    4. **生产验收**：`/v0/resource/plugins/zcode-provider/panel` 200（70,280 字节）且新文案生效（`领取指引`×7、`guideModal`×7、旧文案 `激活开通`/`activateAccount` 均为 0）；accounts 200（3 账号）。
+  - 说明：上一轮 0.1.21 已由并行会话发布完毕（registry/GitHub release/release-assets 三处一致），故本轮直接发 0.1.22，无版本冲突。
+
+- 上一会话（2026-10-13）：**六插件 max_tokens 统一 32768 最低输出底线 + zcode 规格矩阵全扩 + 四插件定时探活改全量按序并全链路发布生产**：
   - 需求背景：① 用户要求收口「六插件兜底 ReasoningMax 8192 与 traework 20000 口径不一」并对齐；② 进一步明确「所有模型最小 max_tokens 都应是 32768，这是底线」；③ 定时探活由「随机取 ≤5 个模型」改为「全量模型按序测试，任一成功即健康、不再打 test_failed，仅全败才打标」，且 qoder 两插件不需要探活、zcode 需新增探活。
   - 架构设计与实现：
     1. **统一最低输出底线**：六插件 `model_specs.go` 新增 `minMaxTokensFloor=32768` 常量与 `applyMaxTokensFloor` 纯函数；兜底 `ReasoningMax` 8192→32768；`computeAdaptiveMaxTokens` 四个出口（未传补足 / 保守放宽 / 超限 clamp / 区间保留）全部经 floor 收敛；广播层 `models.go` 的 `MaxCompletionTokens` 与 traework `upstream.go` payload 层同步保底；
@@ -43,7 +58,7 @@
     3. **远端验证**：六插件各 7/7 artifacts sha256+size ALL PASS，无旧版本残留；
     4. **生产热重载**：六插件 `plugin-store install` 均 `restart_required=false` 且日志确认 `plugin hot reloaded`（active_version 全为目标版本、retired 为上一版），零容器重启；落盘 `.so` sha256 与本地 release zip 逐字节一致；
     5. **生产健康**：六插件 accounts/panel 全 200。
-  - 并行会话保护：`scheduler.go`（High-Credit-First 注释）、`zcode/panel.html`、`zcode/management.go` 及 zcode 0.1.22 bump 均为其他会话在途改动，按「非本轮代理产生的改动默认保护」只提交本轮文件（路径限定 `git commit -- <路径>`）。
+  - 并行会话保护：`scheduler.go`（High-Credit-First 注释）等为其他会话在途改动，按「非本轮代理产生的改动默认保护」只提交本轮文件（路径限定 `git commit -- <路径>`）；`zcode/panel.html`/`management.go` 及 0.1.22 bump 当时属在途，已于 2026-10-14 由本插件会话完成并发布（见上）。
 
 - 上一会话（2026-10-13）：**Qoder 110 日调用上限 24 小时持久化冷却引擎实现、两插件镜像同步与全链路发布生产部署（qoder-ai-provider 0.1.14 / qoderwork-provider 0.9.34）**：
   - 需求背景：Qoder 服务商特殊性——积分余额与每日请求调用次数相互独立，满积分账号仍会因突发/高频调用触发 `110: Billing daily count exceeded`（区别于本仓库其他 provider 的额度模型）。用户明确要求：账号触发 110 后进入 24 小时持久化冷却、排除出路由与换号、仅自然到期解除（成功推理不清除），面板展示剩余时间徽标并支持人工解冷。
@@ -136,29 +151,11 @@
     3. **文档与规范全面更新**：更新 `README.md`、`PROJECT_CURRENT.md`、`PROJECT_MEMORY.md`、`PROJECT_HISTORY.md` 与《九大插件全景架构与演进计划总览》，明确记录 Gemini 插件的废弃与移除历史，更新全景矩阵为 8 大插件体系；
     4. **全量回归验证**：`validate-registry.py` 校验 8 插件通过，全量兄弟插件 `cgo-shim-build.py` 编译与单测全绿。
 
-- 当前会话（2026-10-12）：**ZCode 授权根治为官方 CLI 轮询 OAuth 链路，升级发布并在生产部署热重载 `zcode-provider 0.1.8`**：
-  - 用户反馈与目标：0.1.7 上线后生产实际授权仍失败，浏览器打开 `chat.z.ai/api/oauth/authorize?...` 返回 `{"detail":"Redirect URI not registered for this client"}`；要求继续修复。
-  - 根因实证锁定（推翻上一轮结论）：
-    1. **上游回调白名单**：`chat.z.ai` 对 `client_id=client_P8X5CMWmlaRO9gyO-KSqtg` 执行 redirect_uri 严格白名单，**仅接受服务端注册的 `https://zcode.z.ai/api/v1/oauth/cli/callback/zai`**；桌面端 deep-link（`zcode://oauth/callback`）与 CPA 本地回调（`localhost:1455` / `127.0.0.1:8317`）均被拒绝——上一轮「改用 CPA 本地回调」的方案本身即错误。
-    2. **官方真实链路是 CLI 轮询模式**：逆向 ZCode 3.15.1 `app.asar`（`out/host/index.js` 的 `startOAuthWithPolling` / `pollPendingOAuth`）确认官方走 `POST /api/v1/oauth/cli/init` + `GET /api/v1/oauth/cli/poll/<flow_id>`，并由服务端用已注册回调完成授权，插件只负责轮询取结果。
-  - 实施修复与系统实现（v0.1.8）：
-    1. `handleStartLogin` 改为调用 `POST https://zcode.z.ai/api/v1/oauth/cli/init`（`Authorization: Bearer <随机 32 字节 hex>`），原样透传服务端签发的 `authorize_url`（**不得改写其 `redirect_uri`**），并将 `flow_id` / `poll_token` 存入会话；
-    2. `handlePollLogin` 改为轮询 `GET https://zcode.z.ai/api/v1/oauth/cli/poll/<flow_id>`：`status=pending` 返回 pending 交宿主继续轮询，`status=ready` 时取 `token`（ZCode JWT）+ `zai.access_token` + `user` 落盘，`status=failed` 返回错误；传输类失败保留会话返回 pending 以避免误判；
-    3. 移除本地回调桥接与手工 `redirect_uri` 回传路径，桥接页改为「引导跳转 + 主动查一次结果」。
-  - 契约线上实测验证（`zcode.z.ai`）：
-    - `POST /api/v1/oauth/cli/init` → `{"code":0,"data":{"flow_id":"...","poll_token":"...","authorize_url":"https://chat.z.ai/api/oauth/authorize?client_id=...&redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai&state=...&response_type=code","expires_at":...,"poll_interval_sec":2}}`；
-    - `GET /api/v1/oauth/cli/poll/<flow_id>` → `{"code":0,"data":{"status":"pending"}}`；
-    - `chat.z.ai/api/oauth/authorize?...&redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai` → **HTTP 307 重定向至登录页**（白名单通过，不再报错）。
-  - 验证与门禁全绿：`python scripts/cgo-shim-build.py zcode` build/vet/test 全绿；新增 3 项回归测试（官方注册回调锁定、poll failed 分支、init 失败传播）并经受 `ZCODE_SENTINEL_CLI_FAIL=1` 必失败哨兵反证。
-  - 全链路发布与生产验收：
-    - 提交 `fb24235` 推送 main；CI Run `38155115546` 65/65 jobs 全绿；8 资产 `ALL CHECKSUMS OK`（`4e8a925`）；registry 同步 `9362c3f`；远端 raw 7/7 平台 200 且 sha256 一致；prune 0.1.7（`9171562`）；
-    - 生产 `plugin-store install zcode-provider?version=0.1.8` 热重载生效（`active_version=0.1.8 retired_version=0.1.7`，`restart_required:false`，零容器重启）；落盘 `.so` sha256 `aa82c93a282adb435f329cad399f0064b3a186f4a93dde54ad767ec58f2bb197` 与本地 zip 逐字节一致；
-    - 生产 `GET /v0/management/zcode-provider-auth-url` 实测返回 **`https://chat.z.ai/api/oauth/authorize?client_id=...&redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai&response_type=code&state=...`**，已指向官方注册回调，白名单校验通过。
-  - 知识沉淀：知识库笔记《Z.ai-ZCode-OAuth授权契约-CLI轮询模式》+ 项目记忆条目 `feedback-cpa-oauth-redirect-uri`（已纠正为「上游有白名单时必须复用官方 CLI 轮询链路」）。
-
-- 当前会话（2026-10-11）：**ZCode 插件重构为官方 Z.ai OAuth 授权链路（zcode-provider 0.1.5，后续 0.1.8 根治为官方 CLI 轮询）**：
-  - 用户指出 zcode 授权误抄开源项目要求粘贴 BigModel API Key，应走账号授权；反编译 `D:\zcode\resources\app.asar`（ZCode 3.15.1）锁定官方 OAuth 契约：授权页 `chat.z.ai/auth`、客户端 ID `client_P8X5CMWmlaRO9gyO-KSqtg`、令牌交换 `POST zcode.z.ai/api/v1/oauth/token`；实现 `buildZaiAuthorizeURL` 与双通道回调捕获，`StoredAuth` 扩展 token/access_token/user 字段并保持 `sa.APIKey` 向下兼容；`cgo-shim-build.py zcode` 全绿 + 哨兵反证；发布链 `d92c37b`→assets `24570ac`→registry `ef6523d`→prune `d6f23c2`；生产 `plugin-store install 0.1.5` 热重载生效（`restart_required:false`），落盘 `.so` sha256 `88607b6b…` 与本地一致，accounts/panel 200。
-  - **2026-10-11 后续根治（0.1.8）**：实测 `chat.z.ai` 对 client_id 执行 redirect_uri 严格白名单，仅接受服务端注册的 `https://zcode.z.ai/api/v1/oauth/cli/callback/zai`，桌面 deep-link 与本地回调均被拒；逆向 `app.asar` 的 `startOAuthWithPolling` 确认官方为 CLI 轮询模式（`POST /api/v1/oauth/cli/init` + `GET /api/v1/oauth/cli/poll/<flow_id>`）。`handleStartLogin` 改为透传服务端签发的 `authorize_url`（不改写 redirect_uri），`handlePollLogin` 改为轮询取结果；发布链 `fb24235`→`4e8a925`→`9362c3f`→`9171562`；生产 0.1.8 热重载、落盘 sha256 `aa82c93a…` 一致。知识沉淀：知识库《Z.ai-ZCode-OAuth授权契约-CLI轮询模式》+ 项目记忆 `feedback-cpa-oauth-redirect-uri`。
+- 当前会话（2026-10-11 至 10-12）：**ZCode 授权从误抄 API Key 重构为账号授权，再根治为官方 CLI 轮询 OAuth 链路（0.1.5 → 0.1.8）**：
+  - 0.1.5：反编译 `D:\zcode\resources\app.asar`（ZCode 3.15.1）锁定官方 OAuth 契约（授权页 `chat.z.ai/auth`、客户端 ID `client_P8X5CMWmlaRO9gyO-KSqtg`）；`StoredAuth` 扩展 token/access_token/user 并保持 `sa.APIKey` 向下兼容；发布链 `d92c37b`→`24570ac`→`ef6523d`→`d6f23c2`，生产热重载生效。
+  - 0.1.8：改用官方 CLI 轮询链路（`POST /api/v1/oauth/cli/init` + `GET /api/v1/oauth/cli/poll/<flow_id>`），`handleStartLogin` 原样透传服务端签发的 `authorize_url`（不改写 `redirect_uri`），`handlePollLogin` 轮询取结果，移除本地回调桥接；发布链 `fb24235`→`4e8a925`→`9362c3f`→`9171562`，生产 0.1.8 热重载、落盘 sha256 `aa82c93a…` 一致。
+  - 知识沉淀：知识库《Z.ai-ZCode-OAuth授权契约-CLI轮询模式》+ 项目记忆 `feedback-cpa-oauth-redirect-uri`。
+  - **2026-10-14 更正**：当时记的「`chat.z.ai` 对 `client_id` 执行 redirect_uri 严格白名单」经三臂实测推翻——`authorize` 层三个候选 `redirect_uri` 均 307 通过，白名单不在该层；真因是桌面端 deep-link 会唤起本地客户端、CPA 拿不到授权码，故仍应复用官方 CLI 轮询链路（结论不变，因果已修正）。
 
 - 当前会话（2026-10-11）：**Qoder 403 首包假成功与全链路流式诊断，完成生产 Docker Nginx proxy_buffering off 重载验证**：
   - 根因（实测铁证）：① 阿里 Qoder 上游对 `qfmodel`/`qmodel_38max` 在 HTTP 200 下返回 `data: {"code":"403",...10605...isQueued:true...}` 业务报错，且返回后连接不关闭、持续 `: keep-alive` 僵死 60s 后上游 `INTERNAL_ERROR`；② CPA 面板探活仅盲读前 512 字节不校验内容即判成功（219ms 假成功）；③ Token 用量插件 TTFT 334ms 恰为错误帧到达时间，实为 `failed:true`/`latency_ms:60100`/`total_tokens:0`；④ New-API 渠道测试按钮强制 `stream:false` 不能用于流式验证。运维闭环：生产 `docker exec nginx nginx -t` PASS + `nginx -s reload` 平滑重载（已含 `proxy_buffering off; proxy_cache off;`），外网 `api.luode.vip/v1` 实测 1.35s 端到端流式；经验固化到项目 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`（首包业务报错帧白名单校验 + 全链路流式不缓冲配置与推理延迟判读规范）。
@@ -199,9 +196,9 @@
 <!-- BEGIN TASK PLAN PROJECTION -->
 ```json
 {
-  "version": 4,
+  "version": 5,
   "registry_schema": "task_plan_projection_registry",
-  "registry_updated_at": "2026-10-10T17:18:39.284727Z",
+  "registry_updated_at": "2026-10-13T18:09:27.704934Z",
   "projections": [
     {
       "projection_id": "SESSION/30608b3616fa2311bfb720a2776c09ac96b2738601ec3752b03a252c810cdb70",
@@ -397,8 +394,52 @@
           "status": "completed"
         }
       ]
+    },
+    {
+      "projection_id": "SESSION/7226fa6af0bcd53d1de3ea0168019a75d3e69d438a2e508583aa50b16c3a005e",
+      "session_id": "4a50f1f2-f554-4fcd-bb84-216778147dd2",
+      "projection_origin": "synthesized",
+      "synthesis_mode": "exact",
+      "state": "inactive",
+      "plan_key": "RELEASE-ZCODE-CLAIM-GUIDE-0.1.22",
+      "source_document": "zcode/CHANGELOG.md",
+      "plan_fingerprint": "7d0ab4c92600e8679dcb8ddfa5a628622ec80d2cc8a5e54f2ba1b61c543edec3",
+      "updated_at": "2026-10-13T18:09:27.704552Z",
+      "steps": [
+        {
+          "id": "TASK-001",
+          "step": "[TASK-001] 提交 zcode 0.1.22 领取指引改动（仅 5 个 zcode 文件）",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-002",
+          "step": "[TASK-002] 推送 main 并派发 zcode-provider 0.1.22 CI 构建",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-003",
+          "step": "[TASK-003] 轮询 CI 运行并下载 8 个发布资产",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-004",
+          "step": "[TASK-004] 提交发布资产并运行 registry 发布脚本",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-005",
+          "step": "[TASK-005] 提交 registry.json 并验证远端 raw URL 可达",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-006",
+          "step": "[TASK-006] 生产环境 plugin-store 热重载安装并验收",
+          "status": "completed"
+        }
+      ]
     }
-  ]
+  ],
+  "quarantined_projections": []
 }
 ```
 <!-- END TASK PLAN PROJECTION -->
