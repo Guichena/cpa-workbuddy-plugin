@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -21,8 +22,25 @@ var defaultModels = []string{
 }
 
 var (
+	// modelHTTPClient 用于模型列表、令牌换取、额度查询等元数据短请求，15 秒整体超时即快速失败边界。
 	modelHTTPClient = &http.Client{Timeout: 15 * time.Second}
-	modelCache      struct {
+
+	// inferenceHTTPClient 专用于推理请求（流式 / 非流式 / 探活）：不设整体超时，避免长思考输出在读响应体时被掐断；建连挂死改由按操作的 deadline 兜底。
+	inferenceHTTPClient = &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        20,
+			IdleConnTimeout:     90 * time.Second,
+			MaxIdleConnsPerHost: 5,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 90 * time.Second,
+		},
+	}
+
+	modelCache struct {
 		sync.RWMutex
 		byKey     map[string][]string
 		expiresAt map[string]time.Time

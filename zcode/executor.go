@@ -105,6 +105,9 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 }
 
 // handleExecStream 处理流式请求。
+// [参数] raw: 宿主传入的流式执行请求 JSON。
+// [返回] 成功返回含响应头与流标识的信封 JSON；序列化失败返回 error。
+// 最近修改时间：2026-10-14 02:30:00 上游请求改用无整体超时的推理客户端，避免长思考流被掐断
 func handleExecStream(raw []byte) ([]byte, error) {
 	var req executorStreamRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
@@ -136,7 +139,7 @@ func handleExecStream(raw []byte) ([]byte, error) {
 			break
 		}
 
-		resp, err := modelHTTPClient.Do(httpReq)
+		resp, err := inferenceHTTPClient.Do(httpReq)
 		if err != nil {
 			cancel()
 			lastStreamErr = err
@@ -273,6 +276,10 @@ func prepareUpstreamRequest(ctx context.Context, payload []byte, sa *StoredAuth,
 	return httpReq, nil
 }
 
+// executeOnce 向上游发起一次非流式推理请求并读取完整响应体。
+// [参数] payload: 已改写的请求体；sa: 目标账号凭据；cfg: 当前插件配置。
+// [返回] 响应体字节、HTTP 状态码与错误；状态码非 2xx 时错误携带上游响应体。
+// 最近修改时间：2026-10-14 02:30:00 上游请求改用无整体超时的推理客户端，避免长思考输出被掐断
 func executeOnce(payload []byte, sa *StoredAuth, cfg Config) ([]byte, int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -282,7 +289,7 @@ func executeOnce(payload []byte, sa *StoredAuth, cfg Config) ([]byte, int, error
 		return nil, 0, err
 	}
 
-	resp, err := modelHTTPClient.Do(httpReq)
+	resp, err := inferenceHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, 0, err
 	}

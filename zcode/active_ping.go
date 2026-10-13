@@ -134,7 +134,7 @@ func handleTestActive(body []byte) ([]byte, error) {
 // pingUpstreamOnce 向上游发起一次流式首包即停探活，仅返回纯传输结果，不写入任何账号状态。
 // [参数] sa: ZCode 账号凭据；model: 待测试模型名称（展示名）。
 // [返回] ok 表示收到有效首包；statusCode 为 HTTP 状态码；errMsg 为失败原因；latencyMS 为耗时毫秒；ttftNS 为首包时延纳秒。
-// 最近修改时间：2026-10-13 23:00:00 从 handleTestActiveWithAuth 抽出纯传输内核，供手动与定时探活共用
+// 最近修改时间：2026-10-14 02:30:00 上游请求改用无整体超时的推理客户端
 func pingUpstreamOnce(sa *StoredAuth, model string) (ok bool, statusCode int, errMsg string, latencyMS int64, ttftNS uint64) {
 	cfg := currentConfig()
 
@@ -170,9 +170,9 @@ func pingUpstreamOnce(sa *StoredAuth, model string) (ok bool, statusCode int, er
 	fp.ApplyRequest(httpReq.Header, target.Credential, mimic.UUID4())
 	applyTargetAuth(httpReq.Header, target)
 
-	// 3. 发起请求并在收到首个数据块后立即异步关闭流，避免等待整段思考链完成
+	// 3. 用推理客户端发起请求，收到首个数据块后立即异步关闭流，避免等待整段思考链完成
 	start := time.Now()
-	resp, err := modelHTTPClient.Do(httpReq)
+	resp, err := inferenceHTTPClient.Do(httpReq)
 	if err != nil {
 		cancel()
 		return false, 0, err.Error(), time.Since(start).Milliseconds(), 0
