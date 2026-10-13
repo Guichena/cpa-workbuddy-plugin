@@ -287,7 +287,7 @@
       "name": "WorkBuddy AI",
       "description": "Tencent CodeBuddy International (WorkBuddy AI) OAuth provider for CLIProxyAPI: dedicated workbuddy.ai endpoint, clean prefix workbuddyai-, built-in QR login modal in plugin panel, dynamic models, Pro 14-day trial (+250 credits), 4h token keepalive and 10m watchdog.",
       "author": "luode0320",
-      "version": "0.1.14",
+      "version": "0.1.15",
       "repository": "https://github.com/luode0320/cpa-workbuddy-plugin",
       "logo": "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png",
       "homepage": "https://github.com/luode0320/cpa-workbuddy-plugin/tree/main/workbuddy-ai",
@@ -305,51 +305,51 @@
           {
             "goos": "darwin",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.14/workbuddy-ai-provider_0.1.14_darwin_amd64.zip",
-            "sha256": "ca4c61790a533a876a2f58247a2efa833222953e8e9cf14747871786d28f84be",
-            "size": 3066287
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_darwin_amd64.zip",
+            "sha256": "eca1aeac4b131410c3befe5e724d141eaf5cc5eaff86685f8be3c7e139ea5f29",
+            "size": 3066312
           },
           {
             "goos": "darwin",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.14/workbuddy-ai-provider_0.1.14_darwin_arm64.zip",
-            "sha256": "d7e25354f8410aaae93a825046f20df1f2c8f61e4c1aea982ae45b769feb9b79",
-            "size": 2830171
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_darwin_arm64.zip",
+            "sha256": "2978e99db1b26a44d1ff3956e8c5952c19c4c09998647bac6e5523b83fee86b4",
+            "size": 2830189
           },
           {
             "goos": "freebsd",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.14/workbuddy-ai-provider_0.1.14_freebsd_amd64.zip",
-            "sha256": "2813b6cca0199463d862a7fb1a536c66ac34258053a59cf1d29edb5a92bfffc8",
-            "size": 3146848
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_freebsd_amd64.zip",
+            "sha256": "4e72a2bbc8fc0385b0fb28cb270269cb2265429035619a90ae43709306fb5ac1",
+            "size": 3146864
           },
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.14/workbuddy-ai-provider_0.1.14_linux_amd64.zip",
-            "sha256": "c65d1a99bf4bf2d7ea277f2db57d6c1d78bd25c3ba5b395c45ebe44dfea08658",
-            "size": 3226273
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_linux_amd64.zip",
+            "sha256": "11ad8ea78fb5b6c16b6498cee6608e9840efabcaf525e6c3067b02e0746355eb",
+            "size": 3226253
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.14/workbuddy-ai-provider_0.1.14_linux_arm64.zip",
-            "sha256": "bdda60de28fc9cd0a6e7ba18a3f88852721eee7875632ae54321257fae3da4b3",
-            "size": 2929922
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_linux_arm64.zip",
+            "sha256": "d7cf3dcc6ec48f49fcdb2a524b48e02cd549bd24a9a1e68c20316cf26d58a431",
+            "size": 2929921
           },
           {
             "goos": "windows",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.14/workbuddy-ai-provider_0.1.14_windows_amd64.zip",
-            "sha256": "591789c162918a05344e8a32e58ccbed9fe1a54a45ac9cf5399108456fcd08c6",
-            "size": 3151430
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_windows_amd64.zip",
+            "sha256": "3262108151347d71c9a174b5e15485b5bf43f708d349e43aa97e7b6a205fa578",
+            "size": 3151469
           },
           {
             "goos": "windows",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.14/workbuddy-ai-provider_0.1.14_windows_arm64.zip",
-            "sha256": "46342c267006ec8bc66b1b9deab880d2301d6ded5d34cc077cdd2367e0337d5b",
-            "size": 2917775
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_windows_arm64.zip",
+            "sha256": "7995bdb77911b4567787e8ffcf1a3d2a9d9fe48682c783f35595c6261c9c0908",
+            "size": 2917782
           }
         ]
       }
