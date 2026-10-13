@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -300,6 +301,19 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 				"label":      f.Label,
 				"disabled":   f.Disabled,
 				"selected":   getActiveAuthID() == f.ID,
+			}
+			if isAccountDailyCooling(f.ID) {
+				acct["daily_cooling"] = true
+				until := getAccountDailyCoolingUntil(f.ID)
+				acct["daily_cooling_until"] = until.Unix()
+				remain := time.Until(until)
+				if remain > 0 {
+					h := int(remain.Hours())
+					m := int(remain.Minutes()) % 60
+					acct["daily_cooling_remain"] = fmt.Sprintf("%02d:%02d", h, m)
+				}
+			} else {
+				acct["daily_cooling"] = false
 			}
 			if err != nil {
 				acct["error"] = err.Error()

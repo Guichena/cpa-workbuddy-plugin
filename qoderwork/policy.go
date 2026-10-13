@@ -117,6 +117,20 @@ func isCreditsLowOrExhausted(cr *creditsSummary) bool {
 	return cr.TotalRemain < loadedMinRoutableCredits()
 }
 
+// isDailyCountExceeded 判定上游是否返回 Qoder 专属的 110 日请求次数上限限制。
+// [参数] status: HTTP 响应状态码；body: 错误响应体文本。
+// [返回] 命中 110 限额错误时返回 true。
+// 最近修改时间 2026-10-13（新增 Qoder 日调用上限专用判定）
+func isDailyCountExceeded(status int, body string) bool {
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "billing daily count exceeded") ||
+		strings.Contains(lower, "daily count exceeded") ||
+		strings.Contains(body, `"110"`) ||
+		strings.Contains(body, `code: 110`) ||
+		strings.Contains(body, `code: "110"`) ||
+		strings.Contains(body, `110:`)
+}
+
 // isHardCreditError reports business "out of credits" style failures.
 // 402 is treated as payment/credit. Pure 429 is not hard unless body has credit markers.
 func isHardCreditError(status int, body string) bool {

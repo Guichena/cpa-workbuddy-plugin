@@ -194,6 +194,8 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleDeleteAuth(req)))
 	case req.Method == http.MethodPost && path == base+"/test-active":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleTestActive(req)))
+	case req.Method == http.MethodPost && path == base+"/clear-cooldown":
+		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleClearCooldown(req)))
 	case req.Method == http.MethodGet && path == base+"/models":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleModelsQuery(req)))
 	}
@@ -358,3 +360,32 @@ func mgmtHTMLResponse(body []byte) pluginapi.ManagementResponse {
 var (
 	checkinLocks sync.Map // auth_index -> *sync.Mutex
 )
+
+// handleClearCooldown 处理面板或管理调用，手动解除指定账号的每日 24h 冷却状态。
+// [参数] req: 宿主管理请求，body 包含 auth_index。
+// [返回] 成功返回 {"ok":true,"message":"每日冷却已解除"}，失败返回错误 map。
+func handleClearCooldown(req pluginapi.ManagementRequest) map[string]any {
+	var body struct {
+		AuthIndex string `json:"auth_index"`
+	}
+	_ = json.Unmarshal(req.Body, &body)
+	authIndex := strings.TrimSpace(body.AuthIndex)
+	if authIndex == "" {
+		return map[string]any{"error": "auth_index is required"}
+	}
+	sa, err := hostAuthGet(authIndex)
+	if err != nil {
+		return map[string]any{"error": "get auth: " + err.Error()}
+	}
+	authID := ""
+	if sa != nil {
+		authID = sa.Account.UID
+	}
+	if err := clearDailyCooldown(authIndex, authID); err != nil {
+		return map[string]any{"error": "clear cooldown: " + err.Error()}
+	}
+	return map[string]any{
+		"ok":      true,
+		"message": "每日冷却已成功解除",
+	}
+}

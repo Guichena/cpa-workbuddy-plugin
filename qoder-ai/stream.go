@@ -231,6 +231,9 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			errPayload := readAllUpstreamErr(newHostStreamReader(stream))
 			stream.Close()
 			publishUsage(requestedModel, upstreamModel, curAuthUID, started, usage.Detail{}, true, statusCode, errPayload, "", 0, curAccountLabel, sessionKey)
+			if isDailyCountExceeded(statusCode, errPayload) {
+				_ = triggerDailyCooldown("", curAuthID)
+			}
 			if curAuthUID != "" {
 				go reconcileByUID(curAuthUID, statusCode, errPayload)
 			}
@@ -325,6 +328,9 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			// SSE error frame on HTTP 200: the current account must enter
 			// failover cooldown. Remap to 403 so isAccountFailure classifies
 			// it as account-level and the account gets its 15s cooldown.
+			if isDailyCountExceeded(statusCode, sseErr) {
+				_ = triggerDailyCooldown("", curAuthID)
+			}
 			noteAccountFailure(curAuthID, http.StatusForbidden, sseErr)
 			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, statusCode, sseErr, "", collector.ttftNS(started), curAccountLabel, sessionKey)
 			// 200 内业务错误帧与 HTTP 4xx 同责：零泄漏（emitted=false）且账号级
@@ -431,6 +437,9 @@ func collectUpstreamStreamQoder(encodedBody string, sa *storedAuth, modelKey str
 			currentID := strings.TrimSpace(curSA.Auth.AccessToken)
 			if currentID == "" {
 				currentID = strings.TrimSpace(curSA.Account.UID)
+			}
+			if isDailyCountExceeded(statusCode, errResp.Error()) {
+				_ = triggerDailyCooldown("", currentID)
 			}
 			evictSessionBindingsForAuth(currentID)
 			_, nextSA, hasNext := pickNextAuth(currentID)

@@ -4,6 +4,7 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -25,8 +26,11 @@ type wbAccount struct {
 	Disabled   bool            `json:"disabled"`
 	Exhausted  bool            `json:"exhausted"`
 	LowCredits bool            `json:"low_credits"` // 剩余额度低于安全红线(min_routable_credits)
-	Selected   bool            `json:"selected"`    // panel active routing card
-	Credits   *creditsSummary `json:"credits,omitempty"`
+	Selected           bool            `json:"selected"`    // panel active routing card
+	DailyCooling       bool            `json:"daily_cooling"`
+	DailyCoolingUntil  int64           `json:"daily_cooling_until,omitempty"`
+	DailyCoolingRemain string          `json:"daily_cooling_remain,omitempty"`
+	Credits           *creditsSummary `json:"credits,omitempty"`
 	Checkin   *checkinSummary `json:"checkin,omitempty"`
 	Error     string          `json:"error,omitempty"`
 	// CPA-side cumulative counters (auth-file level, persisted by the host).
@@ -195,6 +199,21 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 	// Mark selected account in list for UI.
 	for i := range out {
 		out[i].Selected = out[i].AuthID == activeID
+		if isAccountDailyCooling(out[i].AuthID) {
+			out[i].DailyCooling = true
+			until := getAccountDailyCoolingUntil(out[i].AuthID)
+			out[i].DailyCoolingUntil = until.Unix()
+			rem := time.Until(until)
+			if rem > 0 {
+				hrs := int(rem.Hours())
+				mins := int(rem.Minutes()) % 60
+				if hrs > 0 {
+					out[i].DailyCoolingRemain = fmt.Sprintf("剩%d小时%d分", hrs, mins)
+				} else {
+					out[i].DailyCoolingRemain = fmt.Sprintf("剩%d分", mins)
+				}
+			}
+		}
 		// Failover state is in-memory only; surface it so the panel can show
 		// consecutive failures + cooldown.
 		if count, until, ok := failoverStateSnapshot(out[i].AuthID); ok && count > 0 {

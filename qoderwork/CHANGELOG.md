@@ -1,5 +1,17 @@
 # QoderWork Plugin Changelog
 
+## 0.9.34
+
+### Feat - 上游 110 日调用上限 24 小时持久化冷却、路由排除与面板解冷
+
+- 变更要点:
+  1. 110 精准识别：`policy.go` 新增 `isDailyCountExceeded`，覆盖 `110: Billing daily count exceeded` 及 JSON `code: 110` 多种形态，避免误伤正常业务帧。
+  2. 持久化冷却引擎：新增 `daily_cooldown.go`，将 `daily_cooling_until`（RFC3339，24 小时）落盘物理 auth 文件，进程重启与热重载均不丢失；内存镜像 `dailyCoolingMap` 支持归一化键检索。
+  3. 路由与换号绝对排除：`isAccountCoolingDown` 首位接入每日冷却判定，联动 `scheduler.pick` / `pickNextAuth` / 会话粘性；`resetAccountFailover` 严格保留冷却，仅到期自然解除。
+  4. 全链路触发：`stream.go`（HTTP 4xx、SSE 200 业务错误帧、Qoder SSE 收集）与 `main.go` 换号重试/终态错误均触发 `triggerDailyCooldown`；`watchdog.go` 定时从磁盘重建内存镜像。
+  5. 面板徽章与手动解除：新增 `POST /clear-cooldown` 接口（`handleClearCooldown`），`buildDashboardEx` 与 `/credits` 输出 `daily_cooling_until` / `daily_cooling_remain`；前端新增「冷却」筛选标签、`110冷却(HH:MM)` 徽标与带二次确认的「解冷」按钮。
+  6. 门禁验证：新增 `daily_cooldown_test.go`、`daily_cooling_routing_test.go`，`cgo-shim-build.py qoderwork` 全绿。
+
 ## 0.9.33
 
 ### Feat & Fix - 设立安全缓冲额度红线 (minRoutableCredits=20)、健康平摊调度与换号过滤

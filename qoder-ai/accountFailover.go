@@ -96,6 +96,9 @@ func isAccountFailure(status int, body string) bool {
 	if status == 0 || status >= 500 {
 		return true
 	}
+	if isDailyCountExceeded(status, body) {
+		return true
+	}
 	if isSoftRateLimit(status, body) || isHardCreditError(status, body) {
 		return true
 	}
@@ -238,7 +241,11 @@ func recordAccountFailure(authID string, status int, body string) bool {
 // isAccountCoolingDown reports whether the account is currently inside its
 // cooldown window and should be skipped by routing.
 // It supports both exact key match and normalized-key alias resolution.
+// It also checks 24-hour daily limit cooling via isAccountDailyCooling.
 func isAccountCoolingDown(authID string) bool {
+	if isAccountDailyCooling(authID) {
+		return true
+	}
 	if !failoverActive() {
 		return false
 	}

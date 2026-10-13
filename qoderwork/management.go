@@ -131,6 +131,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/claim-pro", Description: "Claim one-time Pro upgrade pack for one account (auth_index)."},
 			{Method: http.MethodGet, Path: base + "/keepalive/status", Description: "Last keepalive run summary + config."},
 			{Method: http.MethodPost, Path: base + "/delete", Description: "Delete one QoderWork account and its physical auth file (body: {auth_index})."},
+			{Method: http.MethodPost, Path: base + "/clear-cooldown", Description: "Manually clear 24h daily cooling limit for an account (body: {auth_index})."},
 			{Method: http.MethodPost, Path: base + "/test-active", Description: "Run one manual active inference test for an account (body: {auth_index, model?})."},
 			{Method: http.MethodGet, Path: base + "/models", Description: "List the models available to one account for the panel test picker (query: auth_index)."},
 		},
@@ -192,12 +193,39 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleKeepaliveStatus()))
 	case req.Method == http.MethodPost && path == base+"/delete":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleDeleteAuth(req)))
+	case req.Method == http.MethodPost && path == base+"/clear-cooldown":
+		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleClearCooldown(req)))
 	case req.Method == http.MethodPost && path == base+"/test-active":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleTestActive(req)))
 	case req.Method == http.MethodGet && path == base+"/models":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleModelsQuery(req)))
 	}
 	return okEnvelope(mgmtJSONResponse(http.StatusNotFound, map[string]any{"error": "not found: " + path}))
+}
+
+// handleClearCooldown 手动解除指定账号的 24 小时每日调用上限冷却状态。
+// [参数] req: 管理接口请求体，含 auth_index 或 auth_id。
+// [返回] 解除成功状态或错误信息。
+func handleClearCooldown(req pluginapi.ManagementRequest) map[string]any {
+	var body struct {
+		AuthIndex string `json:"auth_index"`
+		AuthID    string `json:"auth_id"`
+	}
+	_ = json.Unmarshal(req.Body, &body)
+	authIndex := strings.TrimSpace(body.AuthIndex)
+	authID := strings.TrimSpace(body.AuthID)
+	if authIndex == "" && authID == "" {
+		return map[string]any{"error": "auth_index or auth_id is required"}
+	}
+	if err := clearDailyCooldown(authIndex, authID); err != nil {
+		return map[string]any{"error": "clear cooling failed: " + err.Error(), "auth_index": authIndex}
+	}
+	return map[string]any{
+		"ok":         true,
+		"auth_index": authIndex,
+		"auth_id":    authID,
+		"message":    "daily cooling cleared successfully",
+	}
 }
 
 // handleRefreshAsync enqueues a full-fleet refresh through the throttled

@@ -344,7 +344,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.1.12"
+var version = "0.1.13"
 
 func wbRegistration() registration {
 	return registration{
@@ -780,12 +780,15 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 		// shouldRotateOnUpstreamErr classifies the body via the account
 		// failure markers. （同步自 workbuddy 200 错误帧换号）
 		statusCode := parseUpstreamStatusFromErr(completionErr)
-		if !shouldRotateOnUpstreamErr(statusCode, completionErr.Error()) || attempt >= budget || curSA == nil {
-			break
-		}
 		currentID := strings.TrimSpace(curSA.Auth.AccessToken)
 		if currentID == "" {
 			currentID = strings.TrimSpace(curSA.Account.UID)
+		}
+		if isDailyCountExceeded(statusCode, completionErr.Error()) {
+			_ = triggerDailyCooldown("", currentID)
+		}
+		if !shouldRotateOnUpstreamErr(statusCode, completionErr.Error()) || attempt >= budget || curSA == nil {
+			break
 		}
 		evictSessionBindingsForAuth(currentID)
 		_, nextSA, hasNext := pickNextAuth(currentID)
@@ -807,6 +810,9 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, parseUpstreamStatusFromErr(completionErr), completionErr.Error(), "", 0, accountLabel, sessionKey)
 		reconcileAfterExecutorError(usedAuthID, parseUpstreamStatusFromErr(completionErr), completionErr.Error())
 		statusCode := parseUpstreamStatusFromErr(completionErr)
+		if isDailyCountExceeded(statusCode, completionErr.Error()) {
+			_ = triggerDailyCooldown("", usedAuthID)
+		}
 		if statusCode == 0 {
 			noteAccountFailure(usedAuthID, 0, completionErr.Error())
 		} else if statusCode == 200 {

@@ -93,6 +93,9 @@ func failoverCooldownFor(count int) time.Duration {
 // method not available for THIS account) all count. Business 4xx (400) is
 // excluded: it reflects the request, not the account.
 func isAccountFailure(status int, body string) bool {
+	if isDailyCountExceeded(status, body) {
+		return true
+	}
 	if status == 0 || status >= 500 {
 		return true
 	}
@@ -239,6 +242,9 @@ func recordAccountFailure(authID string, status int, body string) bool {
 // cooldown window and should be skipped by routing.
 // It supports both exact key match and normalized-key alias resolution.
 func isAccountCoolingDown(authID string) bool {
+	if isAccountDailyCooling(authID) {
+		return true
+	}
 	if !failoverActive() {
 		return false
 	}

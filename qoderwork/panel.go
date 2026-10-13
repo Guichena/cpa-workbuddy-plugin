@@ -4,6 +4,7 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,10 @@ type wbAccount struct {
 	FailCount int   `json:"fail_count,omitempty"`
 	Cooling   bool  `json:"cooling,omitempty"`
 	CoolUntil int64 `json:"cool_until,omitempty"` // cooldown deadline (unix secs); 0 = not cooling
+	// 24 小时每日调用上限持久化冷却状态
+	DailyCooling       bool   `json:"daily_cooling,omitempty"`
+	DailyCoolingUntil  int64  `json:"daily_cooling_until,omitempty"`
+	DailyCoolingRemain string `json:"daily_cooling_remain,omitempty"`
 }
 
 // credits/checkin/plan fields are left empty — the panel renders skeletons
@@ -202,6 +207,17 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 			if until.After(time.Now()) {
 				out[i].Cooling = true
 				out[i].CoolUntil = until.Unix()
+			}
+		}
+		if isAccountDailyCooling(out[i].AuthID) {
+			out[i].DailyCooling = true
+			until := getAccountDailyCoolingUntil(out[i].AuthID)
+			out[i].DailyCoolingUntil = until.Unix()
+			remain := time.Until(until)
+			if remain > 0 {
+				h := int(remain.Hours())
+				m := int(remain.Minutes()) % 60
+				out[i].DailyCoolingRemain = fmt.Sprintf("%02d:%02d", h, m)
 			}
 		}
 	}

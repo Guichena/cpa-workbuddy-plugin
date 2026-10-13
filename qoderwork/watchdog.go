@@ -75,8 +75,10 @@ func waitHostReadyForWatchdog(maxWait time.Duration, ready func() bool) bool {
 }
 
 // runWatchdogTick walks every qoderwork auth and hands the whole fleet to the
-// throttled concurrent refresh runner.
+// throttled concurrent refresh runner. Rebuilds the daily cooling mirror on
+// the same cadence.
 func runWatchdogTick() {
+	refreshDailyCoolingSetFromDisk()
 	files, err := hostAuthList()
 	if err != nil {
 		return
