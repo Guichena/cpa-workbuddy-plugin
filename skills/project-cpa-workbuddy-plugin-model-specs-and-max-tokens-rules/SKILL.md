@@ -77,6 +77,31 @@ description: 当开发、接入新 AI 服务商插件（如 workbuddy、qoder-ai
 3. **防止上游 400 截断（Safety Clamp）**：若客户端传入数值超过了该模型官方允许的最大上限，自动截断收敛到官方上限，避免上游网关报错 400；
 4. **合理区间原样保留**：客户端在合法区间内指定的数值，原样尊重并保留。
 
+### 3.3 全模型统一最低输出底线（`minMaxTokensFloor = 32768`）
+
+在自适应收敛的**所有出口之后**，必须再套一层统一最低输出底线，保证任何路径（含官方规格本身 `< 32768` 的模型、兜底 fallback 规格、广播层元数据）都不会对外给出低于 32768 的输出上限。
+
+```go
+// minMaxTokensFloor 是所有模型对外输出的统一最低 max_tokens 底线。
+const minMaxTokensFloor int64 = 32768
+
+// applyMaxTokensFloor 将低于统一底线的输出上限抬升至底线。
+func applyMaxTokensFloor(v int64) int64 {
+	if v < minMaxTokensFloor {
+		return minMaxTokensFloor
+	}
+	return v
+}
+```
+
+强制契约：
+1. **计算层**：`computeAdaptiveMaxTokens` 的**四个出口**（未传补足 / 保守放宽 / 超限 clamp / 区间保留）返回前**全部**经 `applyMaxTokensFloor` 收敛；
+2. **兜底规格**：`lookupOfficialModelSpec` 的 fallback `ReasoningMax` 必须对齐 32768（禁止沿用历史 8192）；
+3. **广播层**：`models.go` 的静态列表、动态发现、配置覆盖路径的 `MaxCompletionTokens` 一律经 `applyMaxTokensFloor` 保底；
+4. **请求体层（payload 层）**：如 traework `upstream.go`，`streamDefaultMaxTokens` 与 emit 点 `payload["max_tokens"]` 必须经 floor 抬升；
+5. **探活负载**：测试探活的 `max_tokens` 同样经 floor 抬升，避免过小上限被上游业务拒绝。
+6. **六插件同构**：`minMaxTokensFloor` / `applyMaxTokensFloor` 在 workbuddy / workbuddy-ai / qoder-ai / qoderwork / traework / zcode 六插件中同名同义、逐字节同源。
+
 ---
 
 ## 4. 插件双层实施规范（标准落地模板）
@@ -119,10 +144,11 @@ func relaxMaxTokensInPlace(obj map[string]any) bool {
 
 ## 5. 验收与回归标准
 
-所有涉及模型规格或 token 处理的改动收口前，必须在 `max_tokens_test.go` 中完成以下 6 维单元测试回归：
+所有涉及模型规格或 token 处理的改动收口前，必须在 `max_tokens_test.go` 中完成以下 7 维单元测试回归：
 1. **思考模式 + 8192**：断言提升至该模型官方推理上限（如 DeepSeek 64k）；
 2. **常规模式 + 未传**：断言补足为官方常规上限（如 16k）；
-3. **常规模式 + 8192**：断言保持原值（如 Claude 3.5 保持 8192）；
+3. **常规模式 + 8192**：断言保持原值（且不低于 32768 底线；官方上限低于 32768 的模型断言抬升至 32768）；
 4. **超限传值**：断言安全截断至官方允许最大值（不超纲）；
 5. **双字段归一化**：断言 `max_completion_tokens` 正确提升并清除冲突冗余键；
-6. **请求体序列化端到端验证**：断言 `prepareUpstreamBody` 输出符合预期。
+6. **请求体序列化端到端验证**：断言 `prepareUpstreamBody` 输出符合预期；
+7. **统一底线**：断言任一出口（含兜底规格与广播层）均不低于 32768。

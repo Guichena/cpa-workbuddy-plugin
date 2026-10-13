@@ -17,20 +17,35 @@
 ## 项目概况
 
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
-  - `zcode-provider`: **0.1.16**（彻底重构新导入账号官方授权激活开通链路，无需客户端登录，后端新增 /activate-start 与 /activate-poll，前端一键唤起官方授权并在授权完成后自动拉取 800 万额度变绿；单卡刷新自动引导激活）
-  - `cursor-provider`: **0.1.4**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
-  - `qoderwork-provider`: **0.9.34**（上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00；移除自动探活与 test_failed）
-  - `qoder-ai-provider`: **0.1.14**（上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；补齐 /clear-cooldown 路由注册；签到 10:00/22:00；移除自动探活与 test_failed）
-  - `traework-provider`: **0.2.8**（测试探活 `/test-active` 改为流式首包即停 + Keep-Alive TLS 预热，消除思考模型生成整段思维链导致的 5~8s 等待并拦截 HTTP 200 下的 `event: error`；补齐 oauth-excluded-models 过滤；修复推理流扫描收到 event: done 即刻退出；默认会话级粘性路由 session）
-  - `workbuddy-provider`: **0.15.4**（5 模型轮测探活、移除保号池、硬排除测试标签 + 低积分优先）
-  - `workbuddy-ai-provider`: **0.1.9**（补齐完整路由层单测资产、5 模型轮测探活、国际版签到）
+  - `zcode-provider`: **0.1.21**（新增定时探活全量模型按序 any-success + max_tokens 32768 底线 + 官方规格矩阵全扩至通用家族；0.1.22 由并行会话在制「Start Plan 领取指引」修复）
+  - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
+  - `qoderwork-provider`: **0.9.35**（max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00；移除自动探活与 test_failed）
+  - `qoder-ai-provider`: **0.1.15**（max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册；签到 10:00/22:00；移除自动探活与 test_failed）
+  - `traework-provider`: **0.2.11**（max_tokens 32768 底线 + payload 层同步；定时探活改全量模型按序测试；0.2.8 测试探活流式首包即停 + Keep-Alive TLS 预热，拦截 HTTP 200 下 `event: error`）
+  - `workbuddy-provider`: **0.15.8**（max_tokens 32768 底线；定时探活改全量模型按序测试；0.15.4 移除保号池、硬排除测试标签 + 低积分优先）
+  - `workbuddy-ai-provider`: **0.1.14**（max_tokens 32768 底线；定时探活改全量模型按序测试；0.1.9 补齐完整路由层单测资产、国际版签到）
   - `workbuddy-token-usage`: **0.2.8**（0.2.8 让退役实例的 feed 导入协程在连续 3 轮关闭句柄后自行退出；0.2.7 修复宿主配置重载换句柄窗口导致的用量记录丢失；0.2.6 移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细与维度汇总展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-13 (GMT+8)
 
 ## 活动会话进展摘要
 
-- 当前会话（2026-10-13）：**Qoder 110 日调用上限 24 小时持久化冷却引擎实现、两插件镜像同步与全链路发布生产部署（qoder-ai-provider 0.1.14 / qoderwork-provider 0.9.34）**：
+- 当前会话（2026-10-13）：**六插件 max_tokens 统一 32768 最低输出底线 + zcode 规格矩阵全扩 + 四插件定时探活改全量按序并全链路发布生产**：
+  - 需求背景：① 用户要求收口「六插件兜底 ReasoningMax 8192 与 traework 20000 口径不一」并对齐；② 进一步明确「所有模型最小 max_tokens 都应是 32768，这是底线」；③ 定时探活由「随机取 ≤5 个模型」改为「全量模型按序测试，任一成功即健康、不再打 test_failed，仅全败才打标」，且 qoder 两插件不需要探活、zcode 需新增探活。
+  - 架构设计与实现：
+    1. **统一最低输出底线**：六插件 `model_specs.go` 新增 `minMaxTokensFloor=32768` 常量与 `applyMaxTokensFloor` 纯函数；兜底 `ReasoningMax` 8192→32768；`computeAdaptiveMaxTokens` 四个出口（未传补足 / 保守放宽 / 超限 clamp / 区间保留）全部经 floor 收敛；广播层 `models.go` 的 `MaxCompletionTokens` 与 traework `upstream.go` payload 层同步保底；
+    2. **zcode 规格矩阵全扩**：规格表由 14 条扩至 64 条（覆盖 GLM 4.5/4.6/4.7 全系 + Claude/GPT/Gemini/DeepSeek/Qwen 通用家族），匹配逻辑改为最长前缀优先并支持 `vendor/` 前缀剥离；
+    3. **定时探活全量按序**：workbuddy / workbuddy-ai / traework 废除「随机 ≤5 + 30s 整轮预算熔断」，`orderedAllWorkbuddyModels` / `orderedAllTraeModels` 返回全量候选按序测试，任一成功即终止并清 `test_failed`，全败才打标；zcode 新增定时探活（30 分钟节流 + 20s 单请求超时 + 全量按序 any-success），抽出 `pingUpstreamOnce` 纯传输内核供面板测试与定时探活复用，避免调度探活污染用量/冷却；
+    4. **测试**：新增 `TestDoActivePingAllModelsBeyondLegacyCap`（三插件）与 zcode `TestDoActivePingAllModelsInOrderAnySuccess` / `...FailTagsTestFailed`、`TestResolveOfficialModelSpec_Extended`；六插件 `cgo-shim` build/vet/test 全绿。
+  - 发布与生产闭环：
+    1. **一轮提交发布**：`7ec23c0`(feat 52 文件) → `0aaaa65`/`b2b82e7`(assets) → `02e7375`(registry) → `82e437f`(prune 6 个旧版本)；
+    2. **CI 处置**：六插件并发 dispatch，workbuddy-provider 首个 run 因 `token-usage-tracker` 既有 flaky 测试（`TestFeedImporterLoopSurvivesHandleSwapAndResumes`，本轮未改该目录、本地全绿）失败 → 单插件重跑成功；其余 5 个 run 一次通过；
+    3. **远端验证**：六插件各 7/7 artifacts sha256+size ALL PASS，无旧版本残留；
+    4. **生产热重载**：六插件 `plugin-store install` 均 `restart_required=false` 且日志确认 `plugin hot reloaded`（active_version 全为目标版本、retired 为上一版），零容器重启；落盘 `.so` sha256 与本地 release zip 逐字节一致；
+    5. **生产健康**：六插件 accounts/panel 全 200。
+  - 并行会话保护：`scheduler.go`（High-Credit-First 注释）、`zcode/panel.html`、`zcode/management.go` 及 zcode 0.1.22 bump 均为其他会话在途改动，按「非本轮代理产生的改动默认保护」只提交本轮文件（路径限定 `git commit -- <路径>`）。
+
+- 上一会话（2026-10-13）：**Qoder 110 日调用上限 24 小时持久化冷却引擎实现、两插件镜像同步与全链路发布生产部署（qoder-ai-provider 0.1.14 / qoderwork-provider 0.9.34）**：
   - 需求背景：Qoder 服务商特殊性——积分余额与每日请求调用次数相互独立，满积分账号仍会因突发/高频调用触发 `110: Billing daily count exceeded`（区别于本仓库其他 provider 的额度模型）。用户明确要求：账号触发 110 后进入 24 小时持久化冷却、排除出路由与换号、仅自然到期解除（成功推理不清除），面板展示剩余时间徽标并支持人工解冷。
   - 架构设计与实现：
     1. **110 精确识别**：`policy.go` 新增 `isDailyCountExceeded(status, body)`，覆盖全小写文本 / `"110"` / `code: 110` / `code:"110"` / `110:`，避免误伤正常业务帧；
@@ -141,39 +156,12 @@
     - 生产 `GET /v0/management/zcode-provider-auth-url` 实测返回 **`https://chat.z.ai/api/oauth/authorize?client_id=...&redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai&response_type=code&state=...`**，已指向官方注册回调，白名单校验通过。
   - 知识沉淀：知识库笔记《Z.ai-ZCode-OAuth授权契约-CLI轮询模式》+ 项目记忆条目 `feedback-cpa-oauth-redirect-uri`（已纠正为「上游有白名单时必须复用官方 CLI 轮询链路」）。
 
-- 当前会话（2026-10-11）：**ZCode 插件重构为官方 Z.ai OAuth 授权链路，升级发布并在生产部署热重载 `zcode-provider 0.1.5`**：
-  - 用户反馈与目标：用户指出 zcode 插件的授权此前误抄自开源项目要求粘贴 BigModel API Key，实际上应该走账号授权模式，通过官方 `https://chat.z.ai/auth?response_type=code&client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=https%3A%2F%2Fzcode.z.ai%2Fapp%2Foauth%2Flogin%3Fredirect%3Dzcode%253A%252F%252Foauth%252Fcallback%26app_version%3D3.15.1&state=...` URL 登录授权并重新实现。
-  - 逆向分析与契约收敛：
-    1. 反编译分析本地 `D:\zcode\resources\app.asar`（ZCode 3.15.1 官方客户端），锁定官方 OAuth 协议全链路：授权页面 `chat.z.ai/auth`、客户端 ID `client_P8X5CMWmlaRO9gyO-KSqtg`、桌面端重定向 URI `https://zcode.z.ai/app/oauth/login?redirect=zcode%3A%2F%2Foauth%2Fcallback&app_version=3.15.1`；
-    2. 授权码交换接口：`POST https://zcode.z.ai/api/v1/oauth/token`（`provider: "zai"`），上游响应正式鉴权令牌 `data.token`（`zcodeJwtToken`）、`data.zai.access_token` 以及完整用户档案 `data.user`（`user_id`、`name`、`email`、`avatar` 等）；业务令牌可选解析接口为 `POST https://api.z.ai/api/auth/z/login`。
-  - 实施修复与系统实现（v0.1.5）：
-    1. **对齐官方 Z.ai 授权 URL 规范**（`zcode/oauth.go`）：实现 `buildZaiAuthorizeURL` 生成与用户要求及官方客户端逐字符一致的 32 字符 hex state 授权 URL；`handleStartLogin` 直接下发该 URL；
-    2. **对接令牌交换与双通道回调捕获**：实现 `exchangeZaiOAuthCode` 向上游兑换正式令牌；升级桥接页 `/oauth-bridge` 支持一键打开官方授权与回调地址/code 自动解析；`handlePollLogin` 增加对宿主原生回调载荷 `.oauth-zcode-provider-<state>.oauth` 的自动读取与落盘支持，彻底消除假成功代码；
-    3. **凭据结构与面板升级**：`StoredAuth` 扩展 `token`、`access_token`、`user_id`、`username`、`email`、`avatar_url`、`expires_at`，保持与调用端 `sa.APIKey` 的向下兼容；`panel.html` 增加「OAuth 授权登录」直达入口与卡片用户身份展示。
-  - 验证与门禁全绿：
-    - 本地 `python scripts/cgo-shim-build.py zcode` 编译、vet 与单测全部通过（包含 `TestZaiOAuth_ExactUserURLMatch` 与 `TestZaiOAuth_HostCallbackFile`）；
-    - 必失败哨兵反证测试确证测试进编译真实执行；
-    - `node --check` 前端脚本语法校验全绿。
-  - 全链路发布与生产热重载验收：
-    - 提交 `d92c37b` 推送到 main；GitHub Actions CI Run `38148171959` 73/73 jobs 全绿完成构建与 Release 资产打包；
-    - 下载 8 个 Release 资产（7 平台 zip + checksums）校验 `ALL CHECKSUMS OK` 并提交推送 `24570ac`；
-    - `registry.json` 同步回填 0.1.5 并验证 schema 通过，提交推送 `ef6523d`；
-    - 远端 raw URL 7/7 平台 200 OK 且 sha256 逐字节一致；`prune-release-assets.py` 清理 0.1.4 旧资产释放空间并提交推送 `d6f23c2`；
-    - 生产服务器执行 `plugin-store install zcode-provider?version=0.1.5` 热重载生效（`status: installed, restart_required: false`，零容器重启）；
-    - 生产落盘 `.so` sha256 `88607b6b0cbc9cca4773b39058205ac388fee65cd34f42c1ce83ecfa0f756cf5` 与本地 zip 逐字节 100% 一致；
-    - 生产管理接口验证：`GET /v0/management/plugins/zcode-provider/accounts` 200 OK、`GET /v0/resource/plugins/zcode-provider/panel` 200 OK、`GET /v0/management/zcode-provider-auth-url` 稳定下发真实 `chat.z.ai/auth` 授权地址。
+- 当前会话（2026-10-11）：**ZCode 插件重构为官方 Z.ai OAuth 授权链路（zcode-provider 0.1.5，后续 0.1.8 根治为官方 CLI 轮询）**：
+  - 用户指出 zcode 授权误抄开源项目要求粘贴 BigModel API Key，应走账号授权；反编译 `D:\zcode\resources\app.asar`（ZCode 3.15.1）锁定官方 OAuth 契约：授权页 `chat.z.ai/auth`、客户端 ID `client_P8X5CMWmlaRO9gyO-KSqtg`、令牌交换 `POST zcode.z.ai/api/v1/oauth/token`；实现 `buildZaiAuthorizeURL` 与双通道回调捕获，`StoredAuth` 扩展 token/access_token/user 字段并保持 `sa.APIKey` 向下兼容；`cgo-shim-build.py zcode` 全绿 + 哨兵反证；发布链 `d92c37b`→assets `24570ac`→registry `ef6523d`→prune `d6f23c2`；生产 `plugin-store install 0.1.5` 热重载生效（`restart_required:false`），落盘 `.so` sha256 `88607b6b…` 与本地一致，accounts/panel 200。
+  - **2026-10-11 后续根治（0.1.8）**：实测 `chat.z.ai` 对 client_id 执行 redirect_uri 严格白名单，仅接受服务端注册的 `https://zcode.z.ai/api/v1/oauth/cli/callback/zai`，桌面 deep-link 与本地回调均被拒；逆向 `app.asar` 的 `startOAuthWithPolling` 确认官方为 CLI 轮询模式（`POST /api/v1/oauth/cli/init` + `GET /api/v1/oauth/cli/poll/<flow_id>`）。`handleStartLogin` 改为透传服务端签发的 `authorize_url`（不改写 redirect_uri），`handlePollLogin` 改为轮询取结果；发布链 `fb24235`→`4e8a925`→`9362c3f`→`9171562`；生产 0.1.8 热重载、落盘 sha256 `aa82c93a…` 一致。知识沉淀：知识库《Z.ai-ZCode-OAuth授权契约-CLI轮询模式》+ 项目记忆 `feedback-cpa-oauth-redirect-uri`。
 
-- 当前会话（2026-10-11）：**Qoder 403 首包假成功与全链路流式诊断，经验沉淀至项目 skill，完成生产 Docker Nginx proxy_buffering off 重载验证**：
-  - 用户反馈与目标：用户反馈用 New-API 接入 qwen-3.8-flash 进行测试极慢卡死无法使用，但 CPA 面板测试极快、Token 用量插件显示响应不慢；要求排查真实根因，将本次推理请求测试经验吸收到项目 skill，并检查生产 Docker Nginx 容器配置能否 reload 并完成重载。
-  - 核心根因锁定（实测铁证）：
-    1. **阿里 Qoder 上游 403 排队拦截与 60s 长连接挂死**：通过 SSH 登录生产服务器（45.207.222.65:18998）直测 CPA 8317，发现阿里通义灵码 Qoder 服务端对当前账号的 `qfmodel`（Qwen3.8-Flash）和 `qmodel_38max` 限制调用，在 HTTP 200 下返回 `data: {"code":"403","message":"...10605...isQueued:true...serviceAvailable:false..."}` 业务报错；返回后连接不关闭，持续发送 `: keep-alive` 心跳僵死整整 60 秒，最终上游 HTTP/2 报错 `INTERNAL_ERROR` 崩溃中断。
-    2. **CPA 面板探活 219ms 假成功盲区**：`active_ping.go` 发起流式测试后，只要 `reader.Read(buf)` 读到前 512 字节未校验内容即判定流已建立成功并 return；收到 403 错误包仅耗时 219ms，面板误报“活跃成功，耗时 219ms”。
-    3. **Token 用量插件 TTFT 334ms 误判陷阱**：用量日志 `token-usage-feed.ndjson` 记录的首包时间 `ttft_ns: 334153032`（334ms）恰为 403 错误帧到达时间，容易造成“响应不慢”假象；但后置字段实为 `failed: true`、`latency_ms: 60100`（卡死 60 秒）且 `total_tokens: 0`。
-    4. **New-API 渠道测试机制盲区**：New-API 后台渠道测试按钮底层强制发送 `stream: false`，必须等待全量 Blocking Aggregation 聚合，不能用于流式验证。
-    5. **链路通畅对照验证**：用生产可用模型 `auto`（1.4s）与 `deepseek-v4.1-flash`（1.1s）经 New-API 直测，流式打字机逐字实时吐出，确证 New-API 直连 CPA 8317 毫无流式阻塞。
-  - 运维与经验沉淀闭环：
-    1. **Docker Nginx 语法校验与平滑热重载**：在生产服务器执行 `docker exec nginx nginx -t` 语法检测 PASS（确认已包含 `proxy_buffering off; proxy_cache off;`），执行 `docker exec nginx nginx -s reload` 平滑重载成功；外网域名 `https://api.luode.vip/v1` 实测 1.35s 端到端打字机流式验证通过。
-    2. **项目 Skill 经验固化**：更新项目 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`（新增规则二首包业务报错帧白名单校验拦截、规则三全链路流式不缓冲配置与推理延迟判读规范）及 `source-notes.md`、`PROJECT_MEMORY.md`、`PROJECT_HISTORY.md`。
+- 当前会话（2026-10-11）：**Qoder 403 首包假成功与全链路流式诊断，完成生产 Docker Nginx proxy_buffering off 重载验证**：
+  - 根因（实测铁证）：① 阿里 Qoder 上游对 `qfmodel`/`qmodel_38max` 在 HTTP 200 下返回 `data: {"code":"403",...10605...isQueued:true...}` 业务报错，且返回后连接不关闭、持续 `: keep-alive` 僵死 60s 后上游 `INTERNAL_ERROR`；② CPA 面板探活仅盲读前 512 字节不校验内容即判成功（219ms 假成功）；③ Token 用量插件 TTFT 334ms 恰为错误帧到达时间，实为 `failed:true`/`latency_ms:60100`/`total_tokens:0`；④ New-API 渠道测试按钮强制 `stream:false` 不能用于流式验证。运维闭环：生产 `docker exec nginx nginx -t` PASS + `nginx -s reload` 平滑重载（已含 `proxy_buffering off; proxy_cache off;`），外网 `api.luode.vip/v1` 实测 1.35s 端到端流式；经验固化到项目 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`（首包业务报错帧白名单校验 + 全链路流式不缓冲配置与推理延迟判读规范）。
 
 - 当前会话（2026-10-11）：**deepseek-v4.1-flash 推理断开根因诊断 + traework 补齐 oauth-excluded-models 治理入口（修复随 traework-provider 0.2.7 上线，现承载于 0.2.8）**：
   - 用户诉求：`new-api → CPA(https://api.luode.vip/v1) → 服务商` 链路上 `deepseek-v4.1-flash` 推理会断开，要求先定位原因并修复，再继续 Token 用量插件（图表移除）任务。

@@ -4,6 +4,9 @@
 
 ## 事件
 
+
+- 2026-10-13：**六插件统一 32768 最低输出底线 + zcode 规格矩阵全扩 + 四插件定时探活改全量按序，并全链路发布生产（六插件各 +1 patch）**——用户四轮诉求递进：① 收口「插件兜底 ReasoningMax 8192 与 traework 20000 口径不一」；② 明确「所有模型最小 max_tokens 都应是 32768，这是底线」；③ 定时探活由「随机取 ≤5 个模型」改为「全量模型按序测试，任一成功即健康、不打 test_failed，仅全败才打标」（qoder 两插件不探活、zcode 需新增）。实现：① 六插件 `model_specs.go` 新增 `minMaxTokensFloor=32768` + `applyMaxTokensFloor` 纯函数，兜底 `ReasoningMax` 8192→32768，`computeAdaptiveMaxTokens` 四出口全部经 floor 收敛，广播层 `models.go` 的 `MaxCompletionTokens` 与 traework `upstream.go` payload 层同步保底；② zcode 规格表 14→64 条（GLM 4.5/4.6/4.7 全系 + Claude/GPT/Gemini/DeepSeek/Qwen），匹配改最长前缀优先 + `vendor/` 前缀剥离；③ workbuddy/workbuddy-ai/traework 新增 `orderedAllWorkbuddyModels`/`orderedAllTraeModels` 返回全量候选按序测试，废除「随机 ≤5 + 30s 整轮预算熔断」，zcode 新增定时探活（30 分钟节流 + 20s 单请求超时 + 全量按序 any-success），抽出 `pingUpstreamOnce` 纯传输内核供面板测试与定时探活复用（避免调度探活污染用量/冷却）。版本：workbuddy 0.15.8 / workbuddy-ai 0.1.14 / qoder-ai 0.1.15 / qoderwork 0.9.35 / traework 0.2.11 / zcode 0.1.21。发布链：`7ec23c0`(feat 52 文件) → `0aaaa65`/`b2b82e7`(assets) → `02e7375`(registry) → `82e437f`(prune 6 个旧版本)；远端六插件各 7/7 artifacts sha256+size ALL PASS；**CI 处置**：六插件并发 dispatch，workbuddy-provider 首个 run 因 `token-usage-tracker` 既有 flaky 测试（`TestFeedImporterLoopSurvivesHandleSwapAndResumes`，本轮未改该目录、本地全绿）失败 → 单插件重跑成功，其余 5 个一次通过；**生产**：六插件 `plugin-store install` 均 `restart_required=false` 且日志确认 `plugin hot reloaded`（active_version 全为目标版本），零容器重启，落盘 `.so` sha256 与本地 release zip 逐字节一致，accounts/panel 全 200。并行会话保护：`scheduler.go`（High-Credit-First 注释）、`zcode/panel.html`、`zcode/management.go` 及 zcode 0.1.22 bump 为其他会话在途改动，按路径限定 `git commit -- <路径>` 只提交本轮文件。门禁：六插件 `cgo-shim-build.py` build/vet/test 全绿；三份 6-review `STYLE: PASS`。
+
 - 2026-10-12：**qoder-ai-provider 0.1.9 / qoderwork-provider 0.9.30 修复「上游 HTTP 200 顶层 code 排队帧未被识别致 qwen3.8 大上下文 60s 挂死」**——用户报「还是不能从 new-api 请求 cpa 的 qwen-3.8-flash、qwen-3.8 模型，但 cpa 本身测试可以」。生产直测复现决定性判据：同一模型名仅 prompt 长度不同行为相反（`hi` 1.47s 成功、67KB 3.49s 成功、112KB **3/3 稳定挂死 60.5s**）；挂死响应体首行即 `data: {"code":"403","message":"{...10605...isQueued:true...retryAfterSeconds:30}"}`，随后 3 条 `: keep-alive`，约 60s 后对端 `INTERNAL_ERROR` 复位（new-api 侧 `client_gone`、`frt=-1000`、`completion_tokens=0`）。根因（数据面解析器侧，上一轮未收敛）：`parseQoderSSEChunk` 只认 `[DONE]`/嵌套 `body`/扁平 `choices`·`id`/`error` 四类形态，顶层 `code` 帧落入兜底 `return "", false` 被 `continue` 跳过 → 读不到终止信号死等 Keep-Alive；面板探活因 prompt 极小不触发排队 + 首字节盲判而显示成功，形成「测试通过、真实不可用」假象（同一错误帧的两条路径）。排队性质经 feed 全量 259 条确认为**请求级 + 时段性**（同账号 ok/bad 混合 `01a003c5` 25:39、成功请求 input 达 289,424、97 条挂死集中 23:36–00:13 两账号交替）。修复：解析器增第 4 类顶层 `code` 形态；`sseErrorFrame` 增顶层 `code`+`message` 识别并新增 `unwrapNestedMessage` 逐层展开（保留首层业务码 10605）；`pumpUpstreamStream`/`collectUpstreamStreamQoder`/`aggregateQoderSSE` 三路径循环内即刻收尾（非流式聚合的物化循环也须退出）；`sendActivePingQoder` 改首帧内容校验。行为统一「立即报错」（`shouldRotateOnUpstreamErr` 对排队帧天然 false，不换号）。门禁：两插件 `cgo-shim-build.py` build/vet/test 全绿；新增 `stream_queue_frame_test.go`（`hangingReader` 模拟 Keep-Alive），**哨兵反证移除识别分支后该用例耗时 10.00s 精确复现挂死**；6-review `STYLE: PASS`；`POLLUTION: PASS`。文档：Bug 主文档 `doc/4-bugs/2026-10-12_001641_Qoder上游200排队帧未被识别致new-api调用qwen3.8挂死根因诊断.md`、测试主文档 `doc/5-tests/2026-10-11_164802_Qoder排队帧识别回归.md`、6-review `doc/6-review/2026-10-11_164802_Qoder排队帧识别修复_6-review.md`；skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules` 规则一新增契约；知识库 `HTTP200不等于流式协议成功-有效终止契约.md` 追加 2026-10-12 补充。
 
 - 2026-10-11：**彻底废弃并删除 Gemini 插件（gemini-provider）全量代码与构建资产**——用户反馈当前 Gemini 插件体积极大（.so 达 14.4MB，比含全套 UI 的 WorkBuddy 还要大 80%），且在实际使用中几乎不可用（强制要求带有 Cloud Project 与结算绑定的 GCP 开发者账号，缺少 Web 控制台与调度容灾机制）；经评估确认其投入产出比过低且严重违背轻量化原则，决定彻底放弃并不再维护该插件。执行全量清理：使用 `git rm` 删除 `gemini/` 源码目录、`release-assets/gemini-provider-0.1.1` 资产目录及对应图标文件；从 `registry.json` 中移除该插件（插件源总数由 9 个回退至 8 个）；从 `.github/workflows/build.yml` 中彻底剔除 `gemini` 的构建、交叉编译与 Release 矩阵；全面同步 `README.md`、`PROJECT_CURRENT.md`、`PROJECT_MEMORY.md`、`PROJECT_HISTORY.md` 与《九大插件全景架构与演进计划总览》；`validate-registry.py` 校验 8 插件通过，全量兄弟插件 `cgo-shim-build.py` 编译与单测全绿。
@@ -40,15 +43,6 @@
 
 - 2026-10-07：cursor-provider **0.1.0** 移植与 Token 导入——新增第六个插件 cursor-provider（来源 yobo2u/omsub cursor-plugin，按 workbuddy 面板口径全量移植，落 cursor/，不依赖 CLIProxyAPI SDK），并新增会话 Token 导入账号能力：粘贴 user_<id>::<jwt>（或 URL 编码 / Cookie 前缀 / 裸 JWT）→ 取 :: 后段 JWT → POST https://api2.cursor.sh/oauth/token（grant_type=refresh_token + client_id + refresh_token）兑换 access_token → host.auth.save 落盘 cursor-<hash8>.json（顶层 type=cursor-provider），按 account_id/email 去重；管理面板增 import/export/delete/enable/disable 五路由与卡片删除/启停、全部启停、导入弹窗、导出、双语 i18n、key 三回退；保留 OAuth 轮询登录、executor tool-loop、checkpoint/会话粘性、图片输入、上下文准入。本地 cgo-shim build/vet/test 全绿（含必失败哨兵），面板 node --check 通过，cursor 全量 LF 镜像 gofmt 清零，6-review STYLE: PASS；registry.json 增 cursor-provider 0.1.0（7 平台 artifacts 占位待 CI 回填），待发布。
 
-- 2026-10-06：workbuddy-ai-provider **0.1.0** 独立国际版插件落地、双通道扫码授权与生产部署——新设独立插件 ID: workbuddy-ai-provider（版本 0.1.0），唯一锁定国际站基址 https://www.workbuddy.ai，凭证文件名前缀固定为 workbuddyai-（type: workbuddy-ai-provider），彻底杜绝与国内版凭证碰撞。实现双通道扫码登录：支持宿主原生 OAuth 与专属管理面板 panel.html「📱 扫码登录 / 添加账号」弹窗（方案 B）；保留低积分优先与会话粘性调度、10分钟活跃心跳探测（watchdog）、4小时 token 保活刷新（keepalive）、4xx 换号重试与用量统计归一化；彻底剔除国内签到与 CN 保号池。本地 cgo-shim 全绿（含哨兵）；GitHub Actions CI Run 37469999135 成功，8 资产推送入库，registry.json 原子发布且 CDN 校验 ALL PASS；生产环境通过 plugin-store install 热重载部署上线，二进制 SHA256 100% 吻合，accounts 接口 200，panel 资源 200。
-
-- 2026-10-05：gemini-provider **0.1.1** 补充 Google 官方彩色图标、正式发布并成功热重载部署生产。提取 Google 官方标准正方形彩色矢量 PNG（192×192 RGBA 透明底，6,382 字节），分别落盘 `assets/icons/Gemini.png` 与 `assets/icons/Google.png`；更新 `registry.json` 与 `gemini/main.go` 中的 Logo URL 指向 raw.githubusercontent 仓库源；atomic bump 版本为 `0.1.1`，补齐 CHANGELOG.md；本地 `cgo-shim-build.py gemini` 验证 build/vet/test 全绿；代码提交推送至 main（commit `e1e0b7f`）；派发 GitHub Actions CI（Run ID `37286392309`）40 个 jobs 全部 success；下载 8 个 release assets，7 平台 zip + checksums.txt 双重 SHA256 校验全绿（commit `809100c`）；执行 `publish-assets.py` 回填 registry.json 并推送（commit `8cf6e90`），远端 raw CDN 与哈希验证 ALL PASS；生产环境调用 `plugin-store install` 安装，落盘 .so SHA256 `779c73be...` 与本地 release zip 100% 一致，CPA 容器日志证实热重载成功：`pluginhost: plugin hot reloaded plugin_id=gemini-provider active_version=0.1.1 retired_version=0.1.0`，管理端 plugin-store 图标正常显示。
-
-- 2026-10-05：gemini-provider **0.1.0** 正式发布部署与多插件 Token 用量统一统计——引入开源插件 `cpa-plugin-gemini-cli` 作为仓库第 4 个插件（3 服务商 + 1 用量统计），发布名称定为 "Gemini Provider"（ID: `gemini-provider`，版本: `0.1.0`）。CI 发布工作流 Run 37279598274 全部 success，生成 8 个 release assets 并 push 到 main；registry.json 0.1.0 远端验证 ALL PASS；生产服务器通过 plugin-store install 成功热重载加载 gemini-provider v0.1.0（.so sha256 ca9a64f4... 吻合，registered=True, enabled=True），成为仓库正式第 4 个插件。
-
-- 2026-10-05：gemini-provider **0.1.0** 集成与多插件 Token 用量统一统计——引入开源插件 `cpa-plugin-gemini-cli` 作为仓库第 4 个插件（3 服务商 + 1 用量统计），发布名称定为 "Gemini Provider"（ID: `gemini-provider`，版本: `0.1.0`）。建立 `gemini/` 独立模块（Go 1.26，对齐 `CLIProxyAPI/v7 v7.2.129`），导出标准 C ABI（`cliproxy_plugin_init`、`cliproxyPluginCall`、`cliproxyPluginFree`、`cliproxyPluginShutdown` 等），提供 panic recover 保护；实现 `usage.go` 与 `usage_feed.go`，将流式/非流式请求的 `usageMetadata` 与 TTFT 首包耗时写入共享 `<root>/data/token-usage-feed.ndjson`；更新 `token-usage-tracker` 身份归一化，将 `gemini` / `gemini-cli` / `gemini-provider` 统一展示为 `"Gemini"`；更新 CI 构建矩阵与 `registry.json`（新增 7 平台 artifacts 配置）。验证：`cgo-shim-build.py` 5 插件全绿通过（gemini, token-usage-tracker, traework, workbuddy, qoderwork），测试用例经哨兵拦截确认真实进编译，`validate-registry.py` 校验 5 插件全绿。沉淀知识库《集成GeminiProvider插件与多服务商Token用量统一聚合》。
-
-
 ## 计数锚点区
 
 > 本区由 `memory-usage-tracking-rules` 收口闸门维护：HISTORY 仅窄读计入，会话启动不读不计；被裁剪事件的锚点随事件一起删除（不保留 retired）；本区计数仅作主题热度弱信号。锚点 key 用事件 `- YYYY-MM-DD：` 后的核心主题短语（约前 12 字符，可前缀匹配）。
@@ -56,6 +50,11 @@
 ```yaml
 version: 1
 anchors:
+- title: '**六插件统一 32768 最低输出底线'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
 - title: '**沉淀「HTTP 200 首包业务报错帧假成功'
   usage_count: 0
   usage_days: 0
@@ -132,26 +131,6 @@ anchors:
   last_used_at: 2026-10-09
   absorbed_to: null
 - title: 'cursor-provider **0.1.0** 移植与 Token 导入'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
-  absorbed_to: null
-- title: 'workbuddy-ai-provider **0.1.0** 独立国际版'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
-  absorbed_to: null
-- title: 'gemini-provider **0.1.1** 补充 Google'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
-  absorbed_to: null
-- title: 'gemini-provider **0.1.0** 正式发布部'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
-  absorbed_to: null
-- title: 'gemini-provider **0.1.0** 集成与多'
   usage_count: 0
   usage_days: 0
   last_used_at: null
