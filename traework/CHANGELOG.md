@@ -1,5 +1,17 @@
 # TraeWork Plugin Changelog
 
+## 0.2.11
+
+### Feat - max_tokens 统一 32768 最低输出底线 + 定时探活改全量模型按序测试
+
+- 变更要点:
+  1. 设立 `minMaxTokensFloor=32768` 统一最低输出底线：`model_specs.go` 新增该常量与 `applyMaxTokensFloor` 纯函数，`computeAdaptiveMaxTokens` 四个出口全部经其收敛。
+  2. payload 层同步：`upstream.go` 的 `streamDefaultMaxTokens` 由 20000 提至 32768，流式建包 emit 点统一经 `applyMaxTokensFloor` 抬升，杜绝任何请求以 32768 以下的过小上限发出。
+  3. 广播层同步：动态模型发现的 `MaxCompletionTokens` 保底。
+  4. 定时探活改为全量模型按序测试：废除「随机取 ≤5 个」与整轮预算熔断，取该账号全部候选模型（保留内部非对话模型过滤）依次测试；任一成功即判定健康并立即终止本轮，仅当全部失败才打 `test_failed` 标签。
+  5. 新增 `TestDoActivePingAllModelsBeyondLegacyCap` 回归用例。
+- 涉及文件: traework/model_specs.go、traework/upstream.go、traework/active_ping.go、traework/*_test.go
+
 ## 0.2.10
 
 ### Feat & Fix - 设立安全缓冲额度红线 (minRoutableCredits=20)、健康平摊调度与换号过滤

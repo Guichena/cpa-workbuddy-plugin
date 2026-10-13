@@ -14,11 +14,11 @@ func TestAdaptiveMaxTokens(t *testing.T) {
 		wantTokens  int64
 	}{
 		{
-			name:        "Qwen3.8-Flash 默认非思考 -> 补足为官方 16384",
+			name:        "Qwen3.8-Flash 默认非思考 -> 抬升至 32768 最低输出底线",
 			model:       "Qwen3.8-Flash",
 			requested:   0,
 			isReasoning: false,
-			wantTokens:  16384,
+			wantTokens:  32768,
 		},
 		{
 			name:        "Qwen3.8-Flash 思考模式 + 传 8192 -> 提升至官方推理上限 32768",
@@ -67,7 +67,7 @@ func TestWbModels_OfficialSpecs(t *testing.T) {
 }
 
 func TestBuildQoderBody_AdaptiveMaxTokens(t *testing.T) {
-	// 1. 未传 max_tokens 时自动补足官方常规 16384
+	// 1. 未传 max_tokens 时抬升至 32768 最低输出底线
 	req1 := &openAIRequest{
 		Model:    "Qwen3.8-Flash",
 		Messages: []openAIMessage{{Role: "user", Content: "hi"}},
@@ -80,8 +80,8 @@ func TestBuildQoderBody_AdaptiveMaxTokens(t *testing.T) {
 	if err := json.Unmarshal(body1, &parsed1); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if mt := jsonI64(parsed1["parameters"].(map[string]any), "max_tokens"); mt != 16384 {
-		t.Fatalf("parameters.max_tokens = %d, want 16384", mt)
+	if mt := jsonI64(parsed1["parameters"].(map[string]any), "max_tokens"); mt != 32768 {
+		t.Fatalf("parameters.max_tokens = %d, want 32768", mt)
 	}
 
 	// 2. 思考模式下传入保守小值 8192 自动放宽至 32768

@@ -200,8 +200,22 @@ func (r *zcodeRefreshRunner) refreshOne(authID string) {
 		r.markFailed(authID, errFetch.Error())
 		return
 	}
+	// 额度刷新成功后触发定时活跃探活，失败仅记录不做刷新失败处理
+	if pingErr := doActivePing(target); pingErr != nil {
+		r.markPingWarning(authID, pingErr.Error())
+	}
 	r.mu.Lock()
 	r.states[authID] = refreshJobState{Status: "done"}
+	r.mu.Unlock()
+}
+
+// markPingWarning 在刷新成功但探活失败时记录告警文案，供面板提示。
+//
+// [参数] authID: 账号标识；msg: 探活失败信息。
+// [返回] 无。
+func (r *zcodeRefreshRunner) markPingWarning(authID, msg string) {
+	r.mu.Lock()
+	r.states[authID] = refreshJobState{Status: "done", Error: "探活告警: " + msg}
 	r.mu.Unlock()
 }
 

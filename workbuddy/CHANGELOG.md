@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.15.8
+
+### Feat - max_tokens 统一 32768 最低输出底线 + 定时探活改全量模型按序测试
+
+- 变更要点:
+  1. 设立 `minMaxTokensFloor=32768` 统一最低输出底线：规格表兜底 `ReasoningMax` 由 8192 对齐至 32768；`computeAdaptiveMaxTokens` 四个出口（未传补足 / 保守放宽 / 超限 clamp / 区间保留）全部经 `applyMaxTokensFloor` 收敛，杜绝任何路径回落到 32768 以下的过小输出上限。
+  2. 广播层同步：`models.go` 的静态模型列表与 `maxOutputTokens()` 输出的 `MaxCompletionTokens` 一并保底，保证宿主面板看到的输出上限不低于 32768。
+  3. 定时探活改为全量模型按序测试：废除「随机取 ≤5 个」与 30s 整轮预算熔断，`doActivePing` 取该账号全部候选模型依次测试；任一模型成功即判定健康并立即终止本轮（清 `test_failed`），仅当全部模型均失败才打 `test_failed` 标签。
+  4. 探活负载 `max_tokens` 经 `applyMaxTokensFloor` 抬升，避免过小上限被上游业务拒绝。
+  5. 新增 `TestDoActivePingAllModelsBeyondLegacyCap` 回归用例（7 模型仅第 7 个成功，断言全部 7 个按序尝试）。
+- 涉及文件: workbuddy/model_specs.go、workbuddy/models.go、workbuddy/active_ping.go、workbuddy/*_test.go
+
 ## 0.15.7
 
 ### Fix - 修复官方规格自适应 max_tokens 未随 0.15.6 二进制发布（内嵌 vcs.revision 取证）

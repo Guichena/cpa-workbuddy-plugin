@@ -1,5 +1,17 @@
 # WorkBuddy AI Plugin Changelog
 
+## 0.1.14
+
+### Feat - max_tokens 统一 32768 最低输出底线 + 定时探活改全量模型按序测试
+
+- 变更要点:
+  1. 设立 `minMaxTokensFloor=32768` 统一最低输出底线：规格表兜底 `ReasoningMax` 由 8192 对齐至 32768；`computeAdaptiveMaxTokens` 四个出口全部经 `applyMaxTokensFloor` 收敛，杜绝任何路径回落到 32768 以下的过小输出上限。
+  2. 广播层同步：`models.go` 的静态模型列表与 `maxOutputTokens()` 输出的 `MaxCompletionTokens` 一并保底。
+  3. 定时探活改为全量模型按序测试：废除「随机取 ≤5 个」与整轮预算熔断，`doActivePing` 取该账号全部候选模型依次测试；任一成功即判定健康并立即终止本轮（清 `test_failed`），仅当全部失败才打标签。
+  4. 探活负载 `max_tokens` 经 `applyMaxTokensFloor` 抬升。
+  5. 新增 `TestDoActivePingAllModelsBeyondLegacyCap` 回归用例。
+- 涉及文件: workbuddy-ai/model_specs.go、workbuddy-ai/models.go、workbuddy-ai/active_ping.go、workbuddy-ai/*_test.go
+
 ## 0.1.13
 
 ### Fix - 修复官方规格自适应 max_tokens 未随 0.1.12 二进制发布（内嵌 vcs.revision 取证）

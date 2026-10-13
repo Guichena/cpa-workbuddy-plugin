@@ -25,8 +25,8 @@ const (
 	maxBodyBytes = 4 << 20 // 4 MiB non-streamed body cap
 	// streamDefaultMaxTokens 是流式请求缺省 max_tokens。客户端不传时上游
 	// Trae 会给极小上限，导致 solo 长任务（如 qwen3.8-max 分析项目）刚开口
-	// 就 done。20000 与 config models 样例一致。
-	streamDefaultMaxTokens = 20000
+	// 就 done。取值对齐全局输出底线。
+	streamDefaultMaxTokens = 32768
 )
 
 // UpstreamError carries the upstream HTTP status and truncated body so the
@@ -149,8 +149,9 @@ func buildTraePayload(messages []map[string]any, model string, stream bool, maxT
 			maxTokens = int(computeAdaptiveMaxTokens(configName, int64(maxTokens), true))
 		}
 	}
+	// 统一抬升至全局输出底线，任何路径下发往上游的 max_tokens 不低于 32768
 	if maxTokens > 0 {
-		payload["max_tokens"] = maxTokens
+		payload["max_tokens"] = int(applyMaxTokensFloor(int64(maxTokens)))
 	}
 	if temperature != nil {
 		payload["temperature"] = *temperature

@@ -25,11 +25,11 @@ func TestAdaptiveMaxTokens(t *testing.T) {
 			wantTokens:  64000,
 		},
 		{
-			name:        "DeepSeek 非思考模式 + 未传 -> 补足为官方常规上限 16384",
+			name:        "DeepSeek 非思考模式 + 未传 -> 抬升至 32768 最低输出底线",
 			model:       "deepseek-v4.1-flash",
 			requested:   0,
 			isReasoning: false,
-			wantTokens:  16384,
+			wantTokens:  32768,
 		},
 		{
 			name:        "GLM-5.3 思考模式 + 传 8192 -> 提升至官方推理上限 128000",
@@ -46,11 +46,11 @@ func TestAdaptiveMaxTokens(t *testing.T) {
 			wantTokens:  64000,
 		},
 		{
-			name:        "Claude 3.5 Sonnet 常规模式 + 传 8192 -> 保持官方标准 8192",
+			name:        "Claude 3.5 Sonnet 常规模式 + 传 8192 -> 抬升至 32768 最低输出底线",
 			model:       "claude-3-5-sonnet",
 			requested:   8192,
 			isReasoning: false,
-			wantTokens:  8192,
+			wantTokens:  32768,
 		},
 		{
 			name:        "客户端传超大值 200000 -> 安全截断至官方允许上限 64000 避免网关 400",
@@ -65,6 +65,20 @@ func TestAdaptiveMaxTokens(t *testing.T) {
 			requested:   0,
 			isReasoning: true,
 			wantTokens:  65536,
+		},
+		{
+			name:        "未收录模型 思考模式 + 传 8192 -> 兜底放宽至 32768",
+			model:       "some-unlisted-model",
+			requested:   8192,
+			isReasoning: true,
+			wantTokens:  32768,
+		},
+		{
+			name:        "未收录模型 常规模式 + 未传 -> 兜底抬升至 32768 最低输出底线",
+			model:       "some-unlisted-model",
+			requested:   0,
+			isReasoning: false,
+			wantTokens:  32768,
 		},
 	}
 

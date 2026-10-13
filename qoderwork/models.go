@@ -52,9 +52,9 @@ func wbModels() []pluginapi.ModelInfo {
 	for i := range list {
 		spec := resolveOfficialModelSpec(list[i].ID)
 		if spec.ReasoningMax > 0 {
-			list[i].MaxCompletionTokens = spec.ReasoningMax
+			list[i].MaxCompletionTokens = applyMaxTokensFloor(spec.ReasoningMax)
 		} else {
-			list[i].MaxCompletionTokens = spec.MaxOutputTokens
+			list[i].MaxCompletionTokens = applyMaxTokensFloor(spec.MaxOutputTokens)
 		}
 	}
 	return list
@@ -222,7 +222,7 @@ func modelInfoFromConfig(id, name string, ctxLen, maxTok int64) pluginapi.ModelI
 		ID:                         id,
 		Name:                       name,
 		ContextLength:              ctxLen,
-		MaxCompletionTokens:        maxTok,
+		MaxCompletionTokens:        applyMaxTokensFloor(maxTok),
 		OwnedBy:                    providerName,
 		SupportedGenerationMethods: []string{"chat"},
 	}
@@ -373,9 +373,9 @@ func callModelsAPI(sa *storedAuth) ([]pluginapi.ModelInfo, error) {
 			MaxCompletionTokens: func() int64 {
 				spec := resolveOfficialModelSpec(m.Key)
 				if spec.ReasoningMax > 0 {
-					return spec.ReasoningMax
+					return applyMaxTokensFloor(spec.ReasoningMax)
 				}
-				return spec.MaxOutputTokens
+				return applyMaxTokensFloor(spec.MaxOutputTokens)
 			}(),
 			OwnedBy:                    providerName,
 			SupportedGenerationMethods: []string{"chat"},

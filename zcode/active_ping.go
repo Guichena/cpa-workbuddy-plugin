@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/luode0320/cpa-workbuddy-plugin/zcode/internal/mimic"
@@ -27,6 +28,53 @@ type testActiveResponse struct {
 	LatencyMS int64  `json:"latency_ms"`
 	Message   string `json:"message,omitempty"`
 	Error     string `json:"error,omitempty"`
+}
+
+// defaultActivePingInterval 是定时探活对同一账号的最小间隔。
+// defaultActivePingTimeout 限制单次探活请求的最长等待时间。
+var defaultActivePingInterval = 30 * time.Minute
+var defaultActivePingTimeout = 20 * time.Second
+
+var (
+	activePingMu        sync.Mutex
+	lastActivePingTimes = make(map[string]time.Time)
+)
+
+// pingUpstreamOnceFn 是 pingUpstreamOnce 的可注入引用，供单元测试替换传输内核。
+var pingUpstreamOnceFn = pingUpstreamOnce
+
+// authModelsForIndexFn 是 authModelsForIndex 的可注入引用，供单元测试替换候选模型来源。
+var authModelsForIndexFn = authModelsForIndex
+
+// shouldActivePing 判断指定账号是否已超过定时探活间隔。
+// [参数] authID: 账号标识。
+// [返回] 允许探活返回 true。
+func shouldActivePing(authID string) bool {
+	activePingMu.Lock()
+	defer activePingMu.Unlock()
+	last, ok := lastActivePingTimes[authID]
+	if !ok || time.Since(last) >= defaultActivePingInterval {
+		return true
+	}
+	return false
+}
+
+// recordActivePing 记录指定账号的本次探活时间。
+// [参数] authID: 账号标识。
+// [返回] 无。
+func recordActivePing(authID string) {
+	activePingMu.Lock()
+	defer activePingMu.Unlock()
+	lastActivePingTimes[authID] = time.Now()
+}
+
+// resetActivePingTimes 清空探活节流记录。
+// [参数] 无。
+// [返回] 无。
+func resetActivePingTimes() {
+	activePingMu.Lock()
+	defer activePingMu.Unlock()
+	lastActivePingTimes = make(map[string]time.Time)
 }
 
 // handleModelsQuery 处理 GET /models?auth_index= 路由请求。
@@ -83,46 +131,25 @@ func handleTestActive(body []byte) ([]byte, error) {
 	return json.Marshal(res)
 }
 
-// handleTestActiveWithAuth 向上游发起单次 Anthropic 流式首包即停真实探活。
-// [参数] sa: ZCode 账号凭据；model: 待测试模型名称。
-// [返回] testActiveResponse: 探活状态、耗时与结果消息。
-// 最近修改时间：2026-10-12 00:20:00 改用业务令牌（zai access_token → business token），根治 OAuth 账号 401
-func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
-	if sa == nil || (sa.APIKey == "" && sa.Token == "" && sa.AccessToken == "") {
-		return testActiveResponse{
-			OK:     false,
-			Status: "failed",
-			Error:  "invalid account or empty api key",
-		}
-	}
-
+// pingUpstreamOnce 向上游发起一次流式首包即停探活，仅返回纯传输结果，不写入任何账号状态。
+// [参数] sa: ZCode 账号凭据；model: 待测试模型名称（展示名）。
+// [返回] ok 表示收到有效首包；statusCode 为 HTTP 状态码；errMsg 为失败原因；latencyMS 为耗时毫秒；ttftNS 为首包时延纳秒。
+// 最近修改时间：2026-10-13 23:00:00 从 handleTestActiveWithAuth 抽出纯传输内核，供手动与定时探活共用
+func pingUpstreamOnce(sa *StoredAuth, model string) (ok bool, statusCode int, errMsg string, latencyMS int64, ttftNS uint64) {
 	cfg := currentConfig()
 
-	// 按账号类型选择上游端点与凭证（start-plan 走 zcode-plan + JWT，付费走 api.z.ai + 业务令牌）。
+	// 1. 按账号类型选择上游端点与凭证（start-plan 走 zcode-plan + JWT，付费走 api.z.ai + 业务令牌）
 	targets := resolveUpstreamTargets(sa, cfg)
 	if len(targets) == 0 {
-		return testActiveResponse{
-			OK:     false,
-			Status: "failed",
-			Error:  "unable to resolve upstream credential",
-		}
+		return false, 0, "unable to resolve upstream credential", 0, 0
 	}
 	target := targets[0]
-
-	if strings.TrimSpace(model) == "" {
-		models := authModelsForIndex(sa.AuthID)
-		if len(models) > 0 {
-			model = models[0]
-		} else {
-			model = "GLM-5.3"
-		}
-	}
 	upstreamModel := mappedModel(model, cfg)
 
-	// 1. 构造流式最小探活负载（stream=true, max_tokens=1）
+	// 2. 构造流式最小探活负载（stream=true，max_tokens 抬升至全局输出底线）
 	pingPayload := map[string]any{
 		"model":      upstreamModel,
-		"max_tokens": 1,
+		"max_tokens": int(applyMaxTokensFloor(1)),
 		"stream":     true,
 		"messages": []map[string]string{
 			{"role": "user", "content": "ping"},
@@ -131,40 +158,24 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 	payloadBytes, _ := json.Marshal(pingPayload)
 
 	reqURL := target.URL + "/v1/messages"
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultActivePingTimeout)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		cancel()
-		return testActiveResponse{
-			OK:     false,
-			Status: "failed",
-			Model:  model,
-			Error:  err.Error(),
-		}
+		return false, 0, err.Error(), 0, 0
 	}
 
 	fp := mimic.New(cfg.Mimic, keyID(target.Credential))
 	fp.ApplyRequest(httpReq.Header, target.Credential, mimic.UUID4())
 	applyTargetAuth(httpReq.Header, target)
 
-	// 2. 发起请求并在收到首个数据块后立即异步关闭流，避免等待整段思考链完成
+	// 3. 发起请求并在收到首个数据块后立即异步关闭流，避免等待整段思考链完成
 	start := time.Now()
 	resp, err := modelHTTPClient.Do(httpReq)
 	if err != nil {
 		cancel()
-		latency := time.Since(start).Milliseconds()
-		sa.TestFailed = true
-		saveAuthTestStatus(sa)
-		noteAccountFailure(sa.AuthID, 0, err.Error())
-		publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 0, TotalTokens: 1}, latency, 0, true, err.Error(), 0)
-		return testActiveResponse{
-			OK:        false,
-			Status:    "failed",
-			Model:     model,
-			LatencyMS: latency,
-			Error:     err.Error(),
-		}
+		return false, 0, err.Error(), time.Since(start).Milliseconds(), 0
 	}
 	defer func() {
 		go func() {
@@ -176,44 +187,68 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		latency := time.Since(start).Milliseconds()
-		sa.TestFailed = true
-		saveAuthTestStatus(sa)
-		noteAccountFailure(sa.AuthID, resp.StatusCode, string(bodyBytes))
-		publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 0, TotalTokens: 1}, latency, resp.StatusCode, true, string(bodyBytes), 0)
-		return testActiveResponse{
-			OK:        false,
-			Status:    "failed",
-			Model:     model,
-			LatencyMS: latency,
-			Error:     fmt.Sprintf("upstream status %d: %s", resp.StatusCode, string(bodyBytes)),
-		}
+		return false, resp.StatusCode, fmt.Sprintf("upstream status %d: %s", resp.StatusCode, string(bodyBytes)), latency, 0
 	}
 
-	// 3. 读取首个分片（512 字节）即视为流已建立，拦截流内显式错误帧
+	// 4. 读取首个分片（512 字节）即视为流已建立，拦截流内显式错误帧
 	buf := make([]byte, 512)
 	n, _ := resp.Body.Read(buf)
 	latency := time.Since(start).Milliseconds()
 	firstChunk := string(buf[:n])
-	ttftNS := uint64(latency * 1000000)
+	ttft := uint64(latency * 1000000)
 	if strings.Contains(firstChunk, `"type":"error"`) || strings.Contains(firstChunk, `"type": "error"`) {
+		return false, http.StatusForbidden, fmt.Sprintf("upstream stream error: %s", firstChunk), latency, ttft
+	}
+	return true, resp.StatusCode, "", latency, ttft
+}
+
+// handleTestActiveWithAuth 向上游发起单次 Anthropic 流式首包即停真实探活。
+// [参数] sa: ZCode 账号凭据；model: 待测试模型名称。
+// [返回] testActiveResponse: 探活状态、耗时与结果消息。
+// 最近修改时间：2026-10-13 23:00:00 复用 pingUpstreamOnce 纯传输内核
+func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
+	if sa == nil || (sa.APIKey == "" && sa.Token == "" && sa.AccessToken == "") {
+		return testActiveResponse{
+			OK:     false,
+			Status: "failed",
+			Error:  "invalid account or empty api key",
+		}
+	}
+
+	cfg := currentConfig()
+
+	if strings.TrimSpace(model) == "" {
+		models := authModelsForIndex(sa.AuthID)
+		if len(models) > 0 {
+			model = models[0]
+		} else {
+			model = "GLM-5.3"
+		}
+	}
+	upstreamModel := mappedModel(model, cfg)
+
+	// 1. 发起纯传输探活
+	start := time.Now()
+	ok, statusCode, errMsg, latency, ttftNS := pingUpstreamOnceFn(sa, model)
+	if !ok {
 		sa.TestFailed = true
 		saveAuthTestStatus(sa)
-		noteAccountFailure(sa.AuthID, http.StatusForbidden, firstChunk)
-		publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 0, TotalTokens: 1}, latency, http.StatusForbidden, true, firstChunk, ttftNS)
+		noteAccountFailure(sa.AuthID, statusCode, errMsg)
+		publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 0, TotalTokens: 1}, latency, statusCode, true, errMsg, ttftNS)
 		return testActiveResponse{
 			OK:        false,
 			Status:    "failed",
 			Model:     model,
 			LatencyMS: latency,
-			Error:     fmt.Sprintf("upstream stream error: %s", firstChunk),
+			Error:     errMsg,
 		}
 	}
 
-	// 4. 探活成功：清标 test_failed，重置 failover
+	// 2. 探活成功：清标 test_failed，重置 failover
 	sa.TestFailed = false
 	saveAuthTestStatus(sa)
 	resetAccountFailover(sa.AuthID)
-	publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}, latency, resp.StatusCode, false, "", ttftNS)
+	publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}, latency, statusCode, false, "", ttftNS)
 
 	return testActiveResponse{
 		OK:        true,
@@ -222,6 +257,63 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 		LatencyMS: latency,
 		Message:   "活跃测试成功",
 	}
+}
+
+// doActivePing 定时活跃探活：全部候选模型按稳定顺序依次轮测，任一成功即成功。
+// [参数] sa: ZCode 账号凭据。
+// [返回] 探活失败时的错误，成功返回 nil。
+// 最近修改时间：2026-10-13 23:00:00 新增定时探活，全量模型按序测试
+func doActivePing(sa *StoredAuth) error {
+	if sa == nil {
+		return fmt.Errorf("nil storedAuth")
+	}
+	key := strings.TrimSpace(sa.AuthID)
+	if key == "" {
+		return fmt.Errorf("empty auth identifier")
+	}
+
+	// 1. 检查 30 分钟节流限制
+	if !shouldActivePing(key) {
+		return nil
+	}
+
+	// 2. 取全部候选模型按稳定顺序依次轮测
+	models := authModelsForIndexFn(key)
+	if len(models) == 0 {
+		models = []string{"GLM-5.3"}
+	}
+	var lastErr error
+	success := false
+
+	// 3. 依次测试候选模型，任意一个成功即刻退出
+	for _, m := range models {
+		if ok, statusCode, errMsg, latency, ttftNS := pingUpstreamOnceFn(sa, m); ok {
+			success = true
+			sa.TestFailed = false
+			saveAuthTestStatus(sa)
+			resetAccountFailover(sa.AuthID)
+			upstreamModel := mappedModel(m, currentConfig())
+			publishUsage(sa.AuthID, sa.Label, m, upstreamModel, time.Now(), usageTokensDetail{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}, latency, statusCode, false, "", ttftNS)
+			break
+		} else {
+			lastErr = fmt.Errorf("%s: %s", m, errMsg)
+		}
+	}
+
+	// 4. 处理探活结果
+	if !success {
+		// 全部模型失败：打 test_failed 标签并计入账号级故障
+		sa.TestFailed = true
+		saveAuthTestStatus(sa)
+		if lastErr == nil {
+			lastErr = fmt.Errorf("active ping failed for all %d models", len(models))
+		}
+		noteAccountFailure(sa.AuthID, 0, lastErr.Error())
+		return lastErr
+	}
+
+	recordActivePing(key)
+	return nil
 }
 
 // saveAuthTestStatus 保存账号探活测试状态落盘。

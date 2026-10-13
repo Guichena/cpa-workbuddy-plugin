@@ -264,6 +264,44 @@ func TestDoActivePingMultiModelAllFail(t *testing.T) {
 	}
 }
 
+// TestDoActivePingAllModelsBeyondLegacyCap 验证超过旧上限（5 个）的模型全部按序轮测，
+// 且顺序与候选发现顺序一致，最后一个模型成功时前面的模型均已尝试。
+func TestDoActivePingAllModelsBeyondLegacyCap(t *testing.T) {
+	resetActivePingTimes()
+	defer resetActivePingTimes()
+
+	fakeModels := []pluginapi.ModelInfo{
+		{ID: "m1"}, {ID: "m2"}, {ID: "m3"}, {ID: "m4"}, {ID: "m5"}, {ID: "m6"}, {ID: "m7"},
+	}
+	storeTraeDynamicModels(fakeModels)
+	defer storeTraeDynamicModels(nil)
+
+	origPingFn := sendActivePingTraeFn
+	defer func() { sendActivePingTraeFn = origPingFn }()
+
+	var attempted []string
+	sendActivePingTraeFn = func(sa *traeAuth, chosenModel string) error {
+		attempted = append(attempted, chosenModel)
+		if chosenModel == "m7" {
+			return nil
+		}
+		return errors.New("down")
+	}
+
+	sa := &traeAuth{UserID: "trae-user-beyond-cap"}
+	if err := doActivePing("idx-beyond", "trae-user-beyond-cap", sa); err != nil {
+		t.Fatalf("expected success when last model succeeds, got %v", err)
+	}
+	if len(attempted) != 7 {
+		t.Fatalf("expected all 7 models attempted (no legacy 5 cap), got %d: %v", len(attempted), attempted)
+	}
+	for i, want := range []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7"} {
+		if attempted[i] != want {
+			t.Fatalf("attempt order mismatch at %d: got %v, want %s", i, attempted, want)
+		}
+	}
+}
+
 // TestSendActivePingTrae_ExitsImmediatelyOnFirstOutput 验证探活流收到首个有效 output（含思考片段）时立即成功退出，
 // 不再阻塞等待后续数百个 reasoning token 或连接 EOF。
 // [参数] t: 测试上下文。

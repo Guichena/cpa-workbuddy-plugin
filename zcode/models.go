@@ -214,7 +214,7 @@ func allConfiguredModels() []pluginapi.ModelInfo {
 			Name:                       mappedModel(id, cfg),
 			SupportedGenerationMethods: []string{"chat"},
 			ContextLength:              ctxLen,
-			MaxCompletionTokens:        maxTokens,
+			MaxCompletionTokens:        applyMaxTokensFloor(maxTokens),
 			UserDefined:                true,
 		})
 	}

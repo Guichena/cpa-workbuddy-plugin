@@ -62,23 +62,23 @@ func TestResolveModelOptionsAutoUsesInlineChat(t *testing.T) {
 	}
 }
 
-// TestBuildTraePayloadStreamDefaultMaxTokens 验证流式请求缺省 max_tokens 补齐逻辑：
-// 客户端未传时补 20000，显式传入时保留原值，非流式路径不受影响。
+// TestBuildTraePayloadStreamDefaultMaxTokens 验证流式请求 max_tokens 的缺省补齐与下调至底线行为：
+// 客户端未传时补默认值，显式传入低于全局输出底线的值统一抬升至底线，非流式路径不受影响。
 //
 // [参数] t: 当前测试。
 // [返回] 无。
-// 最近修改时间：2026-08-31；改动原因：锁定流式长任务缺 max_tokens 根因的回归覆盖。
+// 最近修改时间：2026-10-13 15:00:00；改动原因：max_tokens 统一服从 32768 最低输出底线。
 func TestBuildTraePayloadStreamDefaultMaxTokens(t *testing.T) {
-	// 1. 流式 + 未传 max_tokens：必须补默认值 20000。
+	// 1. 流式 + 未传 max_tokens：必须补默认值。
 	payload := buildTraePayload([]map[string]any{{"role": "user", "content": "hi"}}, "qwen3.8-max", true, 0, nil, nil, nil, "")
 	if got := payload["max_tokens"]; got != streamDefaultMaxTokens {
 		t.Fatalf("stream max_tokens = %v, want %d", got, streamDefaultMaxTokens)
 	}
 
-	// 2. 流式 + 显式 max_tokens：保留客户端传入值，不覆盖。
+	// 2. 流式 + 显式 max_tokens 低于底线：抬升至 32768。
 	payload = buildTraePayload(nil, "qwen3.8-max", true, 4096, nil, nil, nil, "")
-	if got := payload["max_tokens"]; got != 4096 {
-		t.Fatalf("explicit stream max_tokens = %v, want 4096", got)
+	if got := payload["max_tokens"]; got != int(minMaxTokensFloor) {
+		t.Fatalf("explicit stream max_tokens = %v, want %d", got, minMaxTokensFloor)
 	}
 
 	// 3. 非流式 + 未传 max_tokens：不补默认值，保持无 max_tokens 字段。

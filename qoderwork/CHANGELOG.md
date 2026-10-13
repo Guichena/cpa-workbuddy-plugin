@@ -1,5 +1,16 @@
 # QoderWork Plugin Changelog
 
+## 0.9.35
+
+### Feat - max_tokens 统一 32768 最低输出底线
+
+- 变更要点:
+  1. 设立 `minMaxTokensFloor=32768` 统一最低输出底线：`model_specs.go` 新增该常量与 `applyMaxTokensFloor` 纯函数，`computeAdaptiveMaxTokens` 四个出口全部经其收敛，杜绝任何路径回落到 32768 以下的过小输出上限。
+  2. 广播层同步：`models.go` 的静态模型列表、动态发现与配置覆盖路径的 `MaxCompletionTokens` 一并保底。
+  3. 测试同步：`max_tokens_test.go` / `models_config_test.go` 既有断言更新为 32768 底线语义。
+- 说明: 本插件无定时探活，探活相关改动不适用于本插件。
+- 涉及文件: qoderwork/model_specs.go、qoderwork/models.go、qoderwork/*_test.go
+
 ## 0.9.34
 
 ### Feat - 上游 110 日调用上限 24 小时持久化冷却、路由排除与面板解冷

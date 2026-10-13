@@ -20,8 +20,6 @@ import (
 
 var defaultActivePingInterval = 30 * time.Minute
 var defaultActivePingTimeout = 20 * time.Second
-var defaultActivePingMaxBudget = 30 * time.Second
-var defaultActivePingMaxModels = 5
 
 var (
 	activePingMu        sync.Mutex
@@ -68,7 +66,7 @@ func isInternalNonChatTraeModel(id string) bool {
 	}
 }
 
-// pickRandomTraeModels 随机选取指定数量的不重复 Trae 模型列表供探活轮测。
+// pickRandomTraeModels 随机选取指定数量的不重复 Trae 模型列表供面板单模型测试。
 // [参数] sa: 账号凭据，用于缓存缺失时拉取可用模型；limit: 期望选取的最大模型数。
 // [返回] 随机打乱后的候选模型列表，至少包含一个兜底模型。
 // 最近修改时间：2026-10-11 21:55:00 过滤内部非对话子代理占位项
@@ -77,36 +75,9 @@ func pickRandomTraeModels(sa *traeAuth, limit int) []string {
 		limit = 1
 	}
 	// 1. 从缓存或凭据提取候选模型并去重（跳过内部非对话子代理占位项）
-	models := dynamicTraeModelsFromCacheOrAuth()
-	seen := make(map[string]struct{})
-	var candidates []string
-	for _, m := range models {
-		id := strings.TrimSpace(m.ID)
-		if id != "" && !isInternalNonChatTraeModel(id) {
-			if _, ok := seen[id]; !ok {
-				seen[id] = struct{}{}
-				candidates = append(candidates, id)
-			}
-		}
-	}
+	candidates := traeCandidateModels(sa)
 
-	// 2. 缓存缺失时尝试调用上游模型接口补齐
-	if len(candidates) == 0 && sa != nil {
-		if dyn, err := fetchTraeModels(sa); err == nil && len(dyn) > 0 {
-			storeTraeDynamicModels(dyn)
-			for _, m := range dyn {
-				id := strings.TrimSpace(m.ID)
-				if id != "" && !isInternalNonChatTraeModel(id) {
-					if _, ok := seen[id]; !ok {
-						seen[id] = struct{}{}
-						candidates = append(candidates, id)
-					}
-				}
-			}
-		}
-	}
-
-	// 3. 随机打乱并截取前 limit 个模型
+	// 2. 随机打乱并截取前 limit 个模型
 	if len(candidates) > 0 {
 		shuffled := append([]string(nil), candidates...)
 		for i := len(shuffled) - 1; i > 0; i-- {
@@ -123,6 +94,53 @@ func pickRandomTraeModels(sa *traeAuth, limit int) []string {
 	}
 
 	return []string{"claude-3-5-sonnet"}
+}
+
+// orderedAllTraeModels 返回全部候选模型，按稳定发现顺序排列供定时探活依次轮测。
+// [参数] sa: 账号凭据，用于缓存缺失时拉取可用模型。
+// [返回] 按发现顺序去重后的完整候选模型列表，至少包含一个兜底模型。
+// 最近修改时间：2026-10-13 23:00:00 定时探活改为全量模型按序测试
+func orderedAllTraeModels(sa *traeAuth) []string {
+	if candidates := traeCandidateModels(sa); len(candidates) > 0 {
+		return candidates
+	}
+	return []string{"claude-3-5-sonnet"}
+}
+
+// traeCandidateModels 收集去重后的候选模型，缓存缺失时回源上游补齐，并跳过内部非对话占位项。
+// [参数] sa: 账号凭据。
+// [返回] 按发现顺序去重后的候选模型列表；无候选时返回空切片。
+// 最近修改时间：2026-10-13 23:00:00 从 pickRandomTraeModels 抽出候选收集逻辑复用
+func traeCandidateModels(sa *traeAuth) []string {
+	seen := make(map[string]struct{})
+	var candidates []string
+	appendModel := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" || isInternalNonChatTraeModel(id) {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		candidates = append(candidates, id)
+	}
+
+	// 1. 优先使用缓存/凭据中的模型
+	for _, m := range dynamicTraeModelsFromCacheOrAuth() {
+		appendModel(m.ID)
+	}
+
+	// 2. 缓存缺失时尝试调用上游模型接口补齐
+	if len(candidates) == 0 && sa != nil {
+		if dyn, err := fetchTraeModels(sa); err == nil && len(dyn) > 0 {
+			storeTraeDynamicModels(dyn)
+			for _, m := range dyn {
+				appendModel(m.ID)
+			}
+		}
+	}
+	return candidates
 }
 
 // pickRandomTraeModel 随机选取单个模型。
@@ -142,7 +160,7 @@ func pickRandomTraeModel(sa *traeAuth) string {
 // [返回] error: 传输失败、HTTP 非 2xx 或 SSE 返回 event:error 时返回错误；收到首个有效 output/done 事件即刻成功返回 nil。
 // 最近修改时间：2026-10-11 21:50:00 改用流式直连并在收到首个有效 output 时立即中止关闭流，消除思考模型生成整段思维链导致的 5~8 秒耗时
 func sendActivePingTrae(sa *traeAuth, chosenModel string) error {
-	// 1. 构造最小流式探活负载（stream=true, max_tokens=1）
+	// 1. 构造最小流式探活负载（stream=true，max_tokens 抬升至全局输出底线）
 	msgs := toTraeMessages([]map[string]any{
 		{"role": "user", "content": "hi"},
 	})
@@ -276,18 +294,14 @@ func doActivePing(authIndex, authID string, sa *traeAuth) error {
 		return nil
 	}
 
-	// 2. 选取最多 5 个模型并设定整轮熔断截止时间
-	models := pickRandomTraeModels(sa, defaultActivePingMaxModels)
-	deadline := time.Now().Add(defaultActivePingMaxBudget)
+	// 2. 取全部候选模型按稳定顺序依次轮测
+	models := orderedAllTraeModels(sa)
 	var lastErr error
 	var successModel string
 	success := false
 
 	// 3. 依次测试候选模型，任意一个成功即刻退出
 	for _, m := range models {
-		if time.Now().After(deadline) {
-			break
-		}
 		if err := sendActivePingTraeFn(sa, m); err == nil {
 			success = true
 			successModel = m
@@ -308,7 +322,7 @@ func doActivePing(authIndex, authID string, sa *traeAuth) error {
 			}
 		}
 		if lastErr == nil {
-			lastErr = fmt.Errorf("active ping timeout after %v", defaultActivePingMaxBudget)
+			lastErr = fmt.Errorf("active ping failed for all %d models", len(models))
 		}
 		return lastErr
 	}

@@ -5,6 +5,20 @@ import (
 	"strings"
 )
 
+// minMaxTokensFloor 是所有模型对外输出的统一最低 max_tokens 底线。
+const minMaxTokensFloor int64 = 32768
+
+// applyMaxTokensFloor 把低于统一底线的 max_tokens 抬升至底线。
+// [参数] v: 待校验的 max_tokens 值
+// [返回] 不低于 32768 的值
+// 最近修改时间：2026-10-13 15:00:00；新增统一最低输出底线。
+func applyMaxTokensFloor(v int64) int64 {
+	if v < minMaxTokensFloor {
+		return minMaxTokensFloor
+	}
+	return v
+}
+
 // ModelOfficialSpec 定义模型的官方规格参数。
 type ModelOfficialSpec struct {
 	ContextWindow   int64 // 官方最大上下文长度
@@ -128,21 +142,21 @@ func computeAdaptiveMaxTokens(model string, requested int64, isReasoning bool) i
 
 	// 1. 客户端未传入：直接补足为该模式下的官方最大推荐值
 	if requested <= 0 {
-		return targetMax
+		return applyMaxTokensFloor(targetMax)
 	}
 
 	// 2. 思考模式下，若客户端传入保守过小值（<=8192），且官方推理上限更大，自动放宽破除死锁
 	if isReasoning && requested <= 8192 && targetMax > 8192 {
-		return targetMax
+		return applyMaxTokensFloor(targetMax)
 	}
 
 	// 3. 客户端显式传入值超过了官方允许的最大上限，截断至上限避免被上游网关报 400
 	if requested > targetMax {
-		return targetMax
+		return applyMaxTokensFloor(targetMax)
 	}
 
-	// 4. 处于合理区间内，原样保留客户端传入值
-	return requested
+	// 4. 处于合理区间内，原样保留客户端传入值（最终不低于统一输出底线）
+	return applyMaxTokensFloor(requested)
 }
 
 func jsonI64(m map[string]any, keys ...string) int64 {

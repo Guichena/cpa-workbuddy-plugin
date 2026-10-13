@@ -130,7 +130,7 @@ func modelInfoFromConfig(id, name string, ctxLen, maxTok int64) pluginapi.ModelI
 		ID:                         id,
 		Name:                       name,
 		ContextLength:              ctxLen,
-		MaxCompletionTokens:        maxTok,
+		MaxCompletionTokens:        applyMaxTokensFloor(maxTok),
 		OwnedBy:                    providerName,
 		SupportedGenerationMethods: []string{"chat"},
 	}
@@ -464,12 +464,12 @@ func (m upstreamModelEntry) maxOutputTokens() int64 {
 	val := firstPositive(m.MaxOutputTokens, m.MaxCompletionToken, m.MaxTokens)
 	spec, known := lookupOfficialModelSpec(m.ID)
 	if known && spec.ReasoningMax > 0 && val < spec.ReasoningMax {
-		return spec.ReasoningMax
+		return applyMaxTokensFloor(spec.ReasoningMax)
 	}
 	if val <= 0 {
-		return spec.MaxOutputTokens
+		return applyMaxTokensFloor(spec.MaxOutputTokens)
 	}
-	return val
+	return applyMaxTokensFloor(val)
 }
 
 func cacheModelAliases(host pluginapi.HostConfigSummary) {

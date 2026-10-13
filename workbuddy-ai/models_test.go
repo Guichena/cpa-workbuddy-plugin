@@ -149,7 +149,7 @@ func TestParseModelsAPIResponseV3Config(t *testing.T) {
 	for _, m := range models {
 		if m.ID == "auto" {
 			foundAuto = true
-			if m.ContextLength != 176000 || m.MaxCompletionTokens != 24000 {
+			if m.ContextLength != 176000 || m.MaxCompletionTokens != 32768 {
 				t.Fatalf("auto alias did not inherit limits from default-model: %+v", m)
 			}
 		}
@@ -186,7 +186,7 @@ func TestParseModelsAPIResponseV3ConfigNestedAgent(t *testing.T) {
 	for _, m := range models {
 		if m.ID == "auto" {
 			foundAuto = true
-			if m.ContextLength != 200000 || m.MaxCompletionTokens != 24000 {
+			if m.ContextLength != 200000 || m.MaxCompletionTokens != 32768 {
 				t.Fatalf("auto alias did not inherit limits from default: %+v", m)
 			}
 		}

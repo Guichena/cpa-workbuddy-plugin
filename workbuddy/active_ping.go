@@ -19,8 +19,6 @@ import (
 
 var defaultActivePingInterval = 30 * time.Minute
 var defaultActivePingTimeout = 20 * time.Second
-var defaultActivePingMaxBudget = 30 * time.Second
-var defaultActivePingMaxModels = 5
 
 var (
 	activePingMu        sync.Mutex
@@ -54,7 +52,7 @@ func resetActivePingTimes() {
 	lastActivePingTimes = make(map[string]time.Time)
 }
 
-// pickRandomWorkbuddyModels 随机选取指定数量的不重复模型列表供探活轮测。
+// pickRandomWorkbuddyModels 随机选取指定数量的不重复模型列表供面板单模型测试。
 // [参数] sa: 账号凭据，用于缓存缺失时拉取可用模型；limit: 期望选取的最大模型数。
 // [返回] 随机打乱后的候选模型列表，至少包含一个兜底模型。
 // 最近修改时间：2026-10-09 23:35:00 支持多模型随机轮测
@@ -63,36 +61,9 @@ func pickRandomWorkbuddyModels(sa *storedAuth, limit int) []string {
 		limit = 1
 	}
 	// 1. 从缓存或凭据提取候选模型并去重
-	models := dynamicModelsFromCacheOrAuth()
-	seen := make(map[string]struct{})
-	var candidates []string
-	for _, m := range models {
-		id := strings.TrimSpace(m.ID)
-		if id != "" {
-			if _, ok := seen[id]; !ok {
-				seen[id] = struct{}{}
-				candidates = append(candidates, id)
-			}
-		}
-	}
+	candidates := workbuddyCandidateModels(sa)
 
-	// 2. 缓存缺失时尝试调用上游模型接口补齐
-	if len(candidates) == 0 && sa != nil && strings.TrimSpace(sa.Auth.AccessToken) != "" {
-		if dyn, err := callModelsAPI(sa.Auth.AccessToken); err == nil && len(dyn) > 0 {
-			storeDynamicModels(dyn)
-			for _, m := range dyn {
-				id := strings.TrimSpace(m.ID)
-				if id != "" {
-					if _, ok := seen[id]; !ok {
-						seen[id] = struct{}{}
-						candidates = append(candidates, id)
-					}
-				}
-			}
-		}
-	}
-
-	// 3. 随机打乱并截取前 limit 个模型
+	// 2. 随机打乱并截取前 limit 个模型
 	if len(candidates) > 0 {
 		shuffled := append([]string(nil), candidates...)
 		for i := len(shuffled) - 1; i > 0; i-- {
@@ -109,6 +80,53 @@ func pickRandomWorkbuddyModels(sa *storedAuth, limit int) []string {
 	}
 
 	return []string{"deepseek-v4.1-flash"}
+}
+
+// orderedAllWorkbuddyModels 返回全部候选模型，按稳定发现顺序排列供定时探活依次轮测。
+// [参数] sa: 账号凭据，用于缓存缺失时拉取可用模型。
+// [返回] 按发现顺序去重后的完整候选模型列表，至少包含一个兜底模型。
+// 最近修改时间：2026-10-13 23:00:00 定时探活改为全量模型按序测试
+func orderedAllWorkbuddyModels(sa *storedAuth) []string {
+	if candidates := workbuddyCandidateModels(sa); len(candidates) > 0 {
+		return candidates
+	}
+	return []string{"deepseek-v4.1-flash"}
+}
+
+// workbuddyCandidateModels 收集去重后的候选模型，缓存缺失时回源上游补齐。
+// [参数] sa: 账号凭据。
+// [返回] 按发现顺序去重后的候选模型列表；无候选时返回空切片。
+// 最近修改时间：2026-10-13 23:00:00 从 pickRandomWorkbuddyModels 抽出候选收集逻辑复用
+func workbuddyCandidateModels(sa *storedAuth) []string {
+	seen := make(map[string]struct{})
+	var candidates []string
+	appendModel := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		candidates = append(candidates, id)
+	}
+
+	// 1. 优先使用缓存/凭据中的模型
+	for _, m := range dynamicModelsFromCacheOrAuth() {
+		appendModel(m.ID)
+	}
+
+	// 2. 缓存缺失时尝试调用上游模型接口补齐
+	if len(candidates) == 0 && sa != nil && strings.TrimSpace(sa.Auth.AccessToken) != "" {
+		if dyn, err := callModelsAPI(sa.Auth.AccessToken); err == nil && len(dyn) > 0 {
+			storeDynamicModels(dyn)
+			for _, m := range dyn {
+				appendModel(m.ID)
+			}
+		}
+	}
+	return candidates
 }
 
 // pickRandomWorkbuddyModel 随机选取单个模型。
@@ -130,7 +148,7 @@ func sendActivePingWorkbuddy(sa *storedAuth, chosenModel string) error {
 			{"role": "user", "content": "hi"},
 		},
 		"stream":     true,
-		"max_tokens": 5,
+		"max_tokens": int(applyMaxTokensFloor(5)),
 	}
 	raw, err := json.Marshal(reqMap)
 	if err != nil {
@@ -166,10 +184,10 @@ func sendActivePingWorkbuddy(sa *storedAuth, chosenModel string) error {
 	return nil
 }
 
-// doActivePing 自动定时探活主逻辑，支持多模型依次轮测与熔断。
+// doActivePing 自动定时探活主逻辑：全部候选模型按稳定顺序依次轮测。
 // [参数] authIndex: 宿主 RPC 索引; authID: 账号唯一标识; sa: 账号凭据对象。
 // [返回] 探活失败时的错误，成功返回 nil。
-// 最近修改时间：2026-10-09 23:35:00 支持最多 5 个模型轮测与 30s 熔断
+// 最近修改时间：2026-10-13 23:00:00 改为全量模型按序测试，任一成功即成功
 func doActivePing(authIndex, authID string, sa *storedAuth) error {
 	if sa == nil {
 		return fmt.Errorf("nil storedAuth")
@@ -191,18 +209,14 @@ func doActivePing(authIndex, authID string, sa *storedAuth) error {
 		return nil
 	}
 
-	// 2. 选取最多 5 个模型并设定整轮熔断截止时间
-	models := pickRandomWorkbuddyModels(sa, defaultActivePingMaxModels)
-	deadline := time.Now().Add(defaultActivePingMaxBudget)
+	// 2. 取全部候选模型按稳定顺序依次轮测
+	models := orderedAllWorkbuddyModels(sa)
 	var lastErr error
 	var successModel string
 	success := false
 
 	// 3. 依次测试候选模型，任意一个成功即刻退出
 	for _, m := range models {
-		if time.Now().After(deadline) {
-			break
-		}
 		if err := sendActivePingWorkbuddyFn(sa, m); err == nil {
 			success = true
 			successModel = m
@@ -223,7 +237,7 @@ func doActivePing(authIndex, authID string, sa *storedAuth) error {
 			}
 		}
 		if lastErr == nil {
-			lastErr = fmt.Errorf("active ping timeout after %v", defaultActivePingMaxBudget)
+			lastErr = fmt.Errorf("active ping failed for all %d models", len(models))
 		}
 		return lastErr
 	}

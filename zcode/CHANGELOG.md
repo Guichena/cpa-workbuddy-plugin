@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.21] - 2026-10-13
+
+### Added
+- **新增定时探活（全量模型按序测试）**：
+  - 引入 30 分钟节流（`shouldActivePing` / `recordActivePing` / `resetActivePingTimes`）与 20s 单请求超时，在额度刷新成功后对账号执行一轮探活；
+  - 按该账号全部已配置模型顺序依次探活，**任一模型成功即判定健康并立即终止本轮**，仅当全部失败才写入 `test_failed` 标签；
+- **max_tokens 统一 32768 最低输出底线**：
+  - 新增 `minMaxTokensFloor=32768` 常量与 `applyMaxTokensFloor` 纯函数，`computeAdaptiveMaxTokens` 四个出口全部经其收敛；
+  - `models.go` 的 `MaxCompletionTokens` 广播一并保底；探活负载 `max_tokens` 同样抬升至底线。
+
+### Changed
+- **官方规格矩阵全扩**：`model_specs.go` 规格表由 14 条扩至全通用家族（覆盖 GLM 4.5/4.6/4.7 全系、Claude、GPT、Gemini、DeepSeek、Qwen 等），匹配逻辑改为最长前缀优先并支持 `vendor/` 前缀剥离。
+
 ## [0.1.20] - 2026-10-13
 
 ### Added

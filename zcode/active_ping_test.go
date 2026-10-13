@@ -134,3 +134,93 @@ func TestActivePing_FirstChunkEarlyExit(t *testing.T) {
 	}
 }
 
+// TestDoActivePingAllModelsInOrderAnySuccess 验证定时探活按候选顺序依次轮测全部模型，任一成功即刻终止并清标。
+func TestDoActivePingAllModelsInOrderAnySuccess(t *testing.T) {
+	resetActivePingTimes()
+	defer resetActivePingTimes()
+
+	tempDir, err := os.MkdirTemp("", "zcode_do_ping_succ_*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	setAccountsDir(tempDir)
+
+	origPing := pingUpstreamOnceFn
+	origModels := authModelsForIndexFn
+	defer func() {
+		pingUpstreamOnceFn = origPing
+		authModelsForIndexFn = origModels
+	}()
+
+	authModelsForIndexFn = func(authID string) []string {
+		return []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7"}
+	}
+	var attempted []string
+	pingUpstreamOnceFn = func(sa *StoredAuth, model string) (bool, int, string, int64, uint64) {
+		attempted = append(attempted, model)
+		if model == "m7" {
+			return true, http.StatusOK, "", 10, 1000
+		}
+		return false, http.StatusBadGateway, "down", 5, 0
+	}
+
+	sa := &StoredAuth{AuthID: "zcode-do-succ", APIKey: "valid.key"}
+	sa.TestFailed = true
+	_ = writeAuthFileDirect(filepath.Join(tempDir, "zcode-do-succ.json"), sa)
+
+	if err := doActivePing(sa); err != nil {
+		t.Fatalf("expected any-success to return nil, got %v", err)
+	}
+	if len(attempted) != 7 {
+		t.Fatalf("expected all 7 models attempted in order, got %d: %v", len(attempted), attempted)
+	}
+	for i, want := range []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7"} {
+		if attempted[i] != want {
+			t.Fatalf("attempt order mismatch at %d: got %v, want %s", i, attempted, want)
+		}
+	}
+	accAfter, _ := readAuthFile(filepath.Join(tempDir, "zcode-do-succ.json"))
+	if accAfter == nil || accAfter.TestFailed {
+		t.Fatalf("expected test_failed cleared after success, got %+v", accAfter)
+	}
+}
+
+// TestDoActivePingAllModelsFailTagsTestFailed 验证全部模型失败时打上 test_failed 标签。
+func TestDoActivePingAllModelsFailTagsTestFailed(t *testing.T) {
+	resetActivePingTimes()
+	defer resetActivePingTimes()
+
+	tempDir, err := os.MkdirTemp("", "zcode_do_ping_fail_*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	setAccountsDir(tempDir)
+
+	origPing := pingUpstreamOnceFn
+	origModels := authModelsForIndexFn
+	defer func() {
+		pingUpstreamOnceFn = origPing
+		authModelsForIndexFn = origModels
+	}()
+
+	authModelsForIndexFn = func(authID string) []string {
+		return []string{"fail-1", "fail-2"}
+	}
+	pingUpstreamOnceFn = func(sa *StoredAuth, model string) (bool, int, string, int64, uint64) {
+		return false, http.StatusBadGateway, "down", 5, 0
+	}
+
+	sa := &StoredAuth{AuthID: "zcode-do-fail", APIKey: "valid.key"}
+	_ = writeAuthFileDirect(filepath.Join(tempDir, "zcode-do-fail.json"), sa)
+
+	err = doActivePing(sa)
+	if err == nil {
+		t.Fatalf("expected error when all models fail")
+	}
+	accAfter, _ := readAuthFile(filepath.Join(tempDir, "zcode-do-fail.json"))
+	if accAfter == nil || !accAfter.TestFailed {
+		t.Fatalf("expected test_failed to be true after all-fail, got %+v", accAfter)
+	}
+}
