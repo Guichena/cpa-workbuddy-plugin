@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.23] - 2026-10-14
+
+### Fixed
+- **推理路径改用无整体超时的 HTTP 客户端，根治长思考输出被掐断**：
+  - 现象：glm-5.3 推理偶发失败，生产日志 `err=context deadline exceeded (Client.Timeout ... while reading body)`、`duration=14.216s`，同账号同分钟前序请求 10.8s / 5.6s / 6.2s 均成功。
+  - 根因：`modelHTTPClient` 的 15 秒整体超时（`http.Client.Timeout` 覆盖连接 + 重定向 + 读取响应体全流程）被流式 / 非流式 / 探活三处推理路径复用，思考链稍长即在读响应体时被强制中断。
+  - 修复：新增 `inferenceHTTPClient`——不设整体超时，仅按操作 deadline（Dial 10s / TLS 握手 10s / 响应头等待 90s），替换三处推理调用；`modelHTTPClient` 保留 15 秒，仅服务模型列表、令牌换取、额度查询等元数据短请求。
+  - 新增 `inference_client_test.go`：守「推理客户端整体超时不得回归」与「慢响应体须完整读完」两条契约。
+
 ## [0.1.22] - 2026-10-14
 
 ### Fixed
