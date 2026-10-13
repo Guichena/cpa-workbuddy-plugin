@@ -1,5 +1,14 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.14
+
+### Fix - 补齐 /clear-cooldown 管理路由注册（宿主分派缺失导致生产 404）
+
+- 变更要点:
+  1. 缺陷：0.1.13 已在 `handleManagement` 的 switch 中实现 `POST /clear-cooldown`，但 `managementRegistration().Routes` 未登记该路由。宿主按注册表分派请求，未声明路径被宿主层拦截，返回空 body 404（qoderwork 0.9.34 因已登记而正常）。
+  2. 修复：在 `management.go` 的 `Routes` 列表中补登 `{POST, /plugins/qoder-ai-provider/clear-cooldown}`，与 switch case 及 qoderwork 保持同构。
+  3. 门禁验证：`cgo-shim-build.py qoder-ai` build/vet/test 全绿。
+
 ## 0.1.13
 
 ### Feat - 上游 110 日调用上限 24 小时持久化冷却、路由排除与面板解冷

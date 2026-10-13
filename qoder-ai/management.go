@@ -131,6 +131,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/claim-pro", Description: "Claim one-time Pro upgrade pack for one account (auth_index)."},
 			{Method: http.MethodGet, Path: base + "/keepalive/status", Description: "Last keepalive run summary + config."},
 			{Method: http.MethodPost, Path: base + "/delete", Description: "Delete one Qoder AI account and its physical auth file (body: {auth_index})."},
+			{Method: http.MethodPost, Path: base + "/clear-cooldown", Description: "Manually clear 24h daily cooling limit for an account (body: {auth_index})."},
 			{Method: http.MethodPost, Path: base + "/test-active", Description: "Run one manual active inference test for an account (body: {auth_index, model?})."},
 			{Method: http.MethodGet, Path: base + "/models", Description: "List the models available to one account for the panel test picker (query: auth_index)."},
 		},
