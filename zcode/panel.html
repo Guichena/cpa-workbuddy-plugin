@@ -319,11 +319,18 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
           <div class="spinner"></div>
           <strong id="activateStatusText" style="color:var(--fg);font-size:14px;">已打开官方授权页面，等待授权完成…</strong>
         </div>
-        <p style="margin:0 0 10px;">请在弹出的 Z.ai 官方页面中点击「同意授权」完成开通；授权完成后插件会自动捕获并下发每日 800 万额度。</p>
+        <p style="margin:0 0 10px;">请在 Z.ai 官方页面中点击「同意授权」完成开通；授权完成后插件会自动捕获并下发每日 800 万额度。</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
           <a class="btn sec" id="activateExternalLink" href="#" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;padding:6px 14px;border-radius:6px;font-size:12px;">
             <span>打开官方授权页 ↗</span>
           </a>
+        </div>
+        <div style="margin-top:12px;">
+          <p style="margin:0 0 6px;font-size:12px;">若弹窗被浏览器拦截，可复制下方授权地址在其它窗口或设备打开：</p>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="text" id="activateUrlInput" readonly style="flex:1;min-width:0;background:var(--btn-sec);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:11px;font-family:ui-monospace,monospace;" value="">
+            <button type="button" class="sec" id="activateCopyBtn" style="flex:none;padding:7px 14px;border-radius:6px;font-size:12px;cursor:pointer;">复制链接</button>
+          </div>
         </div>
       </div>
       <p class="hint" style="color:var(--mut);font-size:12px;margin:0;">提示：无需安装或打开 ZCode 桌面客户端软件，在网页端授权即可获得完整每日额度。</p>
@@ -857,6 +864,39 @@ function openActivateModal(title, hint, authUrl, state, onComplete){
   if(statusEl) statusEl.textContent = "已打开官方授权页面，等待授权完成…";
   const link = document.getElementById("activateExternalLink");
   if(link) link.href = authUrl || "#";
+
+  // 授权地址复制区（弹窗可能被拦截，供用户在其它窗口/设备打开）
+  const urlInput = document.getElementById("activateUrlInput");
+  if(urlInput) urlInput.value = authUrl || "";
+  const copyBtn = document.getElementById("activateCopyBtn");
+  if(copyBtn){
+    copyBtn._copyUrl = authUrl || "";
+    if(!copyBtn._bound){
+      copyBtn._bound = true;
+      copyBtn.addEventListener("click", async ()=>{
+        const text = copyBtn._copyUrl || "";
+        if(!text){ toast("暂无授权地址", "err"); return; }
+        try{
+          if(navigator.clipboard && window.isSecureContext){
+            await navigator.clipboard.writeText(text);
+          }else{
+            const tmp = document.createElement("textarea");
+            tmp.value = text;
+            tmp.style.position = "fixed";
+            tmp.style.opacity = "0";
+            document.body.appendChild(tmp);
+            tmp.select();
+            document.execCommand("copy");
+            document.body.removeChild(tmp);
+          }
+          toast("授权链接已复制", "ok", "可在其它窗口或设备打开");
+        }catch(e){
+          toast("复制失败", "err", "请手动选中输入框内容复制");
+        }
+      });
+    }
+  }
+
   const modal = document.getElementById("activateModal");
   if(modal) modal.classList.add("show");
 
