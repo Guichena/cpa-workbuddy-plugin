@@ -625,9 +625,10 @@ func handleClaimAccount(body []byte) ([]byte, error) {
 	return makeHTTPResponse(http.StatusOK, bodyResp)
 }
 
-// handleActivateStart 处理 POST /activate-start 发起账号官方授权激活。
-// [参数] body: 可包含 auth_id（指定账号原地激活），为空时代表新账号授权登录。
+// handleActivateStart 处理 POST /activate-start 发起账号官方 OAuth 授权登录。
+// [参数] body: 可包含 auth_id（指定存量账号就地更新凭据），为空时代表新账号授权登录。
 // [返回] 授权页面 URL、state 状态码以及 flow_id。
+// 最近修改时间：2026-10-14；改动原因：纠正「激活」措辞——该链路只完成授权登录，不下发每日额度。
 func handleActivateStart(body []byte) ([]byte, error) {
 	authID := extractAuthIDFromBody(body)
 	var label string
@@ -657,9 +658,10 @@ func handleActivateStart(body []byte) ([]byte, error) {
 	return makeHTTPResponse(http.StatusOK, resBytes)
 }
 
-// handleActivatePoll 处理 GET /activate-poll 轮询官方授权激活状态。
+// handleActivatePoll 处理 GET /activate-poll 轮询官方 OAuth 授权登录结果。
 // [参数] state: 授权会话状态标识。
-// [返回] status (pending/success/error)，若激活成功并自动拉取到额度，附带 quota 快照。
+// [返回] status (pending/success/error)，若授权成功并拉取到额度，附带 quota 快照（无套餐时为 null）。
+// 最近修改时间：2026-10-14；改动原因：纠正「激活」措辞——本链路只完成授权登录，额度需官方客户端内领取。
 func handleActivatePoll(state string) ([]byte, error) {
 	state = strings.TrimSpace(state)
 	if state == "" {
@@ -692,7 +694,7 @@ func handleActivatePoll(state string) ([]byte, error) {
 		}
 		res := map[string]any{
 			"status":  "success",
-			"message": "ZCode 账号官方授权激活成功！",
+			"message": "ZCode 账号授权登录成功！",
 			"auth_id": authID,
 			"quota":   quotaSnap,
 		}
@@ -739,7 +741,7 @@ func handleActivatePoll(state string) ([]byte, error) {
 
 		res := map[string]any{
 			"status":  "success",
-			"message": "ZCode Start Plan 授权激活成功！",
+			"message": "ZCode 账号授权登录成功！",
 			"auth_id": authData.ID,
 			"quota":   quotaSnap,
 		}

@@ -309,17 +309,17 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 <div class="modal-mask" id="activateModal" onclick="onActivateMaskClick(event)">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="activateModalTitle">
     <div class="modal-hd">
-      <h2 id="activateModalTitle">⚡ 官方授权激活 Start Plan</h2>
+      <h2 id="activateModalTitle">OAuth 授权登录</h2>
       <button type="button" class="modal-x" onclick="closeActivateModal()" aria-label="关闭">×</button>
     </div>
     <div class="modal-bd">
-      <p class="hint" id="activateModalHint">正在连接 Z.ai 官方完成授权激活…</p>
+      <p class="hint" id="activateModalHint">正在连接 Z.ai 官方完成授权登录…</p>
       <div id="activateModalBody" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin:14px 0;line-height:1.6;font-size:13px;color:var(--mut);">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
           <div class="spinner"></div>
           <strong id="activateStatusText" style="color:var(--fg);font-size:14px;">已打开官方授权页面，等待授权完成…</strong>
         </div>
-        <p style="margin:0 0 10px;">请在 Z.ai 官方页面中点击「同意授权」完成开通；授权完成后插件会自动捕获并下发每日 800 万额度。</p>
+        <p style="margin:0 0 10px;">请在 Z.ai 官方页面中点击「同意授权」完成登录；授权完成后插件会自动捕获并绑定该账号。每日额度需按提示在 ZCode 客户端内领取。</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
           <a class="btn sec" id="activateExternalLink" href="#" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;padding:6px 14px;border-radius:6px;font-size:12px;">
             <span>打开官方授权页 ↗</span>
@@ -333,10 +333,35 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
           </div>
         </div>
       </div>
-      <p class="hint" style="color:var(--mut);font-size:12px;margin:0;">提示：无需安装或打开 ZCode 桌面客户端软件，在网页端授权即可获得完整每日额度。</p>
+      <p class="hint" style="color:var(--mut);font-size:12px;margin:0;">提示：授权登录只完成账号绑定；每日额度需在 ZCode 客户端内领取（详见卡片「📖 领取指引」）。</p>
     </div>
     <div class="modal-ft">
       <button type="button" class="sec" onclick="closeActivateModal()">取消</button>
+    </div>
+  </div>
+</div>
+<div class="modal-mask" id="guideModal" onclick="onGuideMaskClick(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="guideModalTitle">
+    <div class="modal-hd">
+      <h2 id="guideModalTitle">📖 领取 Start Plan 每日额度</h2>
+      <button type="button" class="modal-x" onclick="closeGuideModal()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p class="hint">账号「<strong id="guideAccountName" style="color:var(--fg);"></strong>」已完成 Z.ai 授权登录，但官方每日额度需要在 ZCode 客户端内领取一次才会下发。</p>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin:14px 0;line-height:1.7;font-size:13px;color:var(--mut);">
+        <p style="margin:0 0 10px;color:var(--fg);font-weight:600;">领取步骤</p>
+        <ol style="margin:0;padding-left:20px;">
+          <li>下载并打开官方 ZCode 桌面客户端（<a href="https://zcode.z.ai" target="_blank" rel="noopener noreferrer" style="color:var(--acc);">zcode.z.ai</a>）。</li>
+          <li>在客户端内使用与本账号相同的 Z.ai 账号登录。</li>
+          <li>按客户端首页弹窗提示点击「领取 Start Plan」，完成一次人机验证即可开通每日额度。</li>
+          <li>领取完成后回到本面板，点击下方「刷新额度」确认到账。</li>
+        </ol>
+      </div>
+      <p class="hint" style="color:var(--mut);font-size:12px;margin:0;">说明：每日额度的领取由官方在客户端内完成，领取接口受官方人机验证保护，网页端与插件端均无领取入口；本指引仅说明官方领取路径。</p>
+    </div>
+    <div class="modal-ft">
+      <button type="button" class="sec" onclick="closeGuideModal()">关闭</button>
+      <button type="button" id="guideRefreshBtn">刷新额度</button>
     </div>
   </div>
 </div>
@@ -524,11 +549,11 @@ function sortedAccounts(accounts){
   const dir=currentSort==="quota_asc"?1:-1;
   return [...list].sort((x,y)=>dir*(quotaTotal(x)-quotaTotal(y)));
 }
-// 额度进度条：每日额度按 entitlement 展示，无额度数据时提示刷新。
+// 额度进度条：每日额度按 entitlement 展示，无额度数据时提示领取。
 function quotaHTML(a){
   const q=a&&a.quota;
   if(!q||!Array.isArray(q.entitlements)||!q.entitlements.length){
-    return `<div class="pb"><div class="pb-label"><span class="pb-primary"><span class="pb-segment">每日额度</span></span><span class="pb-used err">未激活 · 需激活开通额度</span></div><div class="pb-track"><div class="pb-bar" style="width:0%"></div></div></div>`;
+    return `<div class="pb"><div class="pb-label"><span class="pb-primary"><span class="pb-segment">每日额度</span></span><span class="pb-used err">未领取 · 需在 ZCode 客户端领取 Start Plan</span></div><div class="pb-track"><div class="pb-bar" style="width:0%"></div></div></div>`;
   }
   const total=Number(q.total_grant)||0;
   const segs=q.entitlements.map(e=>{
@@ -556,10 +581,10 @@ function card(a){
   const titleName = displayName(a);
   const isUnactivated=!a.quota||!Array.isArray(a.quota.entitlements)||!a.quota.entitlements.length;
   const planBadge=isUnactivated
-    ? `<span class="badge warning" title="该账号尚未激活 Start Plan，点击下方「激活开通」即可获得每日 800 万额度">未激活</span>`
+    ? `<span class="badge warning" title="该账号已授权登录，但尚未领取 Start Plan 每日额度；请在 ZCode 桌面客户端内领取">未领取</span>`
     : (a.quota&&a.quota.plan_name?`<span class="badge plan" title="${esc(a.quota.plan_name)}">${esc(a.quota.plan_name)}</span>`:"");
-  const activateBtn=isUnactivated
-    ? `<button class="sec btn-act" data-action="activate" data-auth-index="${esc(a.auth_id)}" title="一键激活开通 Start Plan 每日 800 万额度">⚡ 激活开通</button>`
+  const guideBtn=isUnactivated
+    ? `<button class="sec btn-act" data-action="guide" data-auth-index="${esc(a.auth_id)}" title="查看 Start Plan 每日额度的官方领取步骤">📖 领取指引</button>`
     : "";
   return `<div class="card" data-state="${st}" data-auth="${esc(a.auth_id)}" data-name="${esc(titleName)}" data-quota="${quotaTotal(a)}" data-search="${esc(((a.label||"")+" "+(a.username||"")+" "+(a.email||"")+" "+(a.user_id||"")+" "+(a.api_key_masked||"")+" "+(a.auth_id||"")).toLowerCase())}">
   <h2><span class="name" title="${esc(titleName)}">${esc(titleName)}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${stateBadge(a)}${planBadge}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_id)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
@@ -572,7 +597,7 @@ function card(a){
   ${quotaHTML(a)}
   <div class="models">${modelTags}${more}</div>
   <div class="actions">
-    ${activateBtn}
+    ${guideBtn}
     <button class="sec" data-action="quota" data-auth-index="${esc(a.auth_id)}" title="刷新该账号的每日额度">刷新额度</button>
     <button class="sec" data-action="test" data-auth-index="${esc(a.auth_id)}" title="选择模型发送一次真实推理请求">测试</button>
     ${toggleBtn}
@@ -595,7 +620,7 @@ function bindCardActions(root){
       const act=ev.currentTarget.dataset.action;
       const id=ev.currentTarget.dataset.authIndex;
       if(act==="test") openTestModal(id);
-      else if(act==="activate") activateAccount(id, ev.currentTarget);
+      else if(act==="guide") openGuideModal(id);
       else if(act==="enable") setStatus(id,false,ev.currentTarget);
       else if(act==="disable") setStatus(id,true,ev.currentTarget);
       else if(act==="delete") openDeleteModal(id);
@@ -834,8 +859,8 @@ async function refreshQuota(authID, btn){
   try{
     const acct=await fetchAndPatchQuota(authID, {}, true);
     if(!acct.quota || !Array.isArray(acct.quota.entitlements) || !acct.quota.entitlements.length){
-      toast("检测到账号尚未开通额度", "warn", "正在为您引导官方授权激活…");
-      await activateAccount(authID, btn);
+      toast("检测到账号尚未领取额度", "warn", "已为你打开 Start Plan 领取指引");
+      openGuideModal(authID);
       return;
     }
     const who=acct.quota?acct.quota.plan_name:authID;
@@ -843,8 +868,8 @@ async function refreshQuota(authID, btn){
     toast("额度已刷新","ok",who+" · 合计 "+total);
   }catch(e){
     if(String(e.message||"").includes("无生效计划")){
-      toast("检测到账号尚未开通额度", "warn", "正在为您引导官方授权激活…");
-      await activateAccount(authID, btn);
+      toast("检测到账号尚未领取额度", "warn", "已为你打开 Start Plan 领取指引");
+      openGuideModal(authID);
       return;
     }
     toast("刷新失败","err",e.message);
@@ -857,9 +882,9 @@ let activeOAuthWindow = null;
 
 function openActivateModal(title, hint, authUrl, state, onComplete){
   const titleEl = document.getElementById("activateModalTitle");
-  if(titleEl) titleEl.textContent = title || "⚡ 官方授权激活 Start Plan";
+  if(titleEl) titleEl.textContent = title || "OAuth 授权登录";
   const hintEl = document.getElementById("activateModalHint");
-  if(hintEl) hintEl.textContent = hint || "正在连接 Z.ai 官方完成授权激活…";
+  if(hintEl) hintEl.textContent = hint || "正在连接 Z.ai 官方完成授权登录…";
   const statusEl = document.getElementById("activateStatusText");
   if(statusEl) statusEl.textContent = "已打开官方授权页面，等待授权完成…";
   const link = document.getElementById("activateExternalLink");
@@ -912,7 +937,7 @@ function openActivateModal(title, hint, authUrl, state, onComplete){
       clearInterval(activeOAuthPollTimer);
       activeOAuthPollTimer = null;
       if(statusEl) statusEl.textContent = "授权超时（5分钟），请重新发起";
-      toast("授权超时", "err", "请重新点击激活按钮发起授权");
+      toast("授权超时", "err", "请重新点击「OAuth 授权登录」发起授权");
       return;
     }
 
@@ -953,61 +978,46 @@ function onActivateMaskClick(ev){
   if(ev.target && ev.target.id === "activateModal") closeActivateModal();
 }
 
-// 激活账号 Start Plan 每日额度
-async function activateAccount(authID, btn){
-  busy(btn, true);
-  try{
-    const target = (lastAccounts||[]).find(x=>x.auth_id===authID);
-    const targetLabel = target ? (target.label || target.username || authID) : authID;
-
-    // 1. 发起官方 CLI OAuth 授权会话（指定关联当前账号 ID）
-    const startRes = await api("/activate-start", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({auth_id: authID})
-    });
-
-    if(!startRes || !startRes.ok || !startRes.authorize_url){
-      toast("发起授权失败", "err", (startRes&&startRes.error)||"无法获取官方授权地址");
-      return;
+/* ---------- Start Plan 领取指引 ----------
+   账号已完成 Z.ai 授权登录后，每日 800 万额度的 Start Plan 并不会随登录自动下发：
+   官方仅在 ZCode 桌面客户端内通过服务端活动弹窗引导用户手动领取，且领取接口
+   （/api/v1/zcode-plan/billing/claim）强制校验阿里云人机验证头，网页端与插件端
+   均无领取入口。因此这里只提供如实说明与官方领取路径引导。
+*/
+// openGuideModal 打开 Start Plan 领取指引弹窗，展示官方领取步骤并绑定「刷新额度」复查。
+// [参数] authID: 目标账号的 auth_id，用于回填账号名与刷新额度。
+// [返回] 无。
+// 最近修改时间：2026-10-14；改动原因：新增领取指引，替代失效的「一键激活」交互。
+function openGuideModal(authID){
+  const target = (lastAccounts||[]).find(x=>x.auth_id===authID);
+  const label = target ? (target.label || target.username || authID) : (authID||"");
+  const titleEl = document.getElementById("guideModalTitle");
+  if(titleEl) titleEl.textContent = "📖 领取 Start Plan 每日额度";
+  const whoEl = document.getElementById("guideAccountName");
+  if(whoEl) whoEl.textContent = label;
+  const refreshBtn = document.getElementById("guideRefreshBtn");
+  if(refreshBtn){
+    refreshBtn._authID = authID || "";
+    if(!refreshBtn._bound){
+      refreshBtn._bound = true;
+      refreshBtn.addEventListener("click", async ()=>{
+        const id = refreshBtn._authID || "";
+        closeGuideModal();
+        if(id) await refreshQuota(id, refreshBtn);
+      });
     }
-
-    const cleanAuthUrl = (startRes.authorize_url || "").replace(/&amp;/g, "&");
-
-    // 2. 尝试打开官方授权弹窗
-    const w = 560, h = 720;
-    const left = Math.max(0, (window.screen.width - w) / 2);
-    const top = Math.max(0, (window.screen.height - h) / 2);
-    try{
-      activeOAuthWindow = window.open(
-        cleanAuthUrl,
-        "zcode_activate_popup",
-        `width=${w},height=${h},top=${top},left=${left},menubar=no,toolbar=no,status=no`
-      );
-    }catch(_){
-      activeOAuthWindow = null;
-    }
-
-    // 3. 打开激活引导弹窗并启动轮询
-    openActivateModal(
-      `⚡ 激活账号「${targetLabel}」`,
-      `正在通过 Z.ai 官方授权为该账号开通每日 800 万额度…`,
-      cleanAuthUrl,
-      startRes.state,
-      (res)=>{
-        toast("激活开通成功！", "ok", "Start Plan 每日 800 万额度已到账");
-        if(target && res.quota){
-          target.quota = res.quota;
-          updateOneCard(target);
-        }
-        load({__silent: true});
-      }
-    );
-  }catch(e){
-    toast("激活失败", "err", e.message);
-  }finally{
-    busy(btn, false);
   }
+  const modal = document.getElementById("guideModal");
+  if(modal) modal.classList.add("show");
+}
+
+function closeGuideModal(){
+  const modal = document.getElementById("guideModal");
+  if(modal) modal.classList.remove("show");
+}
+
+function onGuideMaskClick(ev){
+  if(ev.target && ev.target.id === "guideModal") closeGuideModal();
 }
 
 /* ---------- account actions ---------- */
@@ -1057,7 +1067,7 @@ async function openOAuthBridge(){
       cleanAuthUrl,
       startRes.state,
       (res)=>{
-        toast("新账号授权成功！", "ok", "已添加 ZCode 账号并开通额度");
+        toast("新账号授权成功！", "ok", "已绑定 ZCode 账号；每日额度请在 ZCode 客户端内领取");
         load();
       }
     );
