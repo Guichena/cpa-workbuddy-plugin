@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.19] - 2026-10-13
+
+### Fixed
+- **修复官方授权激活链接 XML 实体转义缺陷（彻底解决弹窗报 422 缺少 query 参数）**：
+  - 根因锁定：上游 `/api/v1/oauth/cli/init` 返回的 `authorize_url` 包含 HTML 转义实体 `&amp;`，浏览器解析为 `amp;redirect_uri` 等错误参数名，导致 `chat.z.ai` 判定必填字段 `response_type`、`redirect_uri`、`state` 缺失抛出 422；
+  - 后端在 `zaiCLIInit` 与 `startAccountOAuth` 中增加 `html.UnescapeString` 与 `&amp;` 强力清理，并在前端控制面板二次做防御性反转义；
+  - 授权窗口能够秒级正常加载官方授权页，浏览器已登录时点击一次即可自动完成闭环并回调，无感更新 800 万额度。
+
 ## [0.1.18] - 2026-10-13
 
 ### Feat & Fix

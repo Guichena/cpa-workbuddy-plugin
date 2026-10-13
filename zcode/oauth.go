@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -156,6 +157,11 @@ func zaiCLIInit(provider string) (*zaiCLIInitResponse, error) {
 	if strings.TrimSpace(out.Data.FlowID) == "" || strings.TrimSpace(out.Data.AuthorizeURL) == "" {
 		return nil, fmt.Errorf("OAuth flow 初始化响应无效：缺少 flow_id 或 authorize_url")
 	}
+	rawURL := strings.TrimSpace(out.Data.AuthorizeURL)
+	rawURL = html.UnescapeString(rawURL)
+	rawURL = strings.ReplaceAll(rawURL, "&amp;", "&")
+	out.Data.AuthorizeURL = rawURL
+
 	if strings.TrimSpace(out.Data.PollToken) == "" {
 		out.Data.PollToken = pollToken
 	}
@@ -327,6 +333,10 @@ func startAccountOAuth(targetAuthID, label string) (*zaiCLIInitResponse, string,
 	}
 
 	authorizeURL := strings.TrimSpace(initResp.Data.AuthorizeURL)
+	authorizeURL = html.UnescapeString(authorizeURL)
+	authorizeURL = strings.ReplaceAll(authorizeURL, "&amp;", "&")
+	initResp.Data.AuthorizeURL = authorizeURL
+
 	state := ""
 	if u, errParse := url.Parse(authorizeURL); errParse == nil {
 		state = strings.TrimSpace(u.Query().Get("state"))

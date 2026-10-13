@@ -932,13 +932,15 @@ async function activateAccount(authID, btn){
       return;
     }
 
+    const cleanAuthUrl = (startRes.authorize_url || "").replace(/&amp;/g, "&");
+
     // 2. 尝试打开官方授权弹窗
     const w = 560, h = 720;
     const left = Math.max(0, (window.screen.width - w) / 2);
     const top = Math.max(0, (window.screen.height - h) / 2);
     try{
       activeOAuthWindow = window.open(
-        startRes.authorize_url,
+        cleanAuthUrl,
         "zcode_activate_popup",
         `width=${w},height=${h},top=${top},left=${left},menubar=no,toolbar=no,status=no`
       );
@@ -950,7 +952,7 @@ async function activateAccount(authID, btn){
     openActivateModal(
       `⚡ 激活账号「${targetLabel}」`,
       `正在通过 Z.ai 官方授权为该账号开通每日 800 万额度…`,
-      startRes.authorize_url,
+      cleanAuthUrl,
       startRes.state,
       (res)=>{
         toast("激活开通成功！", "ok", "Start Plan 每日 800 万额度已到账");
@@ -994,12 +996,14 @@ async function openOAuthBridge(){
       return;
     }
 
+    const cleanAuthUrl = (startRes.authorize_url || "").replace(/&amp;/g, "&");
+
     const w = 560, h = 720;
     const left = Math.max(0, (window.screen.width - w) / 2);
     const top = Math.max(0, (window.screen.height - h) / 2);
     try{
       activeOAuthWindow = window.open(
-        startRes.authorize_url,
+        cleanAuthUrl,
         "zcode_oauth_login",
         `width=${w},height=${h},top=${top},left=${left},menubar=no,toolbar=no,status=no`
       );
@@ -1010,7 +1014,7 @@ async function openOAuthBridge(){
     openActivateModal(
       "OAuth 授权登录新账号",
       "请在打开的 Z.ai 官方登录授权页面完成登录…",
-      startRes.authorize_url,
+      cleanAuthUrl,
       startRes.state,
       (res)=>{
         toast("新账号授权成功！", "ok", "已添加 ZCode 账号并开通额度");
