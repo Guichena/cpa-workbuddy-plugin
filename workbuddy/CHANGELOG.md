@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.7
+
+### Fix - 修复官方规格自适应 max_tokens 未随 0.15.6 二进制发布（内嵌 vcs.revision 取证）
+
+- 变更要点:
+  1. 根因：0.15.6 发布 tag (`workbuddy-provider-v0.15.6`) 指向 commit `5f12b41`，早于自适应引擎提交 `2206b9f` 9 分钟；CI 打包的 `.so` 内嵌 `vcs.revision=5f12b41`，二进制符号探针中 `computeAdaptiveMaxTokens` / `model_specs.go` 全部 MISS——线上实际运行的是旧的「一刀切 128k」`relaxMaxTokensInPlace` 实现，官方规格自适应从未真正生效。
+  2. 本版重新打包发布，使 `model_specs.go` 官方规格矩阵与 `computeAdaptiveMaxTokens` 真正进入线上二进制：未传时补齐官方最大值，推理模型且客户端传 <= 8192 时放宽至官方 ReasoningMax（DeepSeek 64k / GLM 128k / Claude 64k），超出官方上限安全 clamp。
+  3. 验证方式：构建产物内嵌 `vcs.revision` 必须指向本版提交，且二进制符号探针须命中 `computeAdaptiveMaxTokens`。
+
 ## 0.15.6
 
 ### Feat & Fix - 设立安全缓冲额度红线 (minRoutableCredits=20)、健康平摊轮询与官方规格自适应 max_tokens
