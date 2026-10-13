@@ -224,3 +224,52 @@ func TestDoActivePingAllModelsFailTagsTestFailed(t *testing.T) {
 		t.Fatalf("expected test_failed to be true after all-fail, got %+v", accAfter)
 	}
 }
+
+// TestDoActivePingFailureStillThrottles 钉住节流契约：探活失败也必须刷新节流
+// 时间戳，否则坏账号会在每个 watchdog tick（10 分钟）被反复全量重测，反而比
+// 健康账号更频繁地消耗账号配额。
+func TestDoActivePingFailureStillThrottles(t *testing.T) {
+	resetActivePingTimes()
+	defer resetActivePingTimes()
+
+	tempDir, err := os.MkdirTemp("", "zcode_do_ping_throttle_*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	setAccountsDir(tempDir)
+
+	origPing := pingUpstreamOnceFn
+	origModels := authModelsForIndexFn
+	defer func() {
+		pingUpstreamOnceFn = origPing
+		authModelsForIndexFn = origModels
+	}()
+
+	authModelsForIndexFn = func(authID string) []string {
+		return []string{"fail-1", "fail-2"}
+	}
+	attempts := 0
+	pingUpstreamOnceFn = func(sa *StoredAuth, model string) (bool, int, string, int64, uint64) {
+		attempts++
+		return false, http.StatusBadGateway, "down", 5, 0
+	}
+
+	sa := &StoredAuth{AuthID: "zcode-throttle-fail", APIKey: "valid.key"}
+	_ = writeAuthFileDirect(filepath.Join(tempDir, "zcode-throttle-fail.json"), sa)
+
+	if err := doActivePing(sa); err == nil {
+		t.Fatalf("expected error when all models fail")
+	}
+	firstRun := attempts
+	if firstRun != 2 {
+		t.Fatalf("expected 2 attempts on first run, got %d", firstRun)
+	}
+	// 立即再次调用应被节流拦截，不再发起任何模型请求。
+	if err := doActivePing(sa); err != nil {
+		t.Fatalf("throttled second run should return nil, got %v", err)
+	}
+	if attempts != firstRun {
+		t.Fatalf("failed ping must stamp the throttle clock; got %d attempts after second call", attempts)
+	}
+}

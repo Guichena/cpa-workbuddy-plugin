@@ -18,7 +18,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-var defaultActivePingInterval = 30 * time.Minute
+var defaultActivePingInterval = 4 * time.Hour
 var defaultActivePingTimeout = 20 * time.Second
 
 var (
@@ -272,7 +272,7 @@ func verifyActivePingTraeStream(r io.Reader, statusCode int) error {
 // doActivePing 自动定时探活主逻辑，支持多模型依次轮测与熔断。
 // [参数] authIndex: 宿主 RPC 索引; authID: 账号唯一标识; sa: Trae 账号凭据对象。
 // [返回] 探活失败时的错误，成功返回 nil。
-// 最近修改时间：2026-10-09 23:45:00 支持最多 5 个模型轮测与 30s 熔断
+// 最近修改时间：2026-10-14 02:50:00 节流间隔改为 4 小时，且无论成败都刷新节流时间戳
 func doActivePing(authIndex, authID string, sa *traeAuth) error {
 	if sa == nil {
 		return fmt.Errorf("nil traeAuth")
@@ -289,10 +289,13 @@ func doActivePing(authIndex, authID string, sa *traeAuth) error {
 		return fmt.Errorf("empty auth identifier")
 	}
 
-	// 1. 检查 30 分钟节流限制
+	// 1. 检查 4 小时节流限制
 	if !shouldActivePing(key) {
 		return nil
 	}
+	// 无论本轮成败都刷新节流时间戳：失败账号若不计时，会在每个 watchdog
+	// tick（10 分钟）被反复全量重测，反而比健康账号更频繁地消耗账号配额。
+	recordActivePing(key)
 
 	// 2. 取全部候选模型按稳定顺序依次轮测
 	models := orderedAllTraeModels(sa)
@@ -327,7 +330,6 @@ func doActivePing(authIndex, authID string, sa *traeAuth) error {
 		return lastErr
 	}
 
-	recordActivePing(key)
 	// 定时活跃测试成功：清除既有 test_failed 标签
 	if idx, idxErr := hostAuthIndexForPhys(key); idxErr == nil {
 		if err := persistTestFailedToggle(idx, authID, false); err != nil {
@@ -343,7 +345,7 @@ func triggerActivePing(authIndex, authID string, sa *traeAuth) error {
 }
 
 // handleTestActive 处理面板“测试”按钮发起的单账号手动活跃推理请求。
-// 手动测试绕过 30 分钟节流限制，直接发起真实请求并返回测试结果。
+// 手动测试绕过 4 小时节流限制，直接发起真实请求并返回测试结果。
 func handleTestActive(req pluginapi.ManagementRequest) map[string]any {
 	var body struct {
 		AuthIndex string `json:"auth_index"`

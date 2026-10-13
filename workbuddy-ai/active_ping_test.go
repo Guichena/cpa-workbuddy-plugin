@@ -141,6 +141,43 @@ func TestDoActivePingMultiModelAllFail(t *testing.T) {
 	}
 }
 
+// TestDoActivePingFailureStillThrottles 钉住节流契约：探活失败也必须刷新节流
+// 时间戳，否则坏账号会在每个 watchdog tick（10 分钟）被反复全量重测，反而比
+// 健康账号更频繁地消耗账号配额。
+func TestDoActivePingFailureStillThrottles(t *testing.T) {
+	resetActivePingTimes()
+	defer resetActivePingTimes()
+
+	fakeModels := []pluginapi.ModelInfo{{ID: "fail-1"}, {ID: "fail-2"}}
+	storeDynamicModels(fakeModels)
+	defer storeDynamicModels(nil)
+
+	origPingFn := sendActivePingWorkbuddyFn
+	defer func() { sendActivePingWorkbuddyFn = origPingFn }()
+
+	attempts := 0
+	sendActivePingWorkbuddyFn = func(sa *storedAuth, chosenModel string) error {
+		attempts++
+		return errors.New("all models down")
+	}
+
+	sa := &storedAuth{Account: storedAccount{UID: "wbai-user-throttle-fail"}}
+	if err := doActivePing("idx-tf", "wbai-user-throttle-fail", sa); err == nil {
+		t.Fatalf("expected error when all models fail")
+	}
+	firstRun := attempts
+	if firstRun != 2 {
+		t.Fatalf("expected 2 attempts on first run, got %d", firstRun)
+	}
+	// 立即再次调用应被节流拦截，不再发起任何模型请求。
+	if err := doActivePing("idx-tf", "wbai-user-throttle-fail", sa); err != nil {
+		t.Fatalf("throttled second run should return nil, got %v", err)
+	}
+	if attempts != firstRun {
+		t.Fatalf("failed ping must stamp the throttle clock; got %d attempts after second call", attempts)
+	}
+}
+
 // TestDoActivePingAllModelsBeyondLegacyCap 验证超过旧上限（5 个）的模型全部按序轮测，
 // 且顺序与候选发现顺序一致，最后一个模型成功时前面的模型均已尝试。
 func TestDoActivePingAllModelsBeyondLegacyCap(t *testing.T) {

@@ -32,7 +32,7 @@ type testActiveResponse struct {
 
 // defaultActivePingInterval 是定时探活对同一账号的最小间隔。
 // defaultActivePingTimeout 限制单次探活请求的最长等待时间。
-var defaultActivePingInterval = 30 * time.Minute
+var defaultActivePingInterval = 4 * time.Hour
 var defaultActivePingTimeout = 20 * time.Second
 
 var (
@@ -262,7 +262,7 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 // doActivePing 定时活跃探活：全部候选模型按稳定顺序依次轮测，任一成功即成功。
 // [参数] sa: ZCode 账号凭据。
 // [返回] 探活失败时的错误，成功返回 nil。
-// 最近修改时间：2026-10-13 23:00:00 新增定时探活，全量模型按序测试
+// 最近修改时间：2026-10-14 02:50:00 节流间隔改为 4 小时，且无论成败都刷新节流时间戳
 func doActivePing(sa *StoredAuth) error {
 	if sa == nil {
 		return fmt.Errorf("nil storedAuth")
@@ -272,10 +272,13 @@ func doActivePing(sa *StoredAuth) error {
 		return fmt.Errorf("empty auth identifier")
 	}
 
-	// 1. 检查 30 分钟节流限制
+	// 1. 检查 4 小时节流限制
 	if !shouldActivePing(key) {
 		return nil
 	}
+	// 无论本轮成败都刷新节流时间戳：失败账号若不计时，会在每个 watchdog
+	// tick（10 分钟）被反复全量重测，反而比健康账号更频繁地消耗账号配额。
+	recordActivePing(key)
 
 	// 2. 取全部候选模型按稳定顺序依次轮测
 	models := authModelsForIndexFn(key)
@@ -312,7 +315,6 @@ func doActivePing(sa *StoredAuth) error {
 		return lastErr
 	}
 
-	recordActivePing(key)
 	return nil
 }
 

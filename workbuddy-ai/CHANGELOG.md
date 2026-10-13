@@ -1,5 +1,15 @@
 # WorkBuddy AI Plugin Changelog
 
+## 0.1.15
+
+### Chore - 定时探活降频至 4 小时并修正失败账号节流缺陷
+
+- 变更要点:
+  1. `defaultActivePingInterval` 由 30 分钟放宽至 4 小时：真实推理与探活共享账号调用配额，探活只服务 `test_failed` 标签的健康判定，30 分钟一轮过于频繁。
+  2. 修正失败账号节流缺陷：`recordActivePing` 由「仅成功时刷新」改为「无论成败都刷新」。此前失败账号不计时，会在每个 watchdog tick（10 分钟）被反复全量重测，反而比健康账号更频繁地消耗账号配额。
+  3. 新增 `TestDoActivePingFailureStillThrottles` 回归用例：断言失败后立即再次调用被节流拦截、不再发起模型请求。
+- 涉及文件: workbuddy-ai/active_ping.go、workbuddy-ai/active_ping_test.go
+
 ## 0.1.14
 
 ### Feat - max_tokens 统一 32768 最低输出底线 + 定时探活改全量模型按序测试
