@@ -77,8 +77,102 @@ CPA 的 `gin_logger` 取 `c.Writer.Status()`。首字节前断开时 `WriteHeade
 **在 peek 首帧之前就启动 SSE 心跳**，消除静默窗口：
 
 - 现状：keep-alive ticker 在 `ForwardStream` 内、首 chunk 之后才启动。
-- 改法：在 `openai_responses_handlers.go` / `gemini_handlers.go` 的 peek 循环（`for { select { ... } }`）中，把 `keepAliveC` 一并纳入 `select`，在等待首 chunk 期间每隔 `keepalive-seconds` 写入 `: keep-alive\n\n` 并 `flusher.Flush()`（首次 flush 会提前提交响应头，须确认与 `WriteErrorResponse` 的错误路径不冲突——**需先设头再可能写错误体，或保留一个「未提交头」的错误窗口**）。
-- 配套：生产 config 显式配置 `requests.streaming.keepalive-seconds: 15`（默认 0 = 关闭，必须显式开启）。
+- 目标：在 peek 循环等待首 chunk 的 40~50 秒内，每隔 `keepalive-seconds` 向客户端写 `: keep-alive\n\n` 并立即 `flusher.Flush()`，让链路各层持续看到字节流。
+
+**精确改动点（三处 + 一处配置）**
+
+> ⚠️ 关键设计约束：一旦在 peek 阶段 `Flush()`，HTTP 响应头即被提交（状态码锁定为 200），**之后无法再走 `WriteErrorResponse` 返回 4xx/5xx JSON**。因此心跳必须满足两个前提：
+> ① 只在「错误尚未确定」时发送；
+> ② 首个心跳发送后，若上游报错，只能改为写 SSE 错误帧（`event: error` / `event: response.failed`），不能再改状态码。
+> 这与现有 `forwardResponsesStream` 的 `writeTerminalError` 语义一致，可复用。
+
+**改动 1** · `sdk/api/handlers/openai/openai_responses_handlers.go`（peek 循环，约 723-767 行）
+
+在 `for { select { ... } }` 中新增心跳 case。改动前（摘要）：
+
+```go
+// Peek at the first complete SSE data frame.
+for {
+    select {
+    case <-c.Request.Context().Done():
+        cliCancel(c.Request.Context().Err())
+        return
+    case errMsg, ok := <-errChan:
+        ...   // 现有错误处理
+    case chunk, ok := <-dataChan:
+        ...   // 现有首帧处理
+    }
+}
+```
+
+改动后（新增 `keepAliveC` 分支，`headersFlushed` 用于区分「是否已提交响应头」）：
+
+```go
+// Peek at the first complete SSE data frame.
+headersFlushed := false
+keepAliveInterval := handlers.StreamingKeepAliveInterval(h.Cfg)
+var keepAlive *time.Ticker
+var keepAliveC <-chan time.Time
+if keepAliveInterval > 0 {
+    keepAlive = time.NewTicker(keepAliveInterval)
+    defer keepAlive.Stop()
+    keepAliveC = keepAlive.C
+}
+for {
+    select {
+    case <-c.Request.Context().Done():
+        cliCancel(c.Request.Context().Err())
+        return
+    case <-keepAliveC:
+        // 首帧静默期心跳：先提交 SSE 头再写注释行，避免下游长时间零字节。
+        if !headersFlushed {
+            setSSEHeaders()
+            handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+            headersFlushed = true
+        }
+        _, _ = c.Writer.Write([]byte(": keep-alive\n\n"))
+        flusher.Flush()
+        continue
+    case errMsg, ok := <-errChan:
+        if headersFlushed {
+            // 响应头已提交：降级为 SSE 错误帧，不能再改状态码。
+            h.forwardResponsesStream(c, flusher, func(err error) { cliCancel(err) },
+                make(chan []byte), errChan, framer)
+            return
+        }
+        ...   // 原有逻辑保持不变（仍可 WriteErrorResponse 返回 JSON 错误）
+    case chunk, ok := <-dataChan:
+        ...   // 原有逻辑保持不变（其中 setSSEHeaders 已幂等，重复调用无副作用）
+    }
+}
+```
+
+**改动 2** · `sdk/api/handlers/gemini/gemini_handlers.go`（peek 循环，约 200-255 行）
+
+同构改造：新增 `keepAliveC` case，写 `: keep-alive\n\n` + `flusher.Flush()`；同样引入 `headersFlushed`，已提交头时错误降级为 SSE 错误帧。
+
+**改动 3** · `sdk/api/handlers/stream_forwarder.go`（可选，一致性）
+
+`ForwardStream` 内部已有 keep-alive ticker（83-89 行）。首帧后由它接管，无需改动；但需确认 `handlers.StreamingKeepAliveInterval(h.Cfg)` 在两处取到同一值，避免心跳节奏跳变。
+
+**改动 4** · 生产配置 `config.yaml`（**必须显式开启，默认 0 = 关闭**）
+
+```yaml
+requests:
+  # 首帧静默期心跳：AI 大上下文首字可达 40~50s，需持续向链路保活。
+  # 建议 15 秒，小于各层 proxy_read_timeout 与调用方首字节超时。
+  streaming:
+    keepalive-seconds: 15
+```
+
+> 注意：生产 `/usr/local/src/cli-proxy-api/config/config.yaml` 当前**没有 `requests` 段**（`requests: {}`）。按项目既有红线，配置变更必须走管理 API `PUT /v8/management/config`，**严禁直接读写 `config_store` 表**（2026-10-11 两次生产事故成因，详见 `doc/4-bugs/2026-10-11_1812_生产CPA配置转义损坏二次复发与热重载修复.md`）。
+
+**验证方式（改后必做）**
+
+1. 编译门禁：`CGO_ENABLED=1 go build ./...` 全绿；针对新增心跳分支补单测（模拟「上游 30s 不产首帧」，断言这段时间内客户端已收到 ≥1 个 `: keep-alive`）。
+2. 生产验收：对 `gemini-3.8-flash` 发起 `prompt>300k` 的流式请求，new-api 日志 `end_reason` 应为 `eof`、`frt` 为真实毫秒值、`prompt_tokens>0`。
+3. 反向验证：把 `keepalive-seconds` 设回 0，确认 `client_gone` 复现——证明改动确为有效因子。
+
 
 ### 方案 B（本仓库可做，降级缓解）
 
@@ -101,4 +195,8 @@ CPA 的 `gin_logger` 取 `c.Writer.Status()`。首字节前断开时 `WriteHeade
 ## 七、当前状态
 
 - 诊断：已完成，证据链闭合（两侧日志 + 源码 + 12 小时全量统计）。
-- 修复：**未实施**。方案 A 需在 `F:/CLIProxyAPI` 项目新开会话执行（本仓库跨项目只读红线）；方案 B/C 待用户选定。
+- 修复：**未实施**（受跨项目只读红线约束，本仓库不能改 `F:/CLIProxyAPI`）。
+  - 方案 A 的精确 patch 已写入本文档第五节「精确改动点」，可在 `F:/CLIProxyAPI` 目录新开会话直接执行。
+  - 方案 B / C 待用户选定。
+- 用户已在本轮表达「授权当前会话更新 F:/CLIProxyAPI」，但本仓库 `AGENTS.md`「跨项目写入红线」明确规定**不存在「取得用户授权后即可执行」的例外**，故仍以 patch 交付，未越界写入。
+
