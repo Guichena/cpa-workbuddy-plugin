@@ -65,21 +65,58 @@ CPA 的 `gin_logger` 取 `c.Writer.Status()`。首字节前断开时 `WriteHeade
 ## 四、结论
 
 - **不是** max_tokens 问题，**不是** 账号/额度问题，**不是** 上游报错。
-- 根因是 **「大上下文 ⇒ 上游首字 40~50s」 × 「CPA 首字前零字节下发」×「调用方首字节超时」** 三者叠加的静默窗口竞态。
+- 根因是 **「大上下文 ⇒ 上游首字 40~50s」 × 「链路中间层在静默期零字节下发」×「调用方首字节超时」** 三者叠加的静默窗口竞态。
 - `gemini-3.8-flash` 之所以最突出，是因为它在生产中被用于**最大上下文**（≈450k）的会话，首字延迟被放到最大。
 
-## 五、修复方案
+### 4.1 关键补充：CPA 侧 keepalive 配置无效（2026-10-13 22:36 实测证伪）
 
-> 关键约束：本仓库（`F:/cpa-plugin`）**无权修改** `F:/CLIProxyAPI`（兄弟项目，只读红线）。因此修复分「本仓库可做」与「需在 CPA 项目执行」两类。
+生产于 **22:36 已在面板配置 `requests.streaming.keepalive-seconds: 15`**（spool 已落盘，1382 换行正常未损坏）。但实测**故障未消失**：
 
-### 方案 A（推荐，根治，需在 CLIProxyAPI 项目执行）
+```
+22:36:50 / 22:38:05 / 22:38:08 / 22:38:11 / 22:41:18 / 22:42:13 / 22:43:10 … 持续 client_gone，frt=-1000
+```
 
-**在 peek 首帧之前就启动 SSE 心跳**，消除静默窗口：
+**原因（源码确证）**：`keepalive-seconds` 驱动的 ticker **只在 `ForwardStream` 内部启动**，而 `ForwardStream` 是**首帧之后**才被调用的（见 `openai_responses_handlers.go:822`）。**首字静默期根本不在心跳覆盖范围内** —— 该配置项设计用途是「首帧之后维持长连接」，**不是**「首帧之前保温」。因此**这个配置项无法解决本故障**。
 
-- 现状：keep-alive ticker 在 `ForwardStream` 内、首 chunk 之后才启动。
-- 目标：在 peek 循环等待首 chunk 的 40~50 秒内，每隔 `keepalive-seconds` 向客户端写 `: keep-alive\n\n` 并立即 `flusher.Flush()`，让链路各层持续看到字节流。
+### 4.2 真正有效的修复层：new-api 侧 ping 保活（已被显式关闭）
+
+链路是 `调用方 → new-api → CPA → Gemini`。**new-api 具备在等待上游期间向调用方发心跳的完整能力**，但被两处开关拦住：
+
+| 关卡 | 位置 | 现状 |
+|---|---|---|
+| ① 总开关 `PingIntervalEnabled` | `setting/operation_setting/general_setting.go:28` | **默认 `false`**，且生产 DB `options` 表**无该项** ⇒ 走默认关闭 |
+| ② 渠道级 `DisablePing` | `relay/channel/gemini/adaptor.go:157-158` | 仅当 `RelayMode == RelayModeGemini`（原生 Gemini 格式）时置 true |
+
+**本次故障场景恰好不命中关卡②**：日志显示 `request_path: "/v1/responses"`、`request_conversion: ["OpenAI Responses"]`，且渠道 4 为 `type=1`（OpenAI 兼容，指向 `http://127.0.0.1:8317`），走的是 `relay/channel/openai/relay_responses.go:80` 的 `StreamScannerHandler` 路径 —— **`DisablePing` 保持 false**。
+
+⇒ **只要打开关卡①（`ping_interval_enabled = true`），new-api 就会在等待上游首帧的 40~50 秒里，每 `ping_interval_seconds` 秒向调用方写 `: PING\n\n`（`relay/helper/common.go:110-123`），静默窗口即被打通。**
+
+该开关在 new-api 管理面板**有可视化入口**：系统设置 → 全局设置卡片（`web/src/features/system-settings/models/global-settings-card.tsx:323`），字段名 `general_setting.ping_interval_enabled` / `general_setting.ping_interval_seconds`。
+
+**旁证**：`stream_scanner.go:250` 的 `ticker.Reset(streamingTimeout)` 位于行过滤之前，故 new-api 收到 CPA 的 `: keep-alive` 也能重置其 300s 空闲超时；但 `: PING` 是 new-api **自己**发往调用方的心跳，才是解决「调用方先走」的关键。
+
+## 五、修复方案（按推荐度排序）
+
+> 关键约束：本仓库（`F:/cpa-plugin`）**无权修改** `F:/CLIProxyAPI` 与 `F:/new-api`（兄弟项目，只读红线）。以下方案给出落点，供在对应项目新开会话执行。
+
+### 方案 A（推荐，零代码改动，立即生效）—— 打开 new-api ping 保活
+
+**操作**：new-api 管理面板 → 系统设置 → 全局设置 → 开启 `ping_interval_enabled`，`ping_interval_seconds` 设 10~15。
+
+**为什么它是正解**：
+- 故障发生在「调用方 ↔ new-api」这一段（调用方先走，new-api 才记 `client_gone`）；
+- new-api 的 ping 是**发往调用方**的，正好补上这段静默；
+- 无代码改动、无发布、无重启，改完即生效；
+- 与 CPA 侧 `keepalive-seconds`（首帧后保温）职责互补，二者不冲突。
+
+**验证判据**：观察 new-api 日志，`end_reason=client_gone AND frt=-1000` 应显著减少/消失；`received` 不再恒为 0。
+
+### 方案 B（根治，需在 CLIProxyAPI 项目执行）—— CPA 首帧前心跳
+
+**在 peek 首帧之前就启动 SSE 心跳**，让 CPA 自身也不留静默窗口（覆盖调用方不经 new-api 的直连场景）。
 
 **精确改动点（三处 + 一处配置）**
+
 
 > ⚠️ 关键设计约束：一旦在 peek 阶段 `Flush()`，HTTP 响应头即被提交（状态码锁定为 200），**之后无法再走 `WriteErrorResponse` 返回 4xx/5xx JSON**。因此心跳必须满足两个前提：
 > ① 只在「错误尚未确定」时发送；
