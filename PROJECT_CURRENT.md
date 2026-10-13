@@ -17,20 +17,34 @@
 ## 项目概况
 
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
-  - `zcode-provider`: **0.1.22**（纠正「激活开通」错误承诺，改为如实的 Start Plan 领取指引；0.1.21 定时探活全量按序 any-success + max_tokens 32768 底线 + 官方规格矩阵全扩）
+  - `zcode-provider`: **0.1.24**（定时探活降频至 4 小时并修正失败账号节流缺陷；0.1.22 Start Plan 领取指引；0.1.21 定时探活全量按序 any-success + max_tokens 32768 底线 + 官方规格矩阵全扩）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoderwork-provider`: **0.9.35**（max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00；移除自动探活与 test_failed）
   - `qoder-ai-provider`: **0.1.15**（max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册；签到 10:00/22:00；移除自动探活与 test_failed）
-  - `traework-provider`: **0.2.11**（max_tokens 32768 底线 + payload 层同步；定时探活改全量模型按序测试；0.2.8 测试探活流式首包即停 + Keep-Alive TLS 预热，拦截 HTTP 200 下 `event: error`）
-  - `workbuddy-provider`: **0.15.8**（max_tokens 32768 底线；定时探活改全量模型按序测试；0.15.4 移除保号池、硬排除测试标签 + 低积分优先）
-  - `workbuddy-ai-provider`: **0.1.14**（max_tokens 32768 底线；定时探活改全量模型按序测试；0.1.9 补齐完整路由层单测资产、国际版签到）
+  - `traework-provider`: **0.2.12**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.2.11 max_tokens 32768 底线 + payload 层同步，探活改全量模型按序测试）
+  - `workbuddy-provider`: **0.15.9**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.15.8 max_tokens 32768 底线，探活改全量模型按序测试）
+  - `workbuddy-ai-provider`: **0.1.15**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.1.14 max_tokens 32768 底线，探活改全量模型按序测试）
   - `workbuddy-token-usage`: **0.2.8**（0.2.8 让退役实例的 feed 导入协程在连续 3 轮关闭句柄后自行退出；0.2.7 修复宿主配置重载换句柄窗口导致的用量记录丢失；0.2.6 移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细与维度汇总展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-13 (GMT+8)
 
 ## 活动会话进展摘要
 
-- 当前会话（2026-10-14）：**zcode-provider 0.1.22：纠正「激活开通」错误承诺，改为如实的 Start Plan 领取指引并全链路发布生产**：
+- 当前会话（2026-10-14）：**四插件（workbuddy/workbuddy-ai/traework/zcode）定时探活降频至 4 小时并修正失败账号节流缺陷，全链路发布生产**：
+  - 需求背景：用户先问「真的需要定时探测吗」，选定「移除探活 + test_failed 机制」后中途改口为「探活还是留下，但 4 小时一次就够了，不要那么频繁」；最终方向为**保留探活与 test_failed 标签全链路，仅把节流间隔 30 分钟 → 4 小时**。
+  - 关键实现与真实缺陷修复：
+    1. 四插件 `defaultActivePingInterval` 30 分钟 → 4 小时（workbuddy/workbuddy-ai/traework/zcode 的 `active_ping.go`），同步 4 处 `// 最近修改时间：2026-10-14 02:50:00`；
+    2. **修正失败账号节流缺陷**：`recordActivePing` 原先仅在探活**成功**时刷新节流时间戳，失败账号不计时 → 会在每个 watchdog tick（10 分钟）被反复全量重测，反而比健康账号更频繁消耗配额；改为「无论成败都先刷新时间戳」后再轮测；
+    3. 四插件各补 `TestDoActivePingFailureStillThrottles` 回归用例（断言失败后立即再次调用被节流拦截、不再发起模型请求），节流测试的时间回拨改为 `-defaultActivePingInterval - time.Minute` 自适应。
+  - 并行会话保护：本轮曾误把工作树回退到 HEAD，需回贴并行会话的 `HIGH-CREDIT-FIRST` / cooldown-defer 注释修正（qoder-ai/qoderwork/workbuddy/workbuddy-ai/traework 的 scheduler/session_auth/watchdog/routing_test）；按路径限定 `git commit -- <20 路径>` 只提交本轮文件。
+  - 发布与生产闭环：
+    1. **提交链**：`22bf7fe`(feat 20 文件) → 四插件各自 assets/registry 提交 → `368a63e`(prune 5 个旧版本)；
+    2. **CI 处置（可复用教训）**：① zcode 首个 run 因既有 flaky 测试 `Test (token-usage-tracker)` 失败致其 Release job skipped → 单插件重发成功；② traework 首个 run 卡在 `darwin/amd64` 的 `actions/checkout` 超 35 分钟不动 → 取消并重发；③ 取消自己 push 触发的冗余 push run（assets/registry 提交各触发一个）释放免费 Runner 后 traework 才获得执行位（踩坑 55 复现）；
+    3. **远端验证**：四插件各 7/7 artifacts sha256+size ALL PASS；
+    4. **生产热重载**：四插件 `plugin-store install` 均 `restart_required=false`、日志确认 `plugin hot reloaded`（workbuddy 0.15.8→0.15.9、workbuddy-ai 0.1.14→0.1.15、traework 0.2.11→0.2.12、zcode 0.1.22→0.1.24 直上），落盘 `.so` sha256 与本地 zip 逐字节一致，accounts/panel 全 200，**零容器重启**。
+  - 门禁：四插件 `cgo-shim-build.py` build/vet/test 全绿 + 哨兵反证测试真实进编译。
+
+- 会话（2026-10-14）：**zcode-provider 0.1.22：纠正「激活开通」错误承诺，改为如实的 Start Plan 领取指引并全链路发布生产**：
   - 需求背景：用户拍板只做「📖 领取指引」形态——授权登录本身就已完成账号绑定，每日额度的领取是官方在 ZCode 客户端内的独立一步，插件不该承诺「点击即下发额度」。
   - 根因实证（推翻上一轮「激活」语义）：官方每日 800 万 Start Plan 并非授权登录时自动下发，而是由 ZCode 桌面客户端内的服务端活动弹窗引导用户**手动领取**（`POST /api/v1/zcode-plan/billing/claim`），该接口强制校验阿里云人机验证头（`X-Aliyun-Captcha-Verify-Param`，`captcha.enabled=true`，sceneId `11xygtvd`）；无头 / 伪造验证头 / 换 token 一律 `400 3007 captcha verify failed`，网页端与插件端均无领取入口。另实测推翻旧结论：`authorize` 层不做 redirect_uri 白名单（三臂候选均 307 通过）。
   - 实施（v0.1.22，仅 5 个 zcode 文件）：
@@ -157,28 +171,11 @@
   - 知识沉淀：知识库《Z.ai-ZCode-OAuth授权契约-CLI轮询模式》+ 项目记忆 `feedback-cpa-oauth-redirect-uri`。
   - **2026-10-14 更正**：当时记的「`chat.z.ai` 对 `client_id` 执行 redirect_uri 严格白名单」经三臂实测推翻——`authorize` 层三个候选 `redirect_uri` 均 307 通过，白名单不在该层；真因是桌面端 deep-link 会唤起本地客户端、CPA 拿不到授权码，故仍应复用官方 CLI 轮询链路（结论不变，因果已修正）。
 
-- 当前会话（2026-10-11）：**Qoder 403 首包假成功与全链路流式诊断，完成生产 Docker Nginx proxy_buffering off 重载验证**：
-  - 根因（实测铁证）：① 阿里 Qoder 上游对 `qfmodel`/`qmodel_38max` 在 HTTP 200 下返回 `data: {"code":"403",...10605...isQueued:true...}` 业务报错，且返回后连接不关闭、持续 `: keep-alive` 僵死 60s 后上游 `INTERNAL_ERROR`；② CPA 面板探活仅盲读前 512 字节不校验内容即判成功（219ms 假成功）；③ Token 用量插件 TTFT 334ms 恰为错误帧到达时间，实为 `failed:true`/`latency_ms:60100`/`total_tokens:0`；④ New-API 渠道测试按钮强制 `stream:false` 不能用于流式验证。运维闭环：生产 `docker exec nginx nginx -t` PASS + `nginx -s reload` 平滑重载（已含 `proxy_buffering off; proxy_cache off;`），外网 `api.luode.vip/v1` 实测 1.35s 端到端流式；经验固化到项目 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`（首包业务报错帧白名单校验 + 全链路流式不缓冲配置与推理延迟判读规范）。
+- 当前会话（2026-10-11）：**Qoder 403 首包假成功与全链路流式诊断，完成生产 Docker Nginx proxy_buffering off 重载验证**——根因：Qoder 上游 HTTP 200 下返回 `isQueued:true` 业务报错帧且连接僵死 60s、CPA 面板探活盲读 512 字节误判成功、New-API 渠道测试强制非流式不能验证流式。运维闭环：生产 `nginx -t` PASS + `nginx -s reload` 平滑重载（含 `proxy_buffering off; proxy_cache off;`），外网 1.35s 端到端流式；经验固化到项目 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`。
 
-- 当前会话（2026-10-11）：**deepseek-v4.1-flash 推理断开根因诊断 + traework 补齐 oauth-excluded-models 治理入口（修复随 traework-provider 0.2.7 上线，现承载于 0.2.8）**：
-  - 用户诉求：`new-api → CPA(https://api.luode.vip/v1) → 服务商` 链路上 `deepseek-v4.1-flash` 推理会断开，要求先定位原因并修复，再继续 Token 用量插件（图表移除）任务。
-  - 根因（三层叠加，证据见 `doc/4-bugs/2026-10-11_212700_deepseek多服务商同名认领导致推理零首字节断开根因诊断.md`）：
-    1. 同名裸模型多服务商认领：`deepseek-v4.1-flash` 由 workbuddy-provider 与 traework-provider 同时动态认领（生产日志 14:06–19:20 内该模型 163 次绑定到 `traework-*.json`），且 traework 是唯一未实现 `filterExcludedModels` 的 OAuth 插件（workbuddy / workbuddy-ai / qoder-ai / qoderwork 均已实现），导致宿主 `oauth-excluded-models` 对它只生效一半——宿主只在 `model.for_auth` 按账号注册路径过滤（`applyExcludedModels`），`model.static` 返回列表被原样登记进全局模型目录（`internal/pluginhost/adapters.go` 静态注册不过滤）。
-    2. 会话亲和钉死故障服务商：Trae 号池配额枯竭（16 次 `upstream 200: Your requests have exceeded the quota`）后仍被同一会话反复选中，宿主失败后重绑仍落到另一个 Trae 账号。
-    3. 零字节长挂：`traework/host_bridge.go:283 hostBridgeOpenTimeout=30s` 与降级直连 `ResponseHeaderTimeout=30s`（`:430`）**串行**相加，单号最坏 60s 完全不产出字节，而 `handleExecStream`（`traework/executor.go:316`）已先把响应头返回宿主 → 客户端只看到"连上但零输出"。new-api 侧 4 次断开全部 `end_reason=client_gone`、`frt=-1000`、`completion_tokens=0`，耗时 69/80/103/104s；对照成功请求首字节仅 3.7–5.5s。
-  - 本轮修复：`traework/models.go` 新增 `filterExcludedModels` 并在 `handleModelStatic` + `handleModelForAuth` 全部返回出口应用（未配置时原样返回，零行为变化；返回新切片避免污染动态缓存）。新增 `traework/models_excluded_test.go` 5 例，含"排除项永不命中"语义变异反证。`gofmt`/`cgo-shim-build.py traework` 全绿，6-review `STYLE: PASS`。
-  - 文档：Bug 主文档 + 测试主文档 + 6-review 已落盘；知识库笔记 `20-Knowledge/工程实践/CPA同名模型多服务商认领治理与零首字节断开判读法.md`（含判读法与 `PATCH /v8/management/oauth-excluded-models` 安全写入路径）。
-  - 现状：症状已随 Trae 流量退去自然平息（近 2h 该模型 599 次全部 workbuddy-provider、`client_gone` 0 次），但同名认领风险未消除。**0.2.7 发布与生产上线已完成**（后续 0.2.8 由并行会话发布并携带本修复，已在生产 `.so` 内确认 `filterExcludedModels` 存在）：CI run `38143777373` success、registry 同步、生产 `plugin-store install` 热重载 `registered version=0.2.7`、落盘 `.so` sha256 `23ea904c5bec…` 与产物一致、零容器重启、accounts 200（7 账号）、无 panic/fuse。
-  - 待办（需用户拍板，已扩为批量）：生产治理动作 `PATCH /v0/management/oauth-excluded-models`（实测前缀只能是 `/v0`，`/v8` 下该路由 404；PATCH 是整表覆盖该 provider，须先 GET 合并）。按 24:03 实测的实时认领矩阵，traework 与 workbuddy / workbuddy-ai 各共享 **6** 个裸名（`deepseek-v4.1-flash`、`glm-5.2`、`glm-5.3`、`glm-5.3-flash`、`kimi-k2.6`、`minimax-m3`/`kimi-k3`），故建议一次决策整批而非只摘一个；`auto` 被四家同时认领属治理盲区，排除前须单独评估。当前触发面活跃：Trae 账号实时列表仍含该名字、7 账号中仅 1 个 active（剩 83 积分）、2 个 exhausted、近 60 分钟仍有 9 次配额错误，而该模型近 24h 无新请求 ⇒ 属已上膛未击发。
+- 当前会话（2026-10-11）：**deepseek-v4.1-flash 推理断开根因诊断 + traework 补齐 oauth-excluded-models 治理入口（现承载于 0.2.12）**——根因三层叠加：同名裸模型多服务商认领（traework 是唯一未实现 `filterExcludedModels` 的 OAuth 插件）、会话亲和钉死故障服务商、`hostBridgeOpenTimeout=30s` 与 `ResponseHeaderTimeout=30s` 串行相加致零字节长挂 60s。修复：`traework/models.go` 新增 `filterExcludedModels` 并在 `model.static`+`model.for_auth` 全出口应用（未配置零行为变化），新增 5 例测试含语义变异反证。待办（需用户拍板）：生产 `PATCH /v0/management/oauth-excluded-models` 批量治理同 6 个裸名。
 
-- 当前会话（2026-10-11）：**Token 用量面板移除四个图表与导出图片并下线图表专用接口与聚合（workbuddy-token-usage 0.2.6 已发布并生产热重载验收通过）**：
-  - 用户诉求：图表功能全部移除、相关统计逻辑一并去掉以节省算力与响应体积；拍板边界为"只移除 4 个图表 + 同步移除图表专用接口与聚合"。
-  - 实现：`dashboard.go` 删除 visual/advanced 两个 grid section、tooltip、导出图片按钮、聚合粒度下拉、41 个图表函数 + 6 个占比口径函数 + canvas 导出及其状态与监听；`selectedModel`/`hiddenModels` 随唯一写入者消失而移除；来源筛选锚点改挂隐藏的 `#range`；Go 替换器删 3 条并改写 2 条模式串防静默失配。后端下线 `/stats/trends` 与 `StatsTrendResponse`/`queryStatsTrendByFilter`/`statsQueryTrend`，`/stats/initial` 去 `series`+`bucket_seconds`、`/costs` 去 `series`；另清理 72 条无主 CSS 与四语言包各 56 个图表文案键。收益：`dashboard.go` −21%（269,709 → 212,658 字节）。
-  - 门禁：`cgo-shim-build.py token-usage-tracker` 全绿；新增 `chart_endpoints_removed_test.go` 4 用例与 `test/token-usage/panel_chart_removal_repro.mjs` 38 项静态断言全 PASS（旧版本反证 24 项 FAIL）；两个执行型脚本的 trends 桩改为命中即抛错后仍全绿；字段变异反证触发 2 个 FAIL 后还原复绿。文档：`doc/2-需求/…222600_*`、`doc/5-tests/…222630_*`、`doc/6-review/…222710_*`（STYLE: PASS）。
-  - 发布与生产验收：commits `d7494dd`/`bbb142b`/`61a29a0`/`a7a7778`，CI run `38147308550` success（8 资产 ALL CHECKSUMS OK），`.so` sha256 `5feaf5bd2bd4…`；生产 `plugin-store install` 返回 `installed restart_required=false`，宿主日志 `host.go:408 plugin hot reloaded active_version=0.2.6 retired_version=0.2.5`，零容器重启。线上面板 217,901 字节回读：图表标记全 0、卡片与 `groups`/`requestRows`/`key:'provider'` 保留；接口层 `/stats/trends` 404、`/stats/initial`+`/costs` 无 `series`，`/stats`+`/stats/groups`+`/requests` 均 200。0.2.5 资产定向 prune（远端 0.2.6=200、0.2.5=404）。
-  - 后续发现并部分修复（0.2.7）：`store is closed` 失败分两类——A 类由宿主配置重载引发的换句柄窗口，每次带走 7–14 条真实丢失（`cfg_reload=0 且 reconfig=0` 的分钟 fail 恒为 0），0.2.7 已修（`ErrStoreClosed` 哨兵 + 配置指纹未变即复用句柄 + 关闭态不推进偏移，变异反证 `consumed = 1272/1284, want 0`）；B 类来自退役实例泄漏的 `feedImporterLoop`（`importerOnce` 每实例一份、关闭 store 不通知导入循环退出），实测 15 分钟内 0 次 reload/reconfigure/热重载仍有 248 条失败，但 `feed.ndjson.offset` 与文件字节数逐字节相等（94438247==94438247）、store 24h 11,114 ≥ new-api 5,046，证明是纯噪声与 CPU 空转、不丢数据，尚未修。据此撤回此前按 A+B 混算的「约 22%/最高 54% 持续丢失」高估。
-  - 0.2.7 发布与生产验收（2026-10-11 23:53–24:01）：CI run `38151946948` success（30 作业全绿）；`.so` 8,388,992 字节 sha256 `7e08d2d44adb…`，二进制内含新日志串且 `0.2.6` 计数为 0；commits `cbc1e74`/`dfa4bfb`/`29c9591`；生产 `plugin-store install` 前两次 502（CDN 边缘陈旧，重试即通）第三次 `installed restart_required:false`；宿主 `hot reloaded active_version=0.2.7 retired_version=0.2.6`；上线分钟出现 `reuse=1` 证明换句柄窗口已消除；`offset==size`、读接口与面板 217,901 字节与 0.2.6 完全一致；0.2.6 资产定向 prune（远端 200/404）。
-  - 0.2.8 发布与生产验收（2026-10-12 00:38–00:42）：CI run `38155105772` 30/30 全绿；`.so` 8,393,088 字节 sha256 `270cd96de2af…`，二进制内 `closed-store polls`=1 且 `store config unchanged`=1（两项修复同体）；commits 资产入库 + `89ddff0`(registry) + `f2e1c7c`(prune 0.2.7)；生产 `install?version=0.2.8` 首次即 `installed`，`active_version=0.2.8 retired_version=0.2.7`，`panic/fuse`=0，面板 217,901 字节与 0.2.7 逐字节同尺寸（图表标记仍全 0、`groups`/`requestRows`/`cards`/`provider` 保留）；远端 0.2.8=200、0.2.7=404。⚠️ `importer stopping after` 当前计数为 0 属**预期**：被退役的是无退出逻辑的 0.2.7 实例，该日志最早在下一次升级退役 0.2.8 时出现；同时泄漏代价已量化（安装后 2 分钟 `ok=72 fail=484`，比值随当天发布次数线性增长），旧协程需一次容器重启才能回收，交用户裁定。
+- 当前会话（2026-10-11）：**Token 用量面板移除四个图表与导出图片并下线图表专用接口与聚合（0.2.6/0.2.7/0.2.8 均已发布并生产热重载验收）**——移除 4 图表 + 相关统计与 `/stats/trends`、`series`/`bucket_seconds` 字段，`dashboard.go` −21%（269,709 → 212,658 字节）；0.2.7 修换句柄窗口导致的用量记录丢失（`ErrStoreClosed` 哨兵 + 配置指纹复用句柄），0.2.8 让退役实例 feed 导入协程连续 3 轮关闭句柄后自行退出。门禁：`cgo-shim` 全绿 + 38 项静态断言（旧版本反证 24 项 FAIL）。⚠️ 泄漏旧协程需一次容器重启才能回收，交用户裁定。
 
 - （更早的 13 条会话进展摘要已按 51200 字节上限裁剪，历史见 git log 与 PROJECT_HISTORY.md）
 
