@@ -17,7 +17,7 @@
 ## 项目概况
 
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
-  - `zcode-provider`: **0.1.27**（修复 bigmodel 推理端点误用 `open.bigmodel.cn` 致 401，改为与国际站共用 `zcode.z.ai`；0.1.26 修复非法 provider 在 HTTP 入口被静默回退 zai；0.1.25 支持 bigmodel 中国区 OAuth 授权 + 面板双站选择）
+  - `zcode-provider`: **0.1.29**（修复面板无感验证未传 captcha 配置致领取参数无效；0.1.28 面板内无感验证领取 Start Plan + OAuth 默认中国区；0.1.27 修复 bigmodel 推理端点误用 `open.bigmodel.cn` 致 401）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoderwork-provider`: **0.9.36**（tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00）
   - `qoder-ai-provider`: **0.1.16**（tools 对齐修复；0.1.15 max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册；签到 10:00/22:00）
@@ -29,6 +29,15 @@
 - 当前时间：2026-10-13 (GMT+8)
 
 ## 活动会话进展摘要
+
+- 当前会话（2026-10-14/15）：**zcode-provider 默认中国区 + 面板内无感验证领取额度（0.1.28 新增 → 0.1.29 修复配置缺陷），全链路发布生产**：
+  - 需求背景：用户要求「默认中国区，OAuth 登录页也默认中国区授权」，并「通过逆向工程激活额度，不用手动去 zcode 客户端登录激活」；经确认范围收敛为「只做无感验证（不做交互滑块）」+「先预研可行性」。
+  - 预研（`doc/5-tests/2026-10-14_151500_*`）：逆向 asar 3.15.1 + 真实浏览器实测，证实官方用的就是标准阿里云无感验证 SDK，**插件端可自主领取**（推翻此前「只能引导用户去桌面客户端」的结论）；识别三项此前遗漏的必需项：`region=sgp`（非 configs 字面下发的 `cn`）、`plan_id` 带批次后缀 `zcode-v3-start-plan-0817`（须由 `/billing/preview` 动态解析）、`X-Device-Mid`（UUID v4）。
+  - **0.1.28 实施**：① 默认中国区——面板下拉 `bigmodel` 置首位 + `resolveOAuthProvider`/`providerFromMetadata` 空值默认 `bigmodel`（显式 `zai` 仍可用）；② claim 契约——新增 `fetchClaimablePlanID()` 动态解析 planId、`zcodeDeviceMid()` 稳定 UUID、claim 请求补 `X-Device-Mid`；③ 面板新增 `runTracelessVerification` + `claimQuota`，未领取卡片按钮改「🎁 领取额度」，原「📖 领取指引」降级兜底。发布链 `89837d9`→CI `38590147511`→`80eadd8`(assets)→`9635fa0`(registry)；生产热重载 `active_version=0.1.28 retired_version=0.1.27`，零容器重启。
+  - **0.1.29 缺陷修复（本会话端到端实证中发现）**：0.1.28 面板产出的 `captchaVerifyParam` 仅 76 字符、不含 `securityToken`，`/claim` 始终返回 `captcha_required`。根因（真实浏览器 A/B/C/D/E 五组受控实验锁定）：`initAliyunCaptcha` 未传 `prefix`/`region`，且只设了 SDK **不读**的全局名 `AliyunRequestVerificationConfig`（SDK 实读 `window.AliyunCaptchaConfig` 且**仅在脚本加载期读取一次**）→ 请求打到 `undefined.captcha-open.aliyuncs.com`。修复：init 入参显式传 `prefix`/`region`（与时机无关的权威通道）+ 加载前预设 `window.AliyunCaptchaConfig`。修复后参数 **76→280 字符且含 `securityToken`**，生产 `/claim` 上游响应由 **captcha 层 `captcha_required` → 业务层 `no permission`**，证明 captcha 校验已通过。Bug 文档 `doc/4-bugs/2026-10-15_001240_*`。
+  - **0.1.29 发布闭环**：提交 `c757927`(fix 5 文件) → CI `38596835494` success → `fb5f8d8`(assets, 7/7 sha256 OK) → `1a8bc97`(registry) → `db66489`(docs) → `0612449`(prune 0.1.27/0.1.28)；远端 raw URL 200；生产热重载 `active_version=0.1.29 retired_version=0.1.28`，零容器重启，落盘 `.so` sha256 `9dc184d9…b10da` 与 zip 内 `.so` 逐字节一致；**生产面板行为验收**：面板自身 `runTracelessVerification` 产出 280 字符有效参数。
+  - 未覆盖：**「未领取 → 已激活」完整激活未取得实证**——上游当前对全部账号 `billing/preview` 返回 `plans:[]`（无下发可领取计划），claim 业务层返回 `no permission`，属上游活动态非插件缺陷；captcha 层已独立判据通过。
+  - 门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板 JS `node --check` 双块 rc=0；`gofmt` LF 归一后空；`POLLUTION: PASS`；`STYLE: PASS`（`doc/6-review/2026-10-15_003700_*`）。
 
 - 当前会话（2026-10-14）：**zcode-provider 支持 bigmodel（中国区）OAuth 授权：CYCLE-1/2 已发布 0.1.25 上线，CYCLE-3 待真实账号**：
   - 需求背景：用户指出 ZCode 授权走的是国际站 `chat.z.ai`，国际版无每日额度赠送，需改走中国区以获取额度政策。期间用户两次纠正方向（先说「中国区依旧走 z.ai，不是 bigmodel」，后又更正「应该使用 bigmodel」）；实测最终确认：`provider=bigmodel` **完全复用**现有 CLI 轮询链路（共用 `zcode.z.ai/api/v1/oauth/cli/init` 与 `/cli/poll/`），仅 provider 参数、authorize 域名（`bigmodel.cn/login`）、回调路径不同 —— 是**参数化**而非重写。
@@ -112,52 +121,9 @@
     3. 支持智能安全区间截断（clamp），当客户端请求超大值时自动收敛至官方上限避免上游网关返回 400；
     4. 动态模型元数据保底对齐官方规格；双插件单测 100% PASS 并完成提交推送。
 
-- 上一会话（2026-10-12）：**ZCode 0.1.15 新增插件自带账号激活功能开通每日额度（无需客户端登录，全链路发布与生产热重载验收通过）**：
-  - 用户反馈与目标：用户指出新导入的账号（如「ZCode 旅行者1463」）只有做激活动作才会有每日额度出现，现在刷新额度没有激活效果；官方需用该账号在客户端登录触发激活，希望插件自带激活账号功能，不需要客户端登录，新账号就能刷新出每日额度。
-  - 核心排查与逆向锁定：
-    1. 逆向客户端 `out/host/index.js` 与 `out/renderer` 确认官方激活链路：通过 `POST https://zcode.z.ai/api/v1/zcode-plan/billing/claim` 激活 `zcode-v3-start-plan`，上游下发每日 800 万额度；
-    2. 上游要求安全验证：直接调 claim 端点报 `code: 3007, msg: "captcha verify failed"`，由阿里云智能验证码 SDK 产出 `X-Aliyun-Captcha-Verify-Param` 并以新加坡区域 `X-Aliyun-Captcha-Verify-Region: sgp` 请求。
-  - 实施修复与系统实现（v0.1.15）：
-    1. **后端新增 `POST /claim` 端点**：调用官方 claim 开通套餐，支持注入验证码参数与设备指纹；当上游要求验证时返回结构化配置；激活成功自动清除旧缓存并拉取最新额度，动态同步 Models 字段；
-    2. **刷新额度静默激活联动**：在后台刷新或拉取额度遇新账号无生效计划时，后端自动先尝试一次静默激活，免验证时直接回填每日额度；
-    3. **管理面板未激活识别与一键激活开通**：卡片识别未开通状态并展示「未激活」Badge，提供「⚡ 激活开通」高亮按钮；点击或单卡刷新未开通时，按需动态加载阿里云验证码 SDK 完成无感/滑块验证并自动调用激活，无需安装登录桌面客户端；
-    4. 新增 2 项套餐激活单元测试并通过哨兵反证。
-  - 生产热重载与实测验收：
-    - `python scripts/cgo-shim-build.py zcode` 全绿通过；CI Run `38286802545` 65/65 jobs 全绿打包；8 资产下载校验 `ALL CHECKSUMS OK`；registry 同步、远端 raw URL 7/7 200 验证；prune 0.1.14；
-    - 生产服务器调用 `plugin-store install zcode-provider?version=0.1.15` 热重载生效（`restart_required: false`）；
-    - 生产实测调用 `POST /claim` 返回 200 及结构化验证参数；面板静态资源回读确认「⚡ 激活开通」与 `activateAccount` 均已就绪。
+- 会话（2026-10-12）：**ZCode 0.1.15 新增 `POST /claim` 端点与面板一键激活（后被 0.1.22 推翻为「领取指引」，0.1.28 再以无感验证实现）**：逆向确认 claim 链路需阿里云验证头 `X-Aliyun-Captcha-Verify-Param` + `sgp` 区域；后端新增 claim 端点、刷新遇无生效计划时静默试激活、面板未激活卡片「⚡ 激活开通」。CI `38286802545` 全绿，生产热重载生效。
 
-- 当前会话（2026-10-12）：**ZCode 0.1.14 全量修复用量管道、模型别名解析与额度刷新稳定性（全链路发布与生产热重载验收通过）**：
-  - 用户反馈与目标：
-    1. 「zcode测试成功, 但是token用量面板其实没有识别到请求, 是不是说明是请求推理失败的?」
-    2. 「但是我们用GLM-5.3是可以测试成功出请求记录的, 但是我们用glm-5.3就不行了。」
-    3. 「并且我们的ZCode 旅行者2435是有额度的, 有时候确刷新不出额度。」
-    4. 「zcode的差距需要全量测试一下, 还是有很多问题的。」
-  - 核心根因锁定（实测铁证）：
-    1. **用量面板无记录**：`usage_feed.go` 将日志写到孤立路径 `/root/.antigravity_cockpit/data/` 且 JSON 缺少 `tokens` 嵌套与 `source` 账号标签，未被 `token-usage-tracker` 消费；面板 `/test-active` 未接入上报。
-    2. **小写模型名与别名 400 失败**：`main.go` 误声明 `ExecutorModelScopeStatic` 导致宿主 OAuth 模型别名完全未绑定到插件；且插件内部缺失 `cacheModelAliases` / `resolveUpstreamModel`，未将小写 `glm-5.3` 归一化为上游 Anthropic 端点识别的权威大写 `GLM-5.3`。
-    3. **额度刷新频控与卡顿**：前端后台轮询收尾时二次调用 `fetchAndPatchQuota` 带有 `&force=1` 重复轰炸上游频控；后端缺少旧有效快照兜底；未获取时永久转圈假死。
-  - 实施修复与系统实现（v0.1.14）：
-    1. **重写用量流管道**：自动探测宿主数据目录 `<CLIProxyAPI root>/data/token-usage-feed.ndjson`，对齐完整嵌套 Schema、账号昵称 `source` 与 128MB 截断；在 `/test-active` 探活成功/失败时完整埋点。
-    2. **模型别名反向解析与 GLM 大小写归一化**：`main.go` 改为 `ExecutorModelScopeOAuth`；`models.go` 接入 `cacheModelAliases` / `resolveUpstreamModel`；实现 `normalizeOfficialGLMModelID` 自动将 `glm-` 开头的小写模型规范化为官方标准大写；`MethodModelForAuth` 自动剥离 `.json` 后缀并从生效套餐 entitlements 动态发现模型。
-    3. **优化流式换号重试与退避**：`handleExecStream` 增加 3 次换号重试；换号判据纳入并发超限（`3009/concurrency`）；退避冷却优化为 15 秒固定冷却。
-    4. **额度刷新稳定性**：前端轮询收尾改为读取缓存；`quota.go` 增加旧缓存兜底；OAuth 落盘与导入后自动加入刷新队列；优化前端空态提示。
-  - 门禁与发布验收：
-    - `python scripts/cgo-shim-build.py zcode` 与 `token-usage-tracker` 全部 all green，新增 `models_alias_test.go` 并经受必失败哨兵反证；`node` 前端语法检测全绿；
-    - CI Run `38271303121` 65/65 jobs 全绿，生成 Release 资产；下载 8 资产校验 `ALL CHECKSUMS OK`；registry 同步并通过校验；远端 raw URL 7/7 平台 200 且哈希一致；prune 0.1.13；
-    - 生产服务器调用 `plugin-store install zcode-provider?version=0.1.14` 热重载生效（`restart_required: false`，零容器重启）；
-    - **生产全链路实测验收通过**：
-      1. 面板探活「ZCode 旅行者2435」返回 200，用量日志与 Token 用量统计面板 `/requests` 立刻出现 `Source: ZCode 旅行者2435, Model: GLM-5.3` 真实记录；
-      2. 生产网关 `/v1/models` 成功注册 `glm-5.3` 与 `glm-5.3-flash` 归属 `zcode-provider`；请求小写 `glm-5.3` 和 `glm-5.3-flash` 稳定以流式打字机吐出思考链并返回 200；
-      3. `GET /credits` 成功拉取「ZCode 旅行者2435」每日 800 万额度（GLM-5.3 300万 + GLM-5.3-Flash 500万），`POST /refresh` 2 秒内全部 `done`，首屏 accounts 自动附带完整 quota。
-  - 核心根因：上游对**同账号突发调用**限流，在 HTTP 200 下返回业务码 `110: Billing daily count exceeded`。自动探活每轮 5 模型轮测 + 每账号 10 分钟节流，一天上千次真实推理调用稳定触发限流，并挤占真实推理的账号配额。（**修正上一轮“日配额耗尽”误判**：实测健康账号连发 20/20 成功、同账号 ok/bad 交替，属突发限流而非日额度打满。）
-  - 实施落地（两插件镜像，逐函数适配）：
-    1. **移除自动探活全链路**：删除 `doActivePing`（多模型轮测）、`triggerActivePing`、30 分钟节流状态、`refresh_runner.doFetchOne` 触发点与 watchdog 探活语义；后台只拉取额度快照与活动状态。**保留面板「测试」按钮的单次手动调用**（用户主动点击才发 1 次）。
-    2. **完整下线 `test_failed` 机制**：打标/清标唯一宿主在自动探活内，探活移除后存量标签永久无法清除、账号会被永久排除出调度。故一并删除机制本体 `test_failed_tag.go`（+测试）、三处调度排除判据（`scheduler.go` / `active_auth.go` / `failover_retry.go`，`accountRoutable` 现只剩 `!cooling`）、`panel.go` 字段与 `panel.html` 「测试」筛选标签；启动时由 `stripAnomalyKey` 剥离存量 `test_failed` 标签。
-    3. **签到时间收敛**：`checkinHours` 由 `[0,4,8,12,16,20]` 改为 `[10,22]`；新增 `shouldRunCheckinNow` 门控——`nextCheckinTime` 取 checkin 与 keepalive 并集唤醒，不门控会让签到在 keepalive 时刻（04:00/16:00 等）误触发。面板文案与 `schedule` 字段同步为 10:00/22:00。
-  - 验证全绿：`cgo-shim-build.py` 两插件 build/vet/test 全绿（各 ~7.0s）；`checkin_schedule_test.go`（新增，两插件逐字相同）经**哨兵变异**（`checkinHours` 回退 6 槽）后 4 用例精确 FAIL，证明真实进编译；6-review `STYLE: PASS`；`POLLUTION: PASS`。
-  - 文档：`doc/3-实施/2026-10-12_220000_Qoder去掉自动探活与签到时间调整实施总览.md`、`doc/4-bugs/2026-10-12_214500_Qoder上游110每日计费次数上限致账号误判测试失败根因诊断.md`、`doc/5-tests/2026-10-12_230000_*`、`doc/6-review/2026-10-12_231000_*`。
-  - 待办：CI dispatch → 下载 assets → registry 更新 → 生产 `plugin-store install` 热重载 → 观测无新 `active ping` 日志、签到仅在 10:00/22:00 触发。
+- 会话（2026-10-12）：**ZCode 0.1.14 全量修复用量管道、模型别名解析与额度刷新稳定性**：① 用量面板无记录——`usage_feed.go` 写孤立路径且 JSON 缺 `tokens` 嵌套与 `source`；② 小写 `glm-5.3` 400——`ExecutorModelScopeStatic` 误声明致别名未绑定 + 缺 `cacheModelAliases`/`resolveUpstreamModel`；③ 额度刷新频控卡顿。修复：重写用量流管道、改 `ExecutorModelScopeOAuth` + `normalizeOfficialGLMModelID`、流式换号 3 次重试、前端轮询改读缓存。CI `38271303121` 全绿，生产验收：面板探活出真实用量记录、`/v1/models` 注册小写模型、`/credits` 拉到 800 万额度。
 
 - 当前会话（2026-10-12）：**qoder-ai-provider 0.1.9 / qoderwork-provider 0.9.30 修复「上游 HTTP 200 顶层 code 排队帧未被识别致 new-api 调用 qwen3.8 系列 60s 挂死」**：
   - 用户反馈与目标：用户报「还是不能从 new-api 请求 cpa 的 qwen-3.8-flash、qwen-3.8 模型，但 cpa 本身测试可以」；拍板「两个插件都改，行为都选立即报错」。
@@ -170,23 +136,13 @@
   - **发布与生产验收（已完成）**：CI run `38157167623`/`38157165743` 均 success，tag 与 Release 各 8 资产；registry 同步 0.1.9/0.9.30、远端 14/14 平台 size+sha256 ALL PASS；生产 `plugin hot reloaded active_version=0.1.9 retired_version=0.1.8` / `0.9.30 retired=0.9.29`、**零容器重启**、落盘 `.so` sha256 与本地 zip 一致（`8fd3aa13…` / `9758ca2e…`）、accounts 200；修复后 112KB prompt 由 **60.57s 挂死 → 3.90s 正常返回**，`qwen-3.8-flash`/`qwen-3.8` 经渠道 key 直测均 200（1.9s）；探活侧已实证能如实报 `upstream 200: 112:` 失败（旧版盲判成功）；prune 清理 0.1.8/0.9.29（约 40.6 MB）。
   - 局限：验收期间上游未排队，排队帧路径的「快速报错」未在生产自然复现，由本地哨兵反证（10.00s 精确复现）+ 真实帧复刻覆盖；待排队窗口回看日志确认。
 
-- 当前会话（2026-10-11）：**彻底废弃并删除 Gemini 插件（gemini-provider），全套配置与文档对齐 8 大插件体系**：
-  - 用户反馈与决策：用户指出当前 Gemini 插件体积极大（动态库达 14.4MB，比含全套 UI 的 WorkBuddy 还要大 80%），且在实际使用中几乎不可用（强制要求带有 Cloud Project 与结算绑定的 GCP 开发者账号，缺少 Web 管理面板与容灾调度）；经评估确认其投入产出比过低且严重违背轻量化原则，决定彻底放弃并不再维护该插件。
-  - 清理与实施动作：
-    1. **源码与发布资产清理**：使用 `git rm` 彻底删除 `gemini/` 源码目录、`release-assets/gemini-provider-0.1.1/` Release 资产目录，以及 `assets/icons/Gemini.png`、`assets/icons/Google.png` 图标文件；
-    2. **元数据与流水线同步**：从 `registry.json` 中移除 `gemini-provider` 插件配置（插件源总数从 9 个回退至 8 个）；从 `.github/workflows/build.yml` 中彻底剔除 `gemini` 的构建、交叉编译、Release 触发与 DISPLAY 映射；
-    3. **文档与规范全面更新**：更新 `README.md`、`PROJECT_CURRENT.md`、`PROJECT_MEMORY.md`、`PROJECT_HISTORY.md` 与《九大插件全景架构与演进计划总览》，明确记录 Gemini 插件的废弃与移除历史，更新全景矩阵为 8 大插件体系；
-    4. **全量回归验证**：`validate-registry.py` 校验 8 插件通过，全量兄弟插件 `cgo-shim-build.py` 编译与单测全绿。
+- 会话（2026-10-11）：**彻底废弃并删除 Gemini 插件（gemini-provider），对齐 8 大插件体系**：因体积 14.4MB、强依赖 GCP 结算账号、无面板与容灾，`git rm` 源码/资产/图标，registry 与 workflow 同步移除（9→8 插件），文档全量更新，`validate-registry.py` 8 插件通过。
 
-- 当前会话（2026-10-11 至 10-12）：**ZCode 授权从误抄 API Key 重构为账号授权，再根治为官方 CLI 轮询 OAuth 链路（0.1.5 → 0.1.8）**：
-  - 0.1.5：反编译 `D:\zcode\resources\app.asar`（ZCode 3.15.1）锁定官方 OAuth 契约（授权页 `chat.z.ai/auth`、客户端 ID `client_P8X5CMWmlaRO9gyO-KSqtg`）；`StoredAuth` 扩展 token/access_token/user 并保持 `sa.APIKey` 向下兼容；发布链 `d92c37b`→`24570ac`→`ef6523d`→`d6f23c2`，生产热重载生效。
-  - 0.1.8：改用官方 CLI 轮询链路（`POST /api/v1/oauth/cli/init` + `GET /api/v1/oauth/cli/poll/<flow_id>`），`handleStartLogin` 原样透传服务端签发的 `authorize_url`（不改写 `redirect_uri`），`handlePollLogin` 轮询取结果，移除本地回调桥接；发布链 `fb24235`→`4e8a925`→`9362c3f`→`9171562`，生产 0.1.8 热重载、落盘 sha256 `aa82c93a…` 一致。
-  - 知识沉淀：知识库《Z.ai-ZCode-OAuth授权契约-CLI轮询模式》+ 项目记忆 `feedback-cpa-oauth-redirect-uri`。
-  - **2026-10-14 更正**：当时记的「`chat.z.ai` 对 `client_id` 执行 redirect_uri 严格白名单」经三臂实测推翻——`authorize` 层三个候选 `redirect_uri` 均 307 通过，白名单不在该层；真因是桌面端 deep-link 会唤起本地客户端、CPA 拿不到授权码，故仍应复用官方 CLI 轮询链路（结论不变，因果已修正）。
+- 会话（2026-10-11 至 10-12）：**ZCode 授权重构为官方 CLI 轮询 OAuth 链路（0.1.5 → 0.1.8）**：反编译 asar 锁定官方契约（`client_P8X5CMWmlaRO9gyO-KSqtg`），`StoredAuth` 扩展 token/access_token/user；0.1.8 改用 `POST /api/v1/oauth/cli/init` + `GET .../cli/poll/<flow_id>`，`handleStartLogin` 原样透传 `authorize_url`。**2026-10-14 更正**：redirect_uri 白名单结论经三臂实测推翻（`authorize` 层不校验），真因是 deep-link 唤起本地客户端致 CPA 拿不到授权码。
 
-- 当前会话（2026-10-11）：**Qoder 403 首包假成功与全链路流式诊断，完成生产 Docker Nginx proxy_buffering off 重载验证**——根因：Qoder 上游 HTTP 200 下返回 `isQueued:true` 业务报错帧且连接僵死 60s、CPA 面板探活盲读 512 字节误判成功、New-API 渠道测试强制非流式不能验证流式。运维闭环：生产 `nginx -t` PASS + `nginx -s reload` 平滑重载（含 `proxy_buffering off; proxy_cache off;`），外网 1.35s 端到端流式；经验固化到项目 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`。
+- 会话（2026-10-11）：**Qoder 403 首包假成功与流式诊断**——上游 HTTP 200 下 `isQueued:true` 报错帧 + 连接僵死 60s、探活盲读 512 字节误判成功。运维闭环：生产 nginx `proxy_buffering off` 平滑重载，外网 1.35s 端到端流式；经验固化到 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`。
 
-- 当前会话（2026-10-11）：**deepseek-v4.1-flash 推理断开根因诊断 + traework 补齐 oauth-excluded-models 治理入口（现承载于 0.2.12）**——根因三层叠加：同名裸模型多服务商认领（traework 是唯一未实现 `filterExcludedModels` 的 OAuth 插件）、会话亲和钉死故障服务商、`hostBridgeOpenTimeout=30s` 与 `ResponseHeaderTimeout=30s` 串行相加致零字节长挂 60s。修复：`traework/models.go` 新增 `filterExcludedModels` 并在 `model.static`+`model.for_auth` 全出口应用（未配置零行为变化），新增 5 例测试含语义变异反证。待办（需用户拍板）：生产 `PATCH /v0/management/oauth-excluded-models` 批量治理同 6 个裸名。
+- 会话（2026-10-11）：**deepseek-v4.1-flash 推理断开根因诊断 + traework 补齐 oauth-excluded-models 入口（现承载于 0.2.12）**——三层叠加：同名裸模型多服务商认领、会话亲和钉死故障服务商、两个 30s 超时串行致零字节长挂 60s。修复：traework 新增 `filterExcludedModels` 并在全出口应用，新增 5 例测试含语义变异反证。
 
 - 当前会话（2026-10-11）：**Token 用量面板移除四个图表与导出图片并下线图表专用接口与聚合（0.2.6/0.2.7/0.2.8 均已发布并生产热重载验收）**——移除 4 图表 + 相关统计与 `/stats/trends`、`series`/`bucket_seconds` 字段，`dashboard.go` −21%（269,709 → 212,658 字节）；0.2.7 修换句柄窗口导致的用量记录丢失（`ErrStoreClosed` 哨兵 + 配置指纹复用句柄），0.2.8 让退役实例 feed 导入协程连续 3 轮关闭句柄后自行退出。门禁：`cgo-shim` 全绿 + 38 项静态断言（旧版本反证 24 项 FAIL）。⚠️ 泄漏旧协程需一次容器重启才能回收，交用户裁定。
 
