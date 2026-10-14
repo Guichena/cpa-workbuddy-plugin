@@ -2,14 +2,17 @@
 /**
  * ZCode 面板额度渲染回归脚本（Node vm + DOM 桩，真实执行 panel.html 内联 JS）。
  *
- * 回归对象：账号面板的额度可视化链路（0.1.12 参照 workbuddy 新增）。
+ * 回归对象：账号面板的额度可视化链路（0.1.12 参照 workbuddy 新增），
+ * 以及 OAuth 授权站点选择链路（2026-10-14 新增 zai / bigmodel 双站）。
  * 覆盖断言：
  *   1. 两个 script 块语法可编译；
- *   2. 无额度缓存的账号卡片渲染「加载中…」占位而非报错；
+ *   2. 无额度缓存的账号卡片渲染「未领取」提示而非报错；
  *   3. 有额度快照的账号渲染进度条、计划名徽章与合计；
  *   4. 汇总卡按「额度已获取 / 未知」口径统计，合计等于各账号 total_grant 之和；
  *   5. 额度排序（quota_asc / quota_desc）按 total_grant 生效，未知额度排最少端；
- *   6. 筛选标签计数与状态口径一致。
+ *   6. 筛选标签计数与状态口径一致；
+ *   7. 卡片按 provider_family 渲染站点归属徽标（国际站 / 中国区，缺省国际站）；
+ *   8. 发起授权时把下拉框选中的 provider 透传给 /activate-start（缺省 zai）。
  *
  * 用法：node test/zcode/panel_quota_render_repro.mjs
  * 退出码：0 = 全部断言通过；1 = 存在断言失败。
@@ -23,7 +26,8 @@ const plugin = "zcode";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const panelPath = path.join(repoRoot, plugin, "panel.html");
 
-// 夹具：3 个账号 —— A 有额度(300万+500万)、B 有额度(100万)、C 无额度缓存。
+// 夹具：3 个账号 —— A 有额度(300万+500万)、B 有额度(100万，中国区授权)、C 无额度缓存。
+// A/C 不带 provider_family，用于验证历史账号缺省按国际站展示。
 const ACCOUNTS = [
   {
     auth_id: "zcode-aaa", auth_index: "zcode-aaa", label: "账号A", disabled: false,
@@ -41,6 +45,7 @@ const ACCOUNTS = [
   {
     auth_id: "zcode-bbb", auth_index: "zcode-bbb", label: "账号B", disabled: true,
     test_failed: false, cooling_down: false, created_at: "2026-10-02T00:00:00Z",
+    provider_family: "bigmodel",
     models: ["GLM-5.2"],
     quota: {
       plan_name: "ZCode Start Plan", plan_id: "p1", plan_status: "active",
@@ -103,6 +108,8 @@ function loadPanelContext() {
   };
 
   let payload;
+  // capturedRequests 记录 fetch 实际发出的请求，供断言 /activate-start 的 provider 载荷。
+  const capturedRequests = [];
   const ctx = {
     console, Date, Math, JSON, Number, String, Object, Array, Boolean, RegExp, Error, Promise,
     isNaN, parseInt, parseFloat, encodeURIComponent, decodeURIComponent,
@@ -121,13 +128,15 @@ function loadPanelContext() {
     sessionStorage: { getItem() { return "KEY"; }, setItem() {}, removeItem() {} },
     localStorage: { getItem() { return null; }, setItem() {} },
     location: { host: "cpa.luode.dev", search: "", href: "https://cpa.luode.dev/panel" },
-    fetch: async (url) => {
+    fetch: async (url, opts) => {
       const path = String(url);
+      capturedRequests.push({ path, opts: opts || {} });
       // payload 由 setPayload 注入（测试在 loadPanelContext 之后调用）；boot 阶段的
       // enterPanel 会先打一次 /accounts，此时 payload 仍为空，返回空账号列表兜底，
       // 避免桩环境下未捕获异常掩盖真实断言结果。
       let body;
       if (path.includes("/accounts")) body = payload || { accounts: [], count: 0 };
+      else if (path.includes("/activate-start")) body = { ok: true, state: "st-1", authorize_url: "https://example.test/auth?x=1" };
       else body = { error: "n/a" };
       return {
         status: 200, ok: true, statusText: "OK",
@@ -140,7 +149,7 @@ function loadPanelContext() {
   ctx.window = ctx; ctx.self = ctx; ctx.top = ctx; ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(main, ctx, { filename: `${plugin}-panel-main.js` });
-  return { ctx, document, setPayload: (p) => { payload = p; } };
+  return { ctx, document, setPayload: (p) => { payload = p; }, capturedRequests };
 }
 
 const failures = [];
@@ -157,7 +166,7 @@ function checkTrue(label, cond) {
 
 (async () => {
   console.log(`[回归] 面板 = ${plugin}/panel.html`);
-  const { ctx, document, setPayload } = loadPanelContext();
+  const { ctx, document, setPayload, capturedRequests } = loadPanelContext();
   const el = (id) => document.getElementById(id);
 
   setPayload({ accounts: ACCOUNTS, count: ACCOUNTS.length });
@@ -170,7 +179,7 @@ function checkTrue(label, cond) {
   checkTrue("有额度卡片含进度条", cardA.includes('class="pb"'));
   checkTrue("有额度卡片含额度段 GLM-5.3", cardA.includes("GLM-5.3"));
   checkTrue("有额度卡片含计划名徽章", cardA.includes('class="badge plan"'));
-  checkTrue("无额度卡片显示加载占位", cardC.includes("加载中…"));
+  checkTrue("无额度卡片显示未领取提示", cardC.includes("未领取"));
   checkTrue("无额度卡片不含计划名徽章", !cardC.includes('class="badge plan"'));
 
   // 汇总：额度已获取 2 / 未知 1，合计 900 万。
@@ -204,6 +213,29 @@ function checkTrue(label, cond) {
   check("fmtCompact 1500", ctx.fmtCompact(1500), "1.5K");
   check("fmtCompact 999", ctx.fmtCompact(999), "999");
   check("fmtNum 3000000", ctx.fmtNum(3000000), "3,000,000");
+
+  // 站点归属徽标：B 为中国区，A 缺省（历史账号）按国际站。
+  console.log("阶段6 授权站点归属徽标：");
+  const cardB = ctx.card(ACCOUNTS[1]);
+  checkTrue("中国区卡片含归属徽标", cardB.includes('class="badge provider bigmodel"'));
+  checkTrue("中国区卡片标注「中国区」", cardB.includes("中国区"));
+  checkTrue("国际站卡片含归属徽标", cardA.includes('class="badge provider"'));
+  checkTrue("国际站卡片标注「国际站」", cardA.includes("国际站"));
+  checkTrue("历史账号缺省不渲染中国区", !cardA.includes("bigmodel"));
+  check("providerBadge(bigmodel)", ctx.providerBadge({ provider_family: "bigmodel" }).includes("中国区"), "true");
+  check("providerBadge(缺省)", ctx.providerBadge({}).includes("国际站"), "true");
+
+  // 授权站点透传：下拉框选中值必须进入 /activate-start 的 JSON 载荷。
+  console.log("阶段7 授权 provider 透传：");
+  el("oauthProvider").value = "bigmodel";
+  await ctx.openOAuthBridge();
+  const startReq = capturedRequests.filter((r) => r.path.includes("/activate-start")).pop();
+  checkTrue("已发出 /activate-start 请求", !!startReq);
+  check("授权载荷 provider", JSON.parse(startReq.opts.body).provider, "bigmodel");
+  el("oauthProvider").value = "";
+  await ctx.openOAuthBridge();
+  const startReq2 = capturedRequests.filter((r) => r.path.includes("/activate-start")).pop();
+  check("空选值回落 provider", JSON.parse(startReq2.opts.body).provider, "zai");
 
   console.log("");
   if (failures.length) {

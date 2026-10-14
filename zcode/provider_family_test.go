@@ -164,6 +164,51 @@ func TestProviderFamilyOf_LegacyDefault(t *testing.T) {
 	}
 }
 
+// TestHandleListAccounts_ExposesProviderFamily 验证面板数据源透出站点归属字段：
+// bigmodel 账号输出 `provider_family=bigmodel`，历史账号缺省为 `zai`。
+func TestHandleListAccounts_ExposesProviderFamily(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "zcode_list_family_*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	setAccountsDir(tempDir)
+
+	user := &ZaiUserInfo{UserID: "20002", Name: "bigmodel用户"}
+	if _, err := saveZaiAccount("bm_list_abcdefgh", "bm_access", "", user, time.Now().Add(30*24*time.Hour), "列表归属账号", providerFamilyBigmodel); err != nil {
+		t.Fatalf("saveZaiAccount failed: %v", err)
+	}
+	if _, err := saveZaiAccount("zai_list_abcdefgh", "zai_access", "", user, time.Now().Add(30*24*time.Hour), "国际站账号", providerFamilyZai); err != nil {
+		t.Fatalf("saveZaiAccount failed: %v", err)
+	}
+
+	raw, err := handleListAccounts()
+	if err != nil {
+		t.Fatalf("handleListAccounts failed: %v", err)
+	}
+	resp := unwrapMgmtResp(t, raw)
+
+	var payload struct {
+		Accounts []accountSummary `json:"accounts"`
+	}
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		t.Fatalf("unmarshal accounts failed: %v", err)
+	}
+	if len(payload.Accounts) != 2 {
+		t.Fatalf("expected 2 accounts, got %d", len(payload.Accounts))
+	}
+	famByLabel := map[string]string{}
+	for _, acc := range payload.Accounts {
+		famByLabel[acc.Label] = acc.ProviderFamily
+	}
+	if got := famByLabel["列表归属账号"]; got != providerFamilyBigmodel {
+		t.Errorf("bigmodel account provider_family = %q, want %q", got, providerFamilyBigmodel)
+	}
+	if got := famByLabel["国际站账号"]; got != providerFamilyZai {
+		t.Errorf("zai account provider_family = %q, want %q", got, providerFamilyZai)
+	}
+}
+
 // TestHandleMethod_StartLoginCarriesProvider 验证宿主入口经 Metadata 指定 bigmodel 时，
 // 返回的授权地址指向中国站。
 func TestHandleMethod_StartLoginCarriesProvider(t *testing.T) {

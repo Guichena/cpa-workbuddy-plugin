@@ -98,6 +98,9 @@ type accountSummary struct {
 	CreatedAt    string   `json:"created_at"`
 	UpdatedAt    string   `json:"updated_at"`
 	Models       []string `json:"models"`
+	// ProviderFamily 是账号的授权站点归属（`zai` 国际站 / `bigmodel` 中国区），
+	// 供面板卡片展示归属标识；历史账号缺省为 `zai`。
+	ProviderFamily string `json:"provider_family,omitempty"`
 	// Quota 是已缓存的额度快照；无缓存时为 null，由面板进入时触发的后台刷新补齐。
 	Quota *zcodeQuotaSnapshot `json:"quota,omitempty"`
 }
@@ -266,22 +269,23 @@ func handleListAccounts() ([]byte, error) {
 			models = defaultModels
 		}
 		list = append(list, accountSummary{
-			AuthID:       acc.AuthID,
-			AuthIndex:    acc.AuthID,
-			Label:        acc.Label,
-			APIKeyMasked: maskAPIKey(acc.APIKey),
-			UserID:       acc.UserID,
-			Username:     acc.Username,
-			Email:        acc.Email,
-			AvatarURL:    acc.AvatarURL,
-			ExpiresAt:    acc.ExpiresAt,
-			Disabled:     acc.Disabled,
-			TestFailed:   acc.TestFailed,
-			CoolingDown:  isAccountCoolingDown(acc.AuthID),
-			CreatedAt:    acc.CreatedAt,
-			UpdatedAt:    acc.UpdatedAt,
-			Models:       models,
-			Quota:        cachedQuota(acc.AuthID),
+			AuthID:         acc.AuthID,
+			AuthIndex:      acc.AuthID,
+			Label:          acc.Label,
+			APIKeyMasked:   maskAPIKey(acc.APIKey),
+			UserID:         acc.UserID,
+			Username:       acc.Username,
+			Email:          acc.Email,
+			AvatarURL:      acc.AvatarURL,
+			ExpiresAt:      acc.ExpiresAt,
+			Disabled:       acc.Disabled,
+			TestFailed:     acc.TestFailed,
+			CoolingDown:    isAccountCoolingDown(acc.AuthID),
+			CreatedAt:      acc.CreatedAt,
+			UpdatedAt:      acc.UpdatedAt,
+			Models:         models,
+			ProviderFamily: providerFamilyOf(acc),
+			Quota:          cachedQuota(acc.AuthID),
 		})
 	}
 

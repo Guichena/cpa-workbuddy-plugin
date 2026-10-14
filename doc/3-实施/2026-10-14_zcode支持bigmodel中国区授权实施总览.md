@@ -24,8 +24,8 @@
 - 主项目地址、仓库类型与代码基线：`D:\luode\cpa-workbuddy-plugin`，Go c-shared 插件仓库，基线 `zcode-provider 0.1.24`。
 - local 环境与依赖入口：本地 `python scripts/cgo-shim-build.py zcode`（无 CGO 环境下的 build/vet/test）。
 - 外部项目代码引用：`N/A + 原因 + 证据`——仅读取本机 `D:/zcode/resources/app.asar` 作为只读逆向参考，不复制其代码，无外部仓库依赖。
-- 当前状态：草稿（CYCLE-1 可立即实施；CYCLE-2 需真实账号）
-- 是否已获得开始实施授权：**未获得**（用户已确认 provider 策略方向，但尚未下达「开始实施」指令）
+- 当前状态：CYCLE-1 已完成（提交 `c84088f`）；CYCLE-2 已完成（provider 选择交互 + 卡片归属标识）；CYCLE-3 待真实账号
+- 是否已获得开始实施授权：**已获得**（用户已下达「开始实施 CYCLE-1」「CYCLE-2 面板 provider 选择 UI」指令）
 - 若当前为受限计划 / 阻断计划：本计划**不得作为实施授权**，需用户明确开工指令后进入编码。
 
 ## 2.1 决策维度覆盖表
@@ -54,9 +54,9 @@
     3. 暂不实施，先仅保留需求与计划文档。
   - 挂起的下游内容：CYCLE-2 及以后全部内容、`AC-002`/`AC-004` 的验证。
 
-- 未决决策点 2：**panel.html 的 provider 选择交互形态**
+- 未决决策点 2：**panel.html 的 provider 选择交互形态** —— **已定**：采用推荐项 1（授权按钮旁加下拉选择，默认 `zai`），2026-10-14 按 `autonomous-execution-rules` 依推荐方向推进完成。
   - 待选选项（推荐项置首）：
-    1. 授权按钮旁加下拉选择（`zai` / `bigmodel`），默认 `zai`（推荐，改动最小）；
+    1. 授权按钮旁加下拉选择（`zai` / `bigmodel`），默认 `zai`（推荐，改动最小）—— **已采纳**；
     2. 拆成两个独立按钮（「OAuth 授权登录（国际站）」/「OAuth 授权登录（中国区）」）；
     3. 弹窗内选择 provider。
   - 挂起的下游内容：CYCLE-3 的 UI 落点。

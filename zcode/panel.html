@@ -54,6 +54,8 @@ button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background
 .bar .search{max-width:210px;flex:0 1 210px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--fg);font-size:13px;outline:none}
 .bar .search:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
 .bar .search::placeholder{color:var(--placeholder)}
+.bar .provider-select{background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--fg);font-size:13px;outline:none;cursor:pointer}
+.bar .provider-select:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
 .bar .sort-btn{font-size:13px;white-space:nowrap}
 .bar .sort-btn.active{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
 .grid{display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:16px}
@@ -68,6 +70,9 @@ button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background
 .badge.test-failed{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-style:italic}
 .badge.plan{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
 .badge.warning{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border);font-weight:700}
+/* 授权站点归属标识：国际站（zai）中性色，中国区（bigmodel）用主题强调色区分 */
+.badge.provider{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border)}
+.badge.provider.bigmodel{background:var(--acc-ring);color:var(--acc);border:1px solid var(--acc-ring)}
 .actions .btn-act{color:var(--acc);border-color:var(--acc);font-weight:600}
 .actions .btn-act:hover{background:var(--acc-soft)}
 /* 后台刷新卡片三态（data-refresh-state：pending/running/done/failed）
@@ -221,7 +226,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 <body>
 <div class="wrap">
   <h1>ZCode 账号面板</h1>
-  <div class="sub">Z.ai 官方账号授权 · 每日额度 · ZCode 客户端指纹 · 失效自动冷却</div>
+  <div class="sub">Z.ai / BigModel 官方账号授权 · 每日额度 · ZCode 客户端指纹 · 失效自动冷却</div>
   <div id="authBox" class="card" style="display:none;margin-bottom:16px">
     <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
     <div style="display:flex;gap:8px">
@@ -230,6 +235,10 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     </div>
   </div>
   <div class="bar">
+    <select id="oauthProvider" class="provider-select" title="选择 OAuth 授权站点：国际站 chat.z.ai / 中国区 bigmodel.cn">
+      <option value="zai">国际站（chat.z.ai）</option>
+      <option value="bigmodel">中国区（bigmodel.cn）</option>
+    </select>
     <button id="oauthBtn" onclick="openOAuthBridge()" style="background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border);font-weight:600">OAuth 授权登录</button>
     <button class="sec" id="importBtn" onclick="openImportModal()">导入凭据</button>
     <button class="sec" id="exportBtn" onclick="exportAccounts(this)" title="导出全部账号凭证为 JSON，可直接再导入">导出凭证</button>
@@ -319,7 +328,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
           <div class="spinner"></div>
           <strong id="activateStatusText" style="color:var(--fg);font-size:14px;">已打开官方授权页面，等待授权完成…</strong>
         </div>
-        <p style="margin:0 0 10px;">请在 Z.ai 官方页面中点击「同意授权」完成登录；授权完成后插件会自动捕获并绑定该账号。每日额度需按提示在 ZCode 客户端内领取。</p>
+        <p id="activateBodyHint" style="margin:0 0 10px;">请在 Z.ai 官方页面中点击「同意授权」完成登录；授权完成后插件会自动捕获并绑定该账号。每日额度需按提示在 ZCode 客户端内领取。</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
           <a class="btn sec" id="activateExternalLink" href="#" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;padding:6px 14px;border-radius:6px;font-size:12px;">
             <span>打开官方授权页 ↗</span>
@@ -531,6 +540,15 @@ function stateBadge(a){
   return '<span class="badge">可用</span>';
 }
 function displayName(a){return a.label||a.username||a.email||a.api_key_masked||a.auth_id||"未命名"}
+// providerBadge 渲染账号授权站点归属徽标：区分国际站（chat.z.ai）与中国区（bigmodel.cn）。
+// [参数] a: 账号对象，读取其 provider_family 字段。
+// [返回] 归属徽标的 HTML 字符串。
+// 最近修改时间：2026-10-14；改动原因：新增，配合 OAuth 双站授权展示账号归属。
+function providerBadge(a){
+  const fam=(a&&a.provider_family)||"zai";
+  if(fam==="bigmodel") return '<span class="badge provider bigmodel" title="该账号通过中国区 bigmodel.cn 授权">中国区</span>';
+  return '<span class="badge provider" title="该账号通过国际站 chat.z.ai 授权">国际站</span>';
+}
 // 额度总量口径：全部 entitlement 授予额度合计。
 function quotaTotal(a){
   const q=a&&a.quota;
@@ -586,8 +604,8 @@ function card(a){
   const guideBtn=isUnactivated
     ? `<button class="sec btn-act" data-action="guide" data-auth-index="${esc(a.auth_id)}" title="查看 Start Plan 每日额度的官方领取步骤">📖 领取指引</button>`
     : "";
-  return `<div class="card" data-state="${st}" data-auth="${esc(a.auth_id)}" data-name="${esc(titleName)}" data-quota="${quotaTotal(a)}" data-search="${esc(((a.label||"")+" "+(a.username||"")+" "+(a.email||"")+" "+(a.user_id||"")+" "+(a.api_key_masked||"")+" "+(a.auth_id||"")).toLowerCase())}">
-  <h2><span class="name" title="${esc(titleName)}">${esc(titleName)}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${stateBadge(a)}${planBadge}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_id)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
+  return `<div class="card" data-state="${st}" data-auth="${esc(a.auth_id)}" data-name="${esc(titleName)}" data-quota="${quotaTotal(a)}" data-search="${esc(((a.label||"")+" "+(a.username||"")+" "+(a.email||"")+" "+(a.user_id||"")+" "+(a.api_key_masked||"")+" "+(a.auth_id||"")+" "+(a.provider_family||"zai")).toLowerCase())}">
+  <h2><span class="name" title="${esc(titleName)}">${esc(titleName)}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${providerBadge(a)}${stateBadge(a)}${planBadge}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_id)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
   <div class="uid" title="${esc(a.auth_id||"")}">${esc(a.auth_id||"")}</div>
   <div class="row"><span class="k">访问令牌</span><span class="v mono" title="已脱敏">${esc(a.api_key_masked||"-")}</span></div>
   ${a.user_id?`<div class="row"><span class="k">用户ID</span><span class="v mono">${esc(a.user_id)}</span></div>`:""}
@@ -1032,13 +1050,20 @@ function openImportModal(){
 function closeImportModal(){document.getElementById("importModal").classList.remove("show")}
 function onImportMaskClick(ev){if(ev.target&&ev.target.id==="importModal")closeImportModal()}
 
-// 顶部「OAuth 授权登录」按钮
+// 顶部「OAuth 授权登录」按钮：按工具栏选中的授权站点发起 OAuth 登录。
+// [参数] 无（provider 取自 #oauthProvider 下拉框，缺省 zai 国际站）。
+// [返回] 无。
+// 最近修改时间：2026-10-14；改动原因：provider 参数化，支持中国区 bigmodel 授权。
 async function openOAuthBridge(){
+  const sel = document.getElementById("oauthProvider");
+  const provider = (sel && sel.value) === "bigmodel" ? "bigmodel" : "zai";
+  const isBigmodel = provider === "bigmodel";
+  const siteLabel = isBigmodel ? "bigmodel.cn（中国区）" : "chat.z.ai（国际站）";
   try{
     const startRes = await api("/activate-start", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: "{}"
+      body: JSON.stringify({provider: provider})
     });
 
     if(!startRes || !startRes.ok || !startRes.authorize_url){
@@ -1063,14 +1088,16 @@ async function openOAuthBridge(){
 
     openActivateModal(
       "OAuth 授权登录新账号",
-      "请在打开的 Z.ai 官方登录授权页面完成登录…",
+      "请在打开的 " + siteLabel + " 官方登录授权页面完成登录…",
       cleanAuthUrl,
       startRes.state,
       (res)=>{
-        toast("新账号授权成功！", "ok", "已绑定 ZCode 账号；每日额度请在 ZCode 客户端内领取");
+        toast("新账号授权成功！", "ok", (isBigmodel ? "已绑定 ZCode 中国区账号" : "已绑定 ZCode 账号") + "；每日额度请在 ZCode 客户端内领取");
         load();
       }
     );
+    const bodyHint = document.getElementById("activateBodyHint");
+    if(bodyHint) bodyHint.textContent = "请在 " + siteLabel + " 官方页面中点击「同意授权」完成登录；授权完成后插件会自动捕获并绑定该账号。每日额度需按提示在 ZCode 客户端内领取。";
   }catch(e){
     toast("发起登录失败", "err", e.message);
   }
