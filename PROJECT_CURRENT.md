@@ -17,7 +17,7 @@
 ## 项目概况
 
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
-  - `zcode-provider`: **0.1.24**（定时探活降频至 4 小时并修正失败账号节流缺陷；0.1.22 Start Plan 领取指引；0.1.21 定时探活全量按序 any-success + max_tokens 32768 底线 + 官方规格矩阵全扩）
+  - `zcode-provider`: **0.1.26**（修复非法 provider 在 HTTP 入口被静默回退 zai 的入口校验失效缺陷；0.1.25 支持 bigmodel 中国区 OAuth 授权 + 面板双站选择；0.1.24 定时探活降频至 4 小时并修正失败账号节流缺陷）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoderwork-provider`: **0.9.35**（max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00；移除自动探活与 test_failed）
   - `qoder-ai-provider`: **0.1.15**（max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册；签到 10:00/22:00；移除自动探活与 test_failed）
@@ -30,15 +30,17 @@
 
 ## 活动会话进展摘要
 
-- 当前会话（2026-10-14）：**zcode-provider 支持 bigmodel（中国区）OAuth 授权：provider 参数化 + 面板双站选择（CYCLE-1 / CYCLE-2 已提交，CYCLE-3 待真实账号）**：
+- 当前会话（2026-10-14）：**zcode-provider 支持 bigmodel（中国区）OAuth 授权：CYCLE-1/2 已发布 0.1.25 上线，CYCLE-3 待真实账号**：
   - 需求背景：用户指出 ZCode 授权走的是国际站 `chat.z.ai`，国际版无每日额度赠送，需改走中国区以获取额度政策。期间用户两次纠正方向（先说「中国区依旧走 z.ai，不是 bigmodel」，后又更正「应该使用 bigmodel」）；实测最终确认：`provider=bigmodel` **完全复用**现有 CLI 轮询链路（共用 `zcode.z.ai/api/v1/oauth/cli/init` 与 `/cli/poll/`），仅 provider 参数、authorize 域名（`bigmodel.cn/login`）、回调路径不同 —— 是**参数化**而非重写。
   - 需求与计划文档：`doc/2-需求/2026-10-14_153951_zcode支持bigmodel中国区授权需求.md`（编号 `REQ-ZCODE-BIGMODEL-OAUTH-20261014`）、`doc/3-实施/2026-10-14_zcode支持bigmodel中国区授权实施总览.md`。
   - CYCLE-1（提交 `c84088f`，12 文件 +1017/-67）：`providerFamilyZai/Bigmodel` 常量 + `normalizeProviderFamily`/`providerFamilyOf`；`StoredAuth.ProviderFamily` 字段（缺省 `zai` 向后兼容）；`startAccountOAuth`/`settleZaiPollResult`/`saveZaiAccount` 全链 provider 参数化；`resolveUpstreamTargets` 按 family 分支（bigmodel → `open.bigmodel.cn/api/anthropic`）；业务令牌端点 `businessLoginEndpointFor` 分支 + 缓存键按 family 隔离。新增 `provider_family_test.go`（8 例）、`upstream_target_test.go`（6 例）。
   - CYCLE-2（提交 `0e88c4c`，7 文件）：面板工具栏新增 `#oauthProvider` 下拉（国际站/中国区，默认 `zai`），`openOAuthBridge()` 把选中值透传 `/activate-start`；新增 `providerBadge(a)` 渲染账号归属徽标；后端 `accountSummary` 新增 `provider_family` 字段并由 `handleListAccounts` 透出。扩展面板回归脚本（阶段 6/7）+ Go 用例 `TestHandleListAccounts_ExposesProviderFamily`。
   - **重要修正**：`quota.go` **无需** family 分支 —— 实测 `bigmodel.cn/api/v1/zcode-plan/billing/current` 返回 404、`zcode.z.ai` 同路径 401（端点存在），证明 start-plan 额度端点两家共用。已回写需求 GAP-002。
-  - 顺带修复：面板回归脚本阶段 1「无额度卡片」断言长期失配（实现自 `9655225` 已改为「未领取」提示，断言仍停在旧措辞 `加载中…`），本轮修正使该回归入口恢复可用。
-  - 门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；哨兵变异 ×3 精确 FAIL 后恢复全绿；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。
-  - 待办：CYCLE-3 需用户提供真实 bigmodel 账号，解除 GAP-004（中国区是否自带每日额度）/ GAP-005（模型清单差异）并覆盖 AC-002；两个提交均**未推送远端**。
+  - **0.1.25 发布闭环（本会话完成）**：bump `0.1.25` → 提交 `797d807` → push → CI run `38566121254` success → 下载 8 资产（7/7 sha256 校验 OK）→ `acbd5ed`(assets) → `0b86bef`(registry) → `170c25a`(prune 0.1.24)；远端 7/7 artifacts ALL PASS 无旧版残留；生产 `plugin-store install` **热重载成功**（`active_version=0.1.25 retired_version=0.1.24`，零容器重启），落盘 `.so` sha256 `cef55263…` 与本地 zip 逐字节一致；accounts/panel 均 200，面板含 `oauthProvider` 下拉与 `providerBadge`。
+  - **0.1.26 缺陷修复（生产验证中发现，用户决策前向修复）**：生产直连三臂复测发现 `POST /activate-start` 传非法 provider（`zhipu`）**静默回退为 `zai`** 返回国际站授权地址，违反 AC-006。根因：入口先 `normalizeProviderFamily()`（语义为「非法值回退 zai」）再校验，非法值被提前改写致 `isValidOAuthProvider()` 永不触发。修复：新增 `resolveOAuthProvider(raw)` **先校验后归一化**，`handleActivateStart` 非法值返回 400，`providerFromMetadata` 改为原样透传；新增 3 用例 + 哨兵反证 3 例精确 FAIL。Bug 文档 `doc/4-bugs/2026-10-14_210000_*`。
+  - **0.1.26 发布闭环（本会话完成）**：提交 `cbbca35`（fix 9 文件）→ push → CI run `38569617734` success → 8 资产下载 7/7 校验 OK → `0bd01d7`(assets) → `287e490`(registry) → `334bef9`(prune 0.1.25)；远端 7/7 ALL PASS 无旧版残留；生产热重载 `active_version=0.1.26 retired_version=0.1.25`，零容器重启；落盘 `.so` sha256 `a951e3fa…` 与本地 zip 逐字节一致；**生产三臂复测**：`bigmodel`→`bigmodel.cn`、`zai`→`chat.z.ai`（3/3）、`zhipu`→**HTTP 400 + 明确错误**（缺陷确认修复）。
+  - 门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；哨兵变异精确 FAIL 后恢复全绿；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。
+  - 待办：**CYCLE-3 需用户提供真实 bigmodel 账号**（面板选「中国区」发起授权，在 `bigmodel.cn/login` 完成登录），解除 GAP-004（中国区是否自带每日额度）/ GAP-005（模型清单差异）并覆盖 AC-002。
 
 - 当前会话（2026-10-14）：**四插件（workbuddy/workbuddy-ai/traework/zcode）定时探活降频至 4 小时并修正失败账号节流缺陷，全链路发布生产**：
   - 需求背景：用户先问「真的需要定时探测吗」，选定「移除探活 + test_failed 机制」后中途改口为「探活还是留下，但 4 小时一次就够了，不要那么频繁」；最终方向为**保留探活与 test_failed 标签全链路，仅把节流间隔 30 分钟 → 4 小时**。

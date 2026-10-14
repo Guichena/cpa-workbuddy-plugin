@@ -5,6 +5,8 @@
 ## 事件
 
 
+- 2026-10-14：**zcode-provider 0.1.25 发布 bigmodel 中国区授权能力 + 0.1.26 修复非法 provider 入口校验失效，均全链路发布生产**——① **0.1.25（CYCLE-1/2 发版）**：把已提交的 CYCLE-1（provider 参数化 + 端点 family 分支）与 CYCLE-2（面板 provider 下拉 + 账号归属徽标）bump 发版上线。提交链 `797d807`(bump 3 文件) → CI run `38566121254` success → `acbd5ed`(8 assets) → `0b86bef`(registry) → `170c25a`(prune 0.1.24)；远端 7/7 artifacts ALL PASS；生产 `plugin-store install` 热重载 `active_version=0.1.25 retired_version=0.1.24`，零容器重启，落盘 `.so` sha256 `cef55263…` 与本地 zip 逐字节一致，accounts/panel 均 200（面板 72818 字节，含 `oauthProvider` 下拉 + `providerBadge`）。② **0.1.26（生产验证中发现的真实缺陷修复，用户决策前向修复）**：生产三臂直连复测发现 `POST /activate-start` 传非法 provider（`zhipu`）**静默回退为 `zai`** 并返回国际站授权地址，违反 AC-006「未知 provider 返回明确错误，不静默回退」。根因：HTTP 入口 `handleActivateStart` 与宿主入口 `providerFromMetadata` 均**先调用 `normalizeProviderFamily()`（语义为「非法值回退 zai」，本用于存量数据读取）再做校验**，非法值被提前改写成 `zai`，致下游 `isValidOAuthProvider()` 永远拿不到原始值、校验形同虚设；CYCLE-1 用例 `TestStartAccountOAuth_RejectsUnknownProvider` 直调函数层、绕过入口归一化，故未拦截。修复：新增 `resolveOAuthProvider(raw)` 统一入口解析——**先校验、后归一化**，空值仍默认 `zai`；`handleActivateStart` 非法值返回 **400**，`providerFromMetadata` 改为原样透传，`startAccountOAuth` 改走统一解析；新增 `TestResolveOAuthProvider` / `TestHandleActivateStart_RejectsUnknownProvider`（HTTP 层 400 且不触达上游 mock）/ `TestHandleActivateStart_AcceptsBigmodelProvider`，哨兵反证 3 例精确 FAIL。提交链 `cbbca35`(fix 9 文件含 Bug/测试/6-review 文档) → CI run `38569617734` success → `0bd01d7`(8 assets) → `287e490`(registry) → `334bef9`(prune 0.1.25)；远端 7/7 ALL PASS；生产热重载 `active_version=0.1.26 retired_version=0.1.25`，零容器重启，落盘 `.so` sha256 `a951e3fa…` 逐字节一致；**生产三臂复测确认修复**：`bigmodel`→`bigmodel.cn`、`zai`→`chat.z.ai`（3/3）、`zhipu`→HTTP 400 + 明确错误。门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。Bug 文档 `doc/4-bugs/2026-10-14_210000_zcode非法provider被归一化提前改写致HTTP入口校验失效静默回退根因诊断.md`。待办：**CYCLE-3 需用户提供真实 bigmodel 账号**（面板选「中国区」发起授权，在 `bigmodel.cn/login` 完成登录），解除 GAP-004（中国区是否自带每日额度）/ GAP-005（模型清单差异）并覆盖 AC-002。
+
 - 2026-10-14：**zcode-provider 支持 bigmodel（中国区）OAuth 授权：provider 参数化 + 面板双站选择（CYCLE-1 / CYCLE-2 已提交，CYCLE-3 待真实账号）**——需求背景：用户指出 ZCode 授权走国际站 `chat.z.ai`，国际版无每日额度赠送，需改走中国区。期间用户两次纠正方向（先说「中国区依旧走 z.ai，不是 bigmodel」，后更正「应该使用 bigmodel」）；实测最终确认 `provider=bigmodel` **完全复用**现有 CLI 轮询链路（共用 `zcode.z.ai/api/v1/oauth/cli/init` 与 `/cli/poll/`），仅 provider 参数、authorize 域名（`bigmodel.cn/login`）、回调路径不同 —— 是**参数化**而非重写；`provider=zai-cn`/`cn`/`zhipu`/`bigmodel-cn` 等取值一律 `code:1000 something went wrong`。CYCLE-1（提交 `c84088f`，12 文件 +1017/-67）：`providerFamilyZai/Bigmodel` 常量 + `normalizeProviderFamily`/`providerFamilyOf`；`StoredAuth.ProviderFamily`（缺省 `zai` 向后兼容）；`startAccountOAuth`/`settleZaiPollResult`/`saveZaiAccount` 全链参数化；`resolveUpstreamTargets` 按 family 分支（bigmodel → `open.bigmodel.cn/api/anthropic`，实测 401 存活）；`businessLoginEndpointFor` 分支 + 业务令牌缓存键按 family 隔离；新增 `provider_family_test.go`（8 例）、`upstream_target_test.go`（6 例）。CYCLE-2（提交 `0e88c4c`，7 文件）：面板工具栏新增 `#oauthProvider` 下拉（国际站/中国区，默认 `zai`），`openOAuthBridge()` 透传选中值至 `/activate-start`；新增 `providerBadge(a)` 归属徽标；后端 `accountSummary` 新增 `provider_family` 并由 `handleListAccounts` 透出；扩展面板回归脚本阶段 6/7 + Go 用例 `TestHandleListAccounts_ExposesProviderFamily`。**重要修正**：`quota.go` 无需 family 分支 —— 实测 `bigmodel.cn/api/v1/zcode-plan/billing/current` 返回 404、`zcode.z.ai` 同路径 401（端点存在），证明 start-plan 额度端点两家共用，已回写需求 GAP-002。顺带修复面板回归脚本阶段 1「无额度卡片」断言长期失配（实现自 `9655225` 已改为「未领取」提示，断言仍停在 `加载中…`）。门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；哨兵变异 ×3 精确 FAIL 后恢复全绿；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。需求/实施/测试/审查文档齐备；待办：CYCLE-3 需真实 bigmodel 账号解除 GAP-004/005，两个提交均**未推送远端**。
 
 - 2026-10-14：**四插件（workbuddy/workbuddy-ai/traework/zcode）定时探活降频至 4 小时并修正失败账号节流缺陷，全链路发布生产**——用户口径先问「真的需要定时探测吗」，选定「移除探活 + test_failed 机制」后中途改口为「探活还是留下，但 4 小时一次就够了，不要那么频繁」。最终方向：**保留探活与 test_failed 标签全链路，仅把节流间隔 30 分钟 → 4 小时**。关键修复（顺带发现的真实缺陷）：`recordActivePing` 原先只在探活**成功**时刷新节流时间戳，导致失败账号不计时、会在每个 watchdog tick（10 分钟）被反复全量重测，反而比健康账号更频繁地消耗账号配额——改为「无论成败都先刷新时间戳」后再轮测。四个插件 `doActivePing` 同构修改（workbuddy/workbuddy-ai/traework 用 `hostAuthIndexForPhys`+`persistTestFailedToggle`，zcode 用 `sa.TestFailed`+`saveAuthTestStatus`），各补 `TestDoActivePingFailureStillThrottles` 回归用例（断言失败后立即再次调用被节流拦截）。过程中曾误将工作树回退到 HEAD，需回贴并行会话的 `HIGH-CREDIT-FIRST` / cooldown-defer 注释修正（qoder-ai/qoderwork/workbuddy/workbuddy-ai/traework 的 scheduler/session_auth/watchdog/routing_test），按路径限定 `git commit -- <20 路径>` 只提交本轮文件。版本：workbuddy 0.15.9 / workbuddy-ai 0.1.15 / traework 0.2.12 / zcode 0.1.24。**CI 处置（可复用教训）**：① 四个插件并发 dispatch，zcode 首个 run 因既有 flaky 测试 `Test (token-usage-tracker)`（本轮未改该目录、本地全绿）失败致其 Release job skipped → 单插件重发成功；② traework 首个 run 卡在 `darwin/amd64` 的 `actions/checkout` 超 35 分钟不动 → 取消并重发；③ 取消自己 push 触发的冗余 push run（assets/registry 提交各触发一个）释放免费 Runner 后 traework 才获得执行位（踩坑 55 复现）。发布链：`22bf7fe`(feat 20 文件) → 四插件各自 assets/registry 提交 → `368a63e`(prune 5 个旧版本)；远端四插件各 7/7 artifacts sha256+size ALL PASS；生产四插件 `plugin-store install` 均 `restart_required=false`、日志确认 `plugin hot reloaded`（workbuddy 0.15.8→0.15.9、workbuddy-ai 0.1.14→0.1.15、traework 0.2.11→0.2.12、zcode 0.1.22→0.1.24 直上），落盘 `.so` sha256 与本地 zip 逐字节一致，accounts/panel 全 200，**零容器重启**。门禁：四插件 `cgo-shim-build.py` build/vet/test 全绿 + 哨兵反证测试真实进编译。
@@ -43,8 +45,6 @@
 
 - 2026-10-09：workbuddy-token-usage **0.2.4** 发布部署——移除面板 SSE 短连接轮询（每 2s EventSource 重连）与 15s 定时轮询，改打开时单次加载 + 手动刷新，默认时间范围改「最近 1 小时」；补图标 assets/icons/TokenTracker.png。发布链 aab549c→37de5e4（8 资产 7/7 OK）→cd8b642（registry）→63a9879（prune 0.2.3）；CI run 37812435637 全 57 jobs success；远端 0.2.4 资产 200 + sha256 一致、0.2.3 已 404；生产热重载 active_version=0.2.4 retired=0.2.3、落盘 .so sha256 8ce19240… 与本地 zip 一致；生产面板 /usage 200（EventSource=0/setInterval=0/last_1_hour×7）。
 
-- 2026-10-07：发布后清理规则固化与 release-assets 瘦身——把「每次发布后清理不需要的垃圾」吸收为项目规则与 skill：新增项目 skill project-cpa-workbuddy-plugin-release-asset-prune-rules（保留集=registry 每插件当前版本目录）+ 通用脚本 scripts/prune-release-assets.py（--dry-run/--apply，受跟踪目录 git rm、空目录 rmdir）；AGENTS.md/CLAUDE.md「仓库与发布」小节新增「发布后清理」条；发布 skill 增 Step 13.5。实操：release-assets 从 3.75 GB（191 版本目录）清理到 0.13 GB（保留 registry 当前 6 个版本目录：workbuddy-provider-0.15.3 / qoderwork-provider-0.9.22 / traework-provider-0.2.2 / workbuddy-ai-provider-0.1.7 / workbuddy-token-usage-0.2.3 / gemini-provider-0.1.1），删 185 个历史版本目录 / 1469 文件，提交 095f4a4 推送 origin/main；远端抽查当前版本 raw 200、旧版本 404。
-
 ## 计数锚点区
 
 > 本区由 `memory-usage-tracking-rules` 收口闸门维护：HISTORY 仅窄读计入，会话启动不读不计；被裁剪事件的锚点随事件一起删除（不保留 retired）；本区计数仅作主题热度弱信号。锚点 key 用事件 `- YYYY-MM-DD：` 后的核心主题短语（约前 12 字符，可前缀匹配）。
@@ -52,6 +52,11 @@
 ```yaml
 version: 1
 anchors:
+- title: '**zcode-provider 0.1.25 发布 bigmodel'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
 - title: 'zcode-provider 支持 bigmodel（中国区）OAuth'
   usage_count: 0
   usage_days: 0
@@ -128,11 +133,6 @@ anchors:
   last_used_at: null
   absorbed_to: null
 - title: 'workbuddy-token-usage **0.2.4** 发布部署'
-  usage_count: 1
-  usage_days: 1
-  last_used_at: 2026-10-09
-  absorbed_to: null
-- title: '发布后清理规则固化与 release-assets'
   usage_count: 1
   usage_days: 1
   last_used_at: 2026-10-09
