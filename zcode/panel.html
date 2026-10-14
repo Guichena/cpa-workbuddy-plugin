@@ -1007,6 +1007,11 @@ function onActivateMaskClick(ev){
    本面板复刻同一链路：先用无参数请求探明是否需要验证码（后端回传 captcha_required 与
    scene_id/prefix/region），再在浏览器内跑无感验证产出参数，最后带参数重调 /claim 完成领取。
    验证参数为一次性凭证，每次领取都需重新执行无感验证。
+
+   关键约束：SDK 只在**脚本加载期**读取一次全局 `window.AliyunCaptchaConfig`（不是
+   `AliyunRequestVerificationConfig`）；`initAliyunCaptcha` 入参的 prefix/region 则是与时机
+   无关的权威通道。两者缺任一都会让 SDK 把请求打到 `undefined.captcha-open.aliyuncs.com`，
+   产出不含 securityToken 的无效参数，故本实现同时设置全局并在 init 入参再传一遍。
 */
 const ALIYUN_CAPTCHA_SDK = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
 let aliyunSdkPromise = null;
@@ -1044,8 +1049,13 @@ function loadAliyunCaptchaSDK(){
 // runTracelessVerification 执行一次阿里云无感验证并返回 captchaVerifyParam。
 // [参数] cfg: 含 sceneId / prefix / region 的验证码配置（由后端 captcha_required 回传）。
 // [返回] 成功时 resolve 验证参数字符串；失败或超时 reject。
-// 最近修改时间：2026-10-14；改动原因：新增，复刻官方客户端无感验证链路（必须传 button 元素）。
+// 最近修改时间：2026-10-15；改动原因：修正 captcha 配置传递——SDK 只认 window.AliyunCaptchaConfig
+//   且仅在脚本加载期读取一次，故必须在加载前预设，并在 initAliyunCaptcha 入参再显式传一遍。
 function runTracelessVerification(cfg){
+  const region = (cfg && cfg.region) || "sgp";
+  const prefix = (cfg && cfg.prefix) || "no8xfe";
+  // 全局名必须是 AliyunCaptchaConfig（SDK 顶层读取），且须在 SDK 加载前赋值。
+  window.AliyunCaptchaConfig = {region: region, prefix: prefix};
   return loadAliyunCaptchaSDK().then(()=>new Promise((resolve, reject)=>{
     const tag = Math.random().toString(36).slice(2);
     const holderId = "__zcode_cap_" + tag;
@@ -1076,10 +1086,11 @@ function runTracelessVerification(cfg){
       fn(arg);
     };
 
-    window.AliyunRequestVerificationConfig = {region: cfg.region || "sgp", prefix: cfg.prefix || "no8xfe"};
     try{
       window.initAliyunCaptcha({
         SceneId: cfg.sceneId || "11xygtvd",
+        prefix: prefix,
+        region: region,
         mode: "popup",
         language: "cn",
         showErrorTip: false,

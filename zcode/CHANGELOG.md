@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.29] - 2026-10-15
+
+### Fixed
+- **面板无感验证未传 captcha 配置，导致产出的 `captchaVerifyParam` 在 captcha 层即被拒（领取始终提示需要安全验证）**：
+  - 根因：`runTracelessVerification` 既未在 `initAliyunCaptcha` 入参传 `prefix` / `region`，又只设了错误的全局变量名 `window.AliyunRequestVerificationConfig`——阿里云 SDK 实际读取的是 `window.AliyunCaptchaConfig`，且**仅在脚本加载期读取一次**。结果 SDK 把验证请求打到 `undefined.captcha-open.aliyuncs.com`，产出 76 字符、不含 `securityToken` 的无效参数，带该参数重调 `/claim` 仍返回 `captcha_required`。
+  - 修复：在 `initAliyunCaptcha` 入参显式传 `prefix` / `region`（与脚本加载时机无关的权威通道），并在加载 SDK 前预设 `window.AliyunCaptchaConfig` 作为双保险。
+  - 验证：真实浏览器 A/B/C/D/E 五组受控实验锁定差异；修复后参数由 76 字符（无 `securityToken`）变为 280 字符（含 `securityToken`），生产 `/claim` 上游响应由 `captcha_required`（captcha 层）转为业务层响应，证明 captcha 校验已通过。
+
 ## [0.1.28] - 2026-10-14
 
 ### Added
