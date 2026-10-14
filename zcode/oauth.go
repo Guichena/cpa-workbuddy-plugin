@@ -57,19 +57,42 @@ func isValidOAuthProvider(provider string) bool {
 	}
 }
 
+// resolveOAuthProvider 校验并归一化入口传入的 provider 取值。
+//
+// 入口层必须对**原始值**调用本函数：先校验再归一化，非法值返回明确错误而不静默回退。
+// 若先归一化再校验，`zhipu`/`zai-cn` 等非法值会被提前改写成 `zai`，导致校验形同虚设。
+// 空值（请求未带 provider）按默认 `zai` 处理，保持向后兼容。
+// [参数] raw: 入口收到的原始 provider 取值。
+// [返回] 归一化后的 family 标识；非法值返回错误。
+// 最近修改时间：2026-10-14；改动原因：新增，修复非法 provider 被归一化后静默回退为 zai 的缺陷。
+func resolveOAuthProvider(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return providerFamilyZai, nil
+	}
+	if !isValidOAuthProvider(trimmed) {
+		return "", fmt.Errorf("不支持的 OAuth provider: %q（仅支持 zai / bigmodel）", raw)
+	}
+	return normalizeProviderFamily(trimmed), nil
+}
+
 // providerFromMetadata 从宿主登录请求的 Metadata 中读取 provider 站点归属。
 //
 // 宿主 `AuthLoginStartRequest.Metadata` 是插件自定义登录上下文的载体；面板通过
-// 该字段指定 `zai` / `bigmodel`。缺省或非字符串时回退默认 `zai`。
+// 该字段指定 `zai` / `bigmodel`。本函数只负责取出原始取值（nil / 非字符串按默认
+// `zai` 处理），校验与归一化交由 startAccountOAuth 的 resolveOAuthProvider 完成，
+// 避免在此提前归一化导致非法值被静默改写成 `zai`。
 // [参数] metadata: 宿主请求携带的自定义上下文。
-// [返回] 归一化后的 family 标识。
-// 最近修改时间：2026-10-14；改动原因：新增，宿主侧 provider 传递通道。
+// [返回] 原始 provider 取值；缺失或非字符串时返回默认 `zai`。
+// 最近修改时间：2026-10-14；改动原因：不再提前归一化，改为透传原始值以便入口层校验。
 func providerFromMetadata(metadata map[string]any) string {
 	if metadata == nil {
 		return providerFamilyZai
 	}
 	if raw, ok := metadata["provider"].(string); ok {
-		return normalizeProviderFamily(raw)
+		if trimmed := strings.TrimSpace(raw); trimmed != "" {
+			return trimmed
+		}
 	}
 	return providerFamilyZai
 }
@@ -363,13 +386,13 @@ func settleZaiPollResult(resp *zaiCLIPollResponse, label string, targetAuthID st
 
 // startAccountOAuth 发起一次官方 CLI OAuth 流程并保存会话状态。
 // [参数] targetAuthID: 可选的定向激活目标账号；label: 账号备注名；provider: 站点归属
-// （`zai` 国际站 / `bigmodel` 中国站），非法值返回错误。
+// （`zai` 国际站 / `bigmodel` 中国站），空值按 `zai` 处理，非法值返回错误。
 // [返回] 官方初始化响应、state 状态码、错误。
-// 最近修改时间：2026-10-14；改动原因：provider 参数化，支持中国站 bigmodel 授权。
+// 最近修改时间：2026-10-14；改动原因：provider 校验改走 resolveOAuthProvider，避免非法值被静默归一化。
 func startAccountOAuth(targetAuthID, label, provider string) (*zaiCLIInitResponse, string, error) {
-	family := normalizeProviderFamily(provider)
-	if !isValidOAuthProvider(provider) {
-		return nil, "", fmt.Errorf("不支持的 OAuth provider: %q（仅支持 zai / bigmodel）", provider)
+	family, err := resolveOAuthProvider(provider)
+	if err != nil {
+		return nil, "", err
 	}
 
 	initResp, err := zaiCLIInit(family)

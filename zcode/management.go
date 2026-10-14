@@ -632,11 +632,14 @@ func handleClaimAccount(body []byte) ([]byte, error) {
 // handleActivateStart 处理 POST /activate-start 发起账号官方 OAuth 授权登录。
 // [参数] body: 可包含 auth_id（指定存量账号就地更新凭据）与 provider（`zai` / `bigmodel`
 // 站点归属，缺省 `zai`），为空时代表新账号授权登录。
-// [返回] 授权页面 URL、state 状态码、flow_id 与生效的 provider。
-// 最近修改时间：2026-10-14；改动原因：provider 参数化，支持中国站 bigmodel 授权。
+// [返回] 授权页面 URL、state 状态码、flow_id 与生效的 provider；provider 非法时返回 400。
+// 最近修改时间：2026-10-14；改动原因：对原始 provider 先校验再归一化，非法值不再静默回退 zai。
 func handleActivateStart(body []byte) ([]byte, error) {
 	authID := extractAuthIDFromBody(body)
-	provider := normalizeProviderFamily(gjson.GetBytes(body, "provider").String())
+	provider, errProvider := resolveOAuthProvider(gjson.GetBytes(body, "provider").String())
+	if errProvider != nil {
+		return makeHTTPResponse(http.StatusBadRequest, []byte(fmt.Sprintf(`{"ok":false,"error":%q}`, errProvider.Error())))
+	}
 	var label string
 	if authID != "" {
 		accounts, _ := listAllAuthFiles()

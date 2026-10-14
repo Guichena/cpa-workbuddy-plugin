@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.26] - 2026-10-14
+
+### Fixed
+- **非法 provider 在 HTTP 入口被静默回退为 `zai`，校验形同虚设**：
+  - 现象：`POST /activate-start` 传入 `provider=zhipu` 等非法值时未报错，而是返回国际站 `chat.z.ai` 授权地址（违反 AC-006「未知 provider 返回明确错误，不静默回退」）。
+  - 根因：入口层先调用 `normalizeProviderFamily()`（语义为「非法值回退 zai」，本用于存量数据读取）再做校验，非法值被提前改写成 `zai`，下游 `isValidOAuthProvider()` 永远拿不到原始值。
+  - 修复：新增 `resolveOAuthProvider(raw)` 统一入口解析——**先校验、后归一化**，空值仍默认 `zai`（向后兼容）；`handleActivateStart` 非法值返回 **400**，`providerFromMetadata` 改为原样透传原始取值，`startAccountOAuth` 改走统一解析。
+  - 新增用例：`TestResolveOAuthProvider`、`TestHandleActivateStart_RejectsUnknownProvider`（HTTP 层 400 且不触达上游）、`TestHandleActivateStart_AcceptsBigmodelProvider`；`TestProviderFromMetadata` 增补非法值透传断言。哨兵反证 3 例精确 FAIL。
+  - 影响面：面板下拉仅 `zai` / `bigmodel` 两项，用户路径不可达；缺陷影响直接调管理 API 的集成方。
+
 ## [0.1.25] - 2026-10-14
 
 ### Added

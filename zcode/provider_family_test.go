@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
+	"github.com/tidwall/gjson"
 )
 
 // TestNormalizeProviderFamily 验证 provider 取值归一化：仅 bigmodel 单独成族，
@@ -112,6 +113,107 @@ func TestStartAccountOAuth_BigmodelProviderInjected(t *testing.T) {
 	oauthSessions.Delete(state)
 }
 
+// TestResolveOAuthProvider 验证入口层解析：空值按默认 zai，合法值归一化，
+// 非法值返回明确错误而**不静默回退 zai**。
+func TestResolveOAuthProvider(t *testing.T) {
+	if got, err := resolveOAuthProvider(""); err != nil || got != providerFamilyZai {
+		t.Errorf("empty provider = (%q, %v), want (%q, nil)", got, err, providerFamilyZai)
+	}
+	if got, err := resolveOAuthProvider("  "); err != nil || got != providerFamilyZai {
+		t.Errorf("blank provider = (%q, %v), want (%q, nil)", got, err, providerFamilyZai)
+	}
+	if got, err := resolveOAuthProvider(" BigModel "); err != nil || got != providerFamilyBigmodel {
+		t.Errorf("bigmodel provider = (%q, %v), want (%q, nil)", got, err, providerFamilyBigmodel)
+	}
+	for _, bad := range []string{"zhipu", "zai-cn", "cn", "bigmodel-cn"} {
+		got, err := resolveOAuthProvider(bad)
+		if err == nil {
+			t.Errorf("resolveOAuthProvider(%q) = (%q, nil), want error", bad, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), "不支持的 OAuth provider") {
+			t.Errorf("resolveOAuthProvider(%q) error = %v, want explicit provider error", bad, err)
+		}
+	}
+}
+
+// TestHandleActivateStart_RejectsUnknownProvider 验证面板入口对非法 provider 返回 400，
+// 不静默回退 zai、不发起上游请求（HTTP 层契约）。
+func TestHandleActivateStart_RejectsUnknownProvider(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "zcode_activate_reject_*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	setAccountsDir(tempDir)
+
+	upstreamHit := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHit = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{}})
+	}))
+	defer ts.Close()
+	mockOAuthCLIInitURL = ts.URL
+	defer func() { mockOAuthCLIInitURL = "" }()
+
+	raw, err := handleActivateStart([]byte(`{"provider":"zhipu"}`))
+	if err != nil {
+		t.Fatalf("handleActivateStart returned error: %v", err)
+	}
+	resp := unwrapMgmtResp(t, raw)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown provider, got %d: %s", resp.StatusCode, resp.Body)
+	}
+	if !strings.Contains(string(resp.Body), "不支持的 OAuth provider") {
+		t.Fatalf("expected explicit provider error, got %s", resp.Body)
+	}
+	if upstreamHit {
+		t.Fatal("unknown provider must not reach upstream")
+	}
+}
+
+// TestHandleActivateStart_AcceptsBigmodelProvider 验证面板入口合法 provider 正常发起授权，
+// 且返回体回显生效的 provider（守住合法路径不因新增校验而回归）。
+func TestHandleActivateStart_AcceptsBigmodelProvider(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "zcode_activate_ok_*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	setAccountsDir(tempDir)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{
+				"flow_id":       "flow-activate-1",
+				"poll_token":    "poll-activate-1",
+				"authorize_url": "https://bigmodel.cn/login?appId=zcode&state=state-activate-1&redirect=https://zcode.z.ai/api/v1/oauth/cli/callback/bigmodel",
+				"expires_at":    time.Now().Add(15 * time.Minute).Unix(),
+			},
+		})
+	}))
+	defer ts.Close()
+	mockOAuthCLIInitURL = ts.URL
+	defer func() { mockOAuthCLIInitURL = "" }()
+
+	raw, err := handleActivateStart([]byte(`{"provider":"bigmodel"}`))
+	if err != nil {
+		t.Fatalf("handleActivateStart returned error: %v", err)
+	}
+	resp := unwrapMgmtResp(t, raw)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for bigmodel provider, got %d: %s", resp.StatusCode, resp.Body)
+	}
+	if got := gjson.GetBytes(resp.Body, "provider").String(); got != providerFamilyBigmodel {
+		t.Fatalf("expected provider=%q in response, got %q", providerFamilyBigmodel, got)
+	}
+	if state := gjson.GetBytes(resp.Body, "state").String(); state != "state-activate-1" {
+		t.Fatalf("expected state-activate-1, got %q", state)
+	}
+	oauthSessions.Delete("state-activate-1")
+}
+
 // TestProviderFromMetadata 验证宿主登录请求的 Metadata 是 provider 的传递通道。
 func TestProviderFromMetadata(t *testing.T) {
 	if got := providerFromMetadata(nil); got != providerFamilyZai {
@@ -122,6 +224,10 @@ func TestProviderFromMetadata(t *testing.T) {
 	}
 	if got := providerFromMetadata(map[string]any{"provider": 123}); got != providerFamilyZai {
 		t.Errorf("non-string metadata = %q, want %q", got, providerFamilyZai)
+	}
+	// 非法值必须原样透传（不在本层归一化），由 startAccountOAuth 校验后报错。
+	if got := providerFromMetadata(map[string]any{"provider": "zhipu"}); got != "zhipu" {
+		t.Errorf("unknown metadata = %q, want passthrough %q", got, "zhipu")
 	}
 }
 
