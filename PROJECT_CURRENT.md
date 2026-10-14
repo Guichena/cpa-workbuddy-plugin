@@ -30,6 +30,16 @@
 
 ## 活动会话进展摘要
 
+- 当前会话（2026-10-14）：**zcode-provider 支持 bigmodel（中国区）OAuth 授权：provider 参数化 + 面板双站选择（CYCLE-1 / CYCLE-2 已提交，CYCLE-3 待真实账号）**：
+  - 需求背景：用户指出 ZCode 授权走的是国际站 `chat.z.ai`，国际版无每日额度赠送，需改走中国区以获取额度政策。期间用户两次纠正方向（先说「中国区依旧走 z.ai，不是 bigmodel」，后又更正「应该使用 bigmodel」）；实测最终确认：`provider=bigmodel` **完全复用**现有 CLI 轮询链路（共用 `zcode.z.ai/api/v1/oauth/cli/init` 与 `/cli/poll/`），仅 provider 参数、authorize 域名（`bigmodel.cn/login`）、回调路径不同 —— 是**参数化**而非重写。
+  - 需求与计划文档：`doc/2-需求/2026-10-14_153951_zcode支持bigmodel中国区授权需求.md`（编号 `REQ-ZCODE-BIGMODEL-OAUTH-20261014`）、`doc/3-实施/2026-10-14_zcode支持bigmodel中国区授权实施总览.md`。
+  - CYCLE-1（提交 `c84088f`，12 文件 +1017/-67）：`providerFamilyZai/Bigmodel` 常量 + `normalizeProviderFamily`/`providerFamilyOf`；`StoredAuth.ProviderFamily` 字段（缺省 `zai` 向后兼容）；`startAccountOAuth`/`settleZaiPollResult`/`saveZaiAccount` 全链 provider 参数化；`resolveUpstreamTargets` 按 family 分支（bigmodel → `open.bigmodel.cn/api/anthropic`）；业务令牌端点 `businessLoginEndpointFor` 分支 + 缓存键按 family 隔离。新增 `provider_family_test.go`（8 例）、`upstream_target_test.go`（6 例）。
+  - CYCLE-2（提交 `0e88c4c`，7 文件）：面板工具栏新增 `#oauthProvider` 下拉（国际站/中国区，默认 `zai`），`openOAuthBridge()` 把选中值透传 `/activate-start`；新增 `providerBadge(a)` 渲染账号归属徽标；后端 `accountSummary` 新增 `provider_family` 字段并由 `handleListAccounts` 透出。扩展面板回归脚本（阶段 6/7）+ Go 用例 `TestHandleListAccounts_ExposesProviderFamily`。
+  - **重要修正**：`quota.go` **无需** family 分支 —— 实测 `bigmodel.cn/api/v1/zcode-plan/billing/current` 返回 404、`zcode.z.ai` 同路径 401（端点存在），证明 start-plan 额度端点两家共用。已回写需求 GAP-002。
+  - 顺带修复：面板回归脚本阶段 1「无额度卡片」断言长期失配（实现自 `9655225` 已改为「未领取」提示，断言仍停在旧措辞 `加载中…`），本轮修正使该回归入口恢复可用。
+  - 门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；哨兵变异 ×3 精确 FAIL 后恢复全绿；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。
+  - 待办：CYCLE-3 需用户提供真实 bigmodel 账号，解除 GAP-004（中国区是否自带每日额度）/ GAP-005（模型清单差异）并覆盖 AC-002；两个提交均**未推送远端**。
+
 - 当前会话（2026-10-14）：**四插件（workbuddy/workbuddy-ai/traework/zcode）定时探活降频至 4 小时并修正失败账号节流缺陷，全链路发布生产**：
   - 需求背景：用户先问「真的需要定时探测吗」，选定「移除探活 + test_failed 机制」后中途改口为「探活还是留下，但 4 小时一次就够了，不要那么频繁」；最终方向为**保留探活与 test_failed 标签全链路，仅把节流间隔 30 分钟 → 4 小时**。
   - 关键实现与真实缺陷修复：
