@@ -7,12 +7,13 @@
  * 覆盖断言：
  *   1. 两个 script 块语法可编译；
  *   2. 无额度缓存的账号卡片渲染「未领取」提示而非报错；
- *   3. 有额度快照的账号渲染进度条、计划名徽章与合计；
- *   4. 汇总卡按「额度已获取 / 未知」口径统计，合计等于各账号 total_grant 之和；
+ *   3. 有额度快照的账号按每个模型渲染独立进度条、计划名徽章与用量文案；
+ *   4. 汇总卡按「额度已获取 / 未知」口径统计，授予/剩余合计等于各账号之和；
  *   5. 额度排序（quota_asc / quota_desc）按 total_grant 生效，未知额度排最少端；
  *   6. 筛选标签计数与状态口径一致；
  *   7. 卡片按 provider_family 渲染站点归属徽标（国际站 / 中国区，缺省国际站）；
- *   8. 发起授权时把下拉框选中的 provider 透传给 /activate-start（缺省 zai）。
+ *   8. 发起授权时把下拉框选中的 provider 透传给 /activate-start（缺省中国区）；
+ *   9. 卡片不展示「过期」行（冗余信息，2026-10-15 移除）。
  *
  * 用法：node test/zcode/panel_quota_render_repro.mjs
  * 退出码：0 = 全部断言通过；1 = 存在断言失败。
@@ -26,7 +27,8 @@ const plugin = "zcode";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const panelPath = path.join(repoRoot, plugin, "panel.html");
 
-// 夹具：3 个账号 —— A 有额度(300万+500万)、B 有额度(100万，中国区授权)、C 无额度缓存。
+// 夹具：3 个账号 —— A 有额度且带真实用量(balance 通道，300万+500万)、
+// B 有额度但无用量(current 回退通道，100万，中国区授权)、C 无额度缓存。
 // A/C 不带 provider_family，用于验证历史账号缺省按国际站展示。
 const ACCOUNTS = [
   {
@@ -35,10 +37,11 @@ const ACCOUNTS = [
     models: ["GLM-5.3", "GLM-5.3-Flash"],
     quota: {
       plan_name: "ZCode Start Plan", plan_id: "p1", plan_status: "active",
-      total_grant: 8000000, fetched_at: "2026-10-12T05:00:00Z",
+      total_grant: 8000000, total_used: 5000019, total_remain: 2999981,
+      has_usage: true, source: "balance", fetched_at: "2026-10-12T05:00:00Z",
       entitlements: [
-        { show_name: "GLM-5.3", grant_units: 3000000, period: "daily", capability: "model:glm-5.3" },
-        { show_name: "GLM-5.3-Flash", grant_units: 5000000, period: "daily", capability: "model:glm-5.3-flash" },
+        { show_name: "GLM-5.3", grant_units: 3000000, remaining_units: 2999981, used_units: 19, has_usage: true, period: "daily", capability: "model:glm-5.3" },
+        { show_name: "GLM-5.3-Flash", grant_units: 5000000, remaining_units: 0, used_units: 5000000, has_usage: true, period: "daily", capability: "model:glm-5.3-flash" },
       ],
     },
   },
@@ -49,8 +52,8 @@ const ACCOUNTS = [
     models: ["GLM-5.2"],
     quota: {
       plan_name: "ZCode Start Plan", plan_id: "p1", plan_status: "active",
-      total_grant: 1000000, fetched_at: "2026-10-12T05:00:00Z",
-      entitlements: [{ show_name: "GLM-5.2", grant_units: 1000000, period: "daily", capability: "model:glm-5.2" }],
+      total_grant: 1000000, has_usage: false, source: "current", fetched_at: "2026-10-12T05:00:00Z",
+      entitlements: [{ show_name: "GLM-5.2", grant_units: 1000000, has_usage: false, period: "daily", capability: "model:glm-5.2" }],
     },
   },
   {
@@ -173,21 +176,34 @@ function checkTrue(label, cond) {
   await ctx.load();
   console.log("阶段1 加载后：");
 
-  // 卡片渲染：有额度的账号必须含进度条与计划名徽章；无额度的显示加载占位。
+  // 卡片渲染：有额度的账号必须按每个模型渲染独立进度条与计划名徽章；无额度的显示未领取提示。
   const cardA = ctx.card(ACCOUNTS[0]);
+  const cardB = ctx.card(ACCOUNTS[1]);
   const cardC = ctx.card(ACCOUNTS[2]);
   checkTrue("有额度卡片含进度条", cardA.includes('class="pb"'));
   checkTrue("有额度卡片含额度段 GLM-5.3", cardA.includes("GLM-5.3"));
   checkTrue("有额度卡片含计划名徽章", cardA.includes('class="badge plan"'));
+  // 逐模型独立进度条：A 有 2 个 entitlement 且都带用量 → 2 条 pb-item。
+  check("A 逐模型进度条数", (cardA.match(/class="pb-item"/g) || []).length, "2");
+  checkTrue("A 展示 GLM-5.3 剩余/授予", cardA.includes("剩 3.00M / 3.00M"));
+  checkTrue("A 展示 GLM-5.3-Flash 剩余/授予", cardA.includes("剩 0 / 5.00M"));
+  checkTrue("A 耗尽模型进度条转红", cardA.includes('class="pb-bar err"'));
+  // 回退通道（无用量）模型单独一条半透明满格条，不误读为满额。
+  check("B 回退通道进度条数", (cardB.match(/class="pb-item"/g) || []).length, "1");
+  checkTrue("B 无用量标注授予量", cardB.includes("授予 1.00M"));
+  checkTrue("B 无用量不展示剩余", !cardB.includes("剩 "));
   checkTrue("无额度卡片显示未领取提示", cardC.includes("未领取"));
   checkTrue("无额度卡片不含计划名徽章", !cardC.includes('class="badge plan"'));
+  // 冗余信息移除：卡片不再渲染「过期」行。
+  checkTrue("卡片不展示过期行", !cardA.includes(">过期<"));
 
-  // 汇总：额度已获取 2 / 未知 1，合计 900 万。
+  // 汇总：额度已获取 2 / 未知 1，授予合计 900 万；剩余合计仅统计有用量账号（A: 2999981）。
   console.log("阶段2 汇总卡：");
   const summary = el("summaryBox").innerHTML;
-  checkTrue("汇总含「每日额度合计」", summary.includes("每日额度合计"));
+  checkTrue("汇总含「今日授予合计」", summary.includes("今日授予合计"));
   checkTrue("汇总显示合计 9.00M", summary.includes("9.00M"));
   checkTrue("汇总显示已获取 2 / 未知 1", summary.includes("2 / 未知 1"));
+  checkTrue("汇总含今日剩余合计", summary.includes("今日剩余合计"));
 
   // 筛选计数：可用 1（A）、禁用 1（B）、测试 1（C）。
   console.log("阶段3 筛选计数：");
@@ -216,7 +232,6 @@ function checkTrue(label, cond) {
 
   // 站点归属徽标：B 为中国区，A 缺省（历史账号）按国际站。
   console.log("阶段6 授权站点归属徽标：");
-  const cardB = ctx.card(ACCOUNTS[1]);
   checkTrue("中国区卡片含归属徽标", cardB.includes('class="badge provider bigmodel"'));
   checkTrue("中国区卡片标注「中国区」", cardB.includes("中国区"));
   checkTrue("国际站卡片含归属徽标", cardA.includes('class="badge provider"'));
@@ -225,17 +240,17 @@ function checkTrue(label, cond) {
   check("providerBadge(bigmodel)", ctx.providerBadge({ provider_family: "bigmodel" }).includes("中国区"), "true");
   check("providerBadge(缺省)", ctx.providerBadge({}).includes("国际站"), "true");
 
-  // 授权站点透传：下拉框选中值必须进入 /activate-start 的 JSON 载荷。
+  // 授权站点透传：下拉框选中值必须进入 /activate-start 的 JSON 载荷；空值缺省中国区。
   console.log("阶段7 授权 provider 透传：");
-  el("oauthProvider").value = "bigmodel";
+  el("oauthProvider").value = "zai";
   await ctx.openOAuthBridge();
   const startReq = capturedRequests.filter((r) => r.path.includes("/activate-start")).pop();
   checkTrue("已发出 /activate-start 请求", !!startReq);
-  check("授权载荷 provider", JSON.parse(startReq.opts.body).provider, "bigmodel");
+  check("授权载荷 provider(zai)", JSON.parse(startReq.opts.body).provider, "zai");
   el("oauthProvider").value = "";
   await ctx.openOAuthBridge();
   const startReq2 = capturedRequests.filter((r) => r.path.includes("/activate-start")).pop();
-  check("空选值回落 provider", JSON.parse(startReq2.opts.body).provider, "zai");
+  check("空选值缺省 provider", JSON.parse(startReq2.opts.body).provider, "bigmodel");
 
   console.log("");
   if (failures.length) {
