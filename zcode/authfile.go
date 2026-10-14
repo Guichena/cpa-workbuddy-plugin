@@ -20,6 +20,40 @@ const (
 	zcodeProviderID     = "zcode-provider"
 )
 
+// ZCode OAuth 站点归属（provider family）。
+//
+// 背景（2026-10-14 线上实测）：ZCode 服务端 `cli/init` 的 `provider` 参数只有两个有效值，
+// 决定签发哪个站点的授权地址：`zai` 走国际站 `chat.z.ai`，`bigmodel` 走中国站
+// `bigmodel.cn/login`。账号落盘时记录归属，供上游端点按 family 分支解析使用。
+const (
+	providerFamilyZai      = "zai"
+	providerFamilyBigmodel = "bigmodel"
+)
+
+// normalizeProviderFamily 归一化 provider 取值，空值与非法值均回退默认 `zai`。
+//
+// 兼容既有账号：历史凭据无该字段，读取时按 `zai`（国际站）处理，行为与改造前一致。
+// [参数] raw: 原始 provider 取值。
+// [返回] 归一化后的 family 标识。
+// 最近修改时间：2026-10-14；改动原因：新增，支持 zai / bigmodel 双站归属归一化。
+func normalizeProviderFamily(raw string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), providerFamilyBigmodel) {
+		return providerFamilyBigmodel
+	}
+	return providerFamilyZai
+}
+
+// providerFamilyOf 返回账号的归一化站点归属，nil 账号按默认 `zai` 处理。
+// [参数] sa: 账号凭据，可为 nil。
+// [返回] 归一化后的 family 标识。
+// 最近修改时间：2026-10-14；改动原因：新增，供端点分支与凭据解析统一读取归属。
+func providerFamilyOf(sa *StoredAuth) string {
+	if sa == nil {
+		return providerFamilyZai
+	}
+	return normalizeProviderFamily(sa.ProviderFamily)
+}
+
 var (
 	authFilesMu sync.RWMutex
 	accountsDir string
@@ -45,7 +79,10 @@ type StoredAuth struct {
 	UpdatedAt     string   `json:"updated_at"`
 	Models        []string `json:"models,omitempty"`
 	TestFailed    bool     `json:"test_failed"`
-	PhysicalPath  string   `json:"-"`
+	// ProviderFamily 记录 OAuth 授权站点归属（`zai` 国际站 / `bigmodel` 中国站）。
+	// 空值视为 `zai`，保证历史凭据向后兼容。
+	ProviderFamily string `json:"provider_family,omitempty"`
+	PhysicalPath   string `json:"-"`
 }
 
 // ZaiUserInfo 代表 Z.ai 用户信息。
@@ -409,7 +446,11 @@ func saveAPIKeyAccount(apiKey, label string) (*StoredAuth, error) {
 }
 
 // saveZaiAccount 保存单条 Z.ai OAuth 授权账号。
-func saveZaiAccount(token, accessToken, businessToken string, user *ZaiUserInfo, expiresAt time.Time, label string) (*StoredAuth, error) {
+// [参数] token: 有效调用令牌；accessToken: OAuth access token；businessToken: 业务令牌；
+// user: 用户信息；expiresAt: 过期时间；label: 备注名；provider: 站点归属（`zai` / `bigmodel`）。
+// [返回] 落盘后的账号结构与错误。
+// 最近修改时间：2026-10-14；改动原因：新增 provider 归属参数，支持中国站 bigmodel 账号。
+func saveZaiAccount(token, accessToken, businessToken string, user *ZaiUserInfo, expiresAt time.Time, label string, provider string) (*StoredAuth, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		token = strings.TrimSpace(accessToken)
@@ -447,24 +488,25 @@ func saveZaiAccount(token, accessToken, businessToken string, user *ZaiUserInfo,
 	}
 
 	sa := &StoredAuth{
-		Type:          zcodeProviderID,
-		Provider:      zcodeProviderID,
-		AuthID:        authID,
-		APIKey:        token, // 保存有效 token，供请求头和探活直接复用
-		Token:         token,
-		AccessToken:   accessToken,
-		BusinessToken: businessToken,
-		ExpiresAt:     expStr,
-		UserID:        uid,
-		Username:      uname,
-		Email:         uemail,
-		AvatarURL:     uavatar,
-		Label:         label,
-		Disabled:      false,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		Models:        defaultModels,
-		TestFailed:    false,
+		Type:           zcodeProviderID,
+		Provider:       zcodeProviderID,
+		AuthID:         authID,
+		APIKey:         token, // 保存有效 token，供请求头和探活直接复用
+		Token:          token,
+		AccessToken:    accessToken,
+		BusinessToken:  businessToken,
+		ExpiresAt:      expStr,
+		UserID:         uid,
+		Username:       uname,
+		Email:          uemail,
+		AvatarURL:      uavatar,
+		Label:          label,
+		Disabled:       false,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Models:         defaultModels,
+		TestFailed:     false,
+		ProviderFamily: normalizeProviderFamily(provider),
 	}
 
 	if err := writeAuthFileDirect(fullPath, sa); err != nil {
@@ -472,4 +514,3 @@ func saveZaiAccount(token, accessToken, businessToken string, user *ZaiUserInfo,
 	}
 	return sa, nil
 }
-

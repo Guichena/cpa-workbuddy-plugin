@@ -114,7 +114,7 @@ func TestAuthFile_ZaiAccount(t *testing.T) {
 		Email:  "zhangsan@z.ai",
 		Avatar: "https://avatar.z.ai/1.png",
 	}
-	sa, err := saveZaiAccount("mock_token_12345678", "mock_access_token", "mock_biz_token", user, time.Now().Add(30*24*time.Hour), "测试Zai账号")
+	sa, err := saveZaiAccount("mock_token_12345678", "mock_access_token", "mock_biz_token", user, time.Now().Add(30*24*time.Hour), "测试Zai账号", providerFamilyZai)
 	if err != nil {
 		t.Fatalf("saveZaiAccount failed: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestBusinessToken_ResolveAndCache(t *testing.T) {
 	businessTokenCache = make(map[string]businessTokenCacheEntry)
 	businessTokenMu.Unlock()
 
-	got, err := resolveBusinessToken("zai-access-1")
+	got, err := resolveBusinessToken("zai-access-1", providerFamilyZai)
 	if err != nil || got != "biz-token-abc" {
 		t.Fatalf("expected biz-token-abc, got %q err=%v", got, err)
 	}
@@ -166,7 +166,7 @@ func TestBusinessToken_ResolveAndCache(t *testing.T) {
 	}
 
 	// 第二次应命中缓存，不再请求上游
-	if _, err2 := resolveBusinessToken("zai-access-1"); err2 != nil {
+	if _, err2 := resolveBusinessToken("zai-access-1", providerFamilyZai); err2 != nil {
 		t.Fatalf("cached resolve failed: %v", err2)
 	}
 	if calls != 1 {
@@ -190,11 +190,11 @@ func TestBusinessToken_Invalidate(t *testing.T) {
 	businessTokenCache = make(map[string]businessTokenCacheEntry)
 	businessTokenMu.Unlock()
 
-	if _, err := resolveBusinessToken("zai-access-2"); err != nil {
+	if _, err := resolveBusinessToken("zai-access-2", providerFamilyZai); err != nil {
 		t.Fatalf("first resolve failed: %v", err)
 	}
-	invalidateBusinessToken("zai-access-2")
-	if _, err := resolveBusinessToken("zai-access-2"); err != nil {
+	invalidateBusinessToken("zai-access-2", providerFamilyZai)
+	if _, err := resolveBusinessToken("zai-access-2", providerFamilyZai); err != nil {
 		t.Fatalf("resolve after invalidate failed: %v", err)
 	}
 	if calls != 2 {
@@ -214,7 +214,7 @@ func TestBusinessToken_UpstreamFailure(t *testing.T) {
 	businessTokenCache = make(map[string]businessTokenCacheEntry)
 	businessTokenMu.Unlock()
 
-	if _, err := resolveBusinessToken("zai-access-3"); err == nil {
+	if _, err := resolveBusinessToken("zai-access-3", providerFamilyZai); err == nil {
 		t.Fatalf("expected error on upstream failure")
 	}
 }

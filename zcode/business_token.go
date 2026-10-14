@@ -29,10 +29,24 @@ import (
 // 访问 `https://api.z.ai/api/anthropic/v1/messages`。
 const (
 	zaiBusinessLoginEndpoint = "https://api.z.ai/api/auth/z/login"
+	// bigmodelBusinessLoginEndpoint 是中国站（bigmodel）的业务令牌换取端点
+	// （2026-10-14 实测存活，返回 JWT 解析错误证明端点存在）。
+	bigmodelBusinessLoginEndpoint = "https://bigmodel.cn/api/auth/z/login"
 	// businessTokenTTL 是业务令牌的保守缓存时长。上游未返回可靠 expires_in 时使用；
 	// 401 会被上层换号/重试逻辑兜住，缓存过长只会多一次失败请求，不会造成永久错误。
 	businessTokenTTL = 30 * time.Minute
 )
+
+// businessLoginEndpointFor 按站点归属返回业务令牌换取端点。
+// [参数] family: 归一化后的站点归属。
+// [返回] 对应的换取端点 URL。
+// 最近修改时间：2026-10-14；改动原因：新增，中国站 bigmodel 使用独立换取端点。
+func businessLoginEndpointFor(family string) string {
+	if normalizeProviderFamily(family) == providerFamilyBigmodel {
+		return bigmodelBusinessLoginEndpoint
+	}
+	return zaiBusinessLoginEndpoint
+}
 
 // mockZaiBusinessLoginURL 供单元测试注入 mock 端点。
 var mockZaiBusinessLoginURL string
@@ -70,22 +84,24 @@ func isBusinessLoginSuccess(code int) bool {
 }
 
 // resolveBusinessToken 用 zai access_token 换取业务令牌，带进程内缓存。
-// [参数] zaiAccessToken: OAuth 轮询得到的 zai access_token。
+// [参数] zaiAccessToken: OAuth 轮询得到的 zai access_token；family: 站点归属（`zai` / `bigmodel`）。
 // [返回] 业务 access_token；失败时返回错误，由调用方决定回退策略。
-func resolveBusinessToken(zaiAccessToken string) (string, error) {
+// 最近修改时间：2026-10-14；改动原因：按 provider family 切换换取端点，缓存键纳入 family 隔离。
+func resolveBusinessToken(zaiAccessToken string, family string) (string, error) {
 	token := strings.TrimSpace(zaiAccessToken)
 	if token == "" {
 		return "", fmt.Errorf("empty zai access token")
 	}
+	cacheKey := normalizeProviderFamily(family) + ":" + token
 
 	businessTokenMu.RLock()
-	entry, ok := businessTokenCache[token]
+	entry, ok := businessTokenCache[cacheKey]
 	businessTokenMu.RUnlock()
 	if ok && entry.token != "" && time.Now().Before(entry.expiresAt) {
 		return entry.token, nil
 	}
 
-	endpoint := zaiBusinessLoginEndpoint
+	endpoint := businessLoginEndpointFor(family)
 	if mockZaiBusinessLoginURL != "" {
 		endpoint = mockZaiBusinessLoginURL
 	}
@@ -133,7 +149,7 @@ func resolveBusinessToken(zaiAccessToken string) (string, error) {
 	}
 
 	businessTokenMu.Lock()
-	businessTokenCache[token] = businessTokenCacheEntry{
+	businessTokenCache[cacheKey] = businessTokenCacheEntry{
 		token:     businessToken,
 		expiresAt: time.Now().Add(businessTokenTTL),
 	}
@@ -143,15 +159,16 @@ func resolveBusinessToken(zaiAccessToken string) (string, error) {
 }
 
 // invalidateBusinessToken 使某个 zai access_token 对应的业务令牌缓存失效。
-// [参数] zaiAccessToken: OAuth 轮询得到的 zai access_token。
+// [参数] zaiAccessToken: OAuth 轮询得到的 zai access_token；family: 站点归属。
 // [返回] 无。
-func invalidateBusinessToken(zaiAccessToken string) {
+// 最近修改时间：2026-10-14；改动原因：缓存键纳入 family，失效时按 family 精确定位。
+func invalidateBusinessToken(zaiAccessToken string, family string) {
 	token := strings.TrimSpace(zaiAccessToken)
 	if token == "" {
 		return
 	}
 	businessTokenMu.Lock()
-	delete(businessTokenCache, token)
+	delete(businessTokenCache, normalizeProviderFamily(family)+":"+token)
 	businessTokenMu.Unlock()
 }
 
@@ -166,7 +183,7 @@ func modelCredentialFor(sa *StoredAuth) string {
 		return ""
 	}
 	if source := strings.TrimSpace(sa.AccessToken); source != "" {
-		if businessToken, errResolve := resolveBusinessToken(source); errResolve == nil {
+		if businessToken, errResolve := resolveBusinessToken(source, providerFamilyOf(sa)); errResolve == nil {
 			return businessToken
 		}
 	}

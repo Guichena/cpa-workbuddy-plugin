@@ -20,12 +20,12 @@ import (
 
 // Z.ai 官方 OAuth 配置常量。
 //
-// 关键事实（2026-10-11 由 zcode.z.ai 线上接口实测 + ZCode 3.15.1 桌面端
-// app.asar 逆向确认）：`chat.z.ai` 对 `client_id` 执行 redirect_uri 严格白名单，
-// 仅接受服务端注册的 `https://zcode.z.ai/api/v1/oauth/cli/callback/zai`；
-// 任何本地/自定义回调地址都会被拒绝（`Redirect URI not registered for this client`）。
+// 关键事实（2026-10-14 线上实测）：服务端 `POST /api/v1/oauth/cli/init` 的 `provider`
+// 参数决定签发哪个站点的授权地址，且只有两个有效值——`zai`（国际站 `chat.z.ai`）与
+// `bigmodel`（中国站 `bigmodel.cn/login`）；其余取值一律返回 `code:1000`。
+// 授权地址由服务端签发，插件不得改写，因此插件侧只需传对 provider 值。
 //
-// 因此插件必须复刻官方 CLI 轮询链路，而不是让浏览器回调 CPA：
+// 因此插件复刻官方 CLI 轮询链路，而不是让浏览器回调 CPA：
 //
 //  1. POST /api/v1/oauth/cli/init（Authorization: Bearer <随机 32 字节 hex>）
 //     → 返回 flow_id / poll_token / authorize_url（回调已由服务端注册）；
@@ -33,14 +33,46 @@ import (
 //  3. GET /api/v1/oauth/cli/poll/<flow_id>（Authorization: Bearer <poll_token>）
 //     → status=pending 继续轮询；status=ready 时一次性返回 token / access_token / user。
 const (
-	zaiOAuthAuthorizeURL = "https://chat.z.ai/auth"
-	zaiOAuthClientID     = "client_P8X5CMWmlaRO9gyO-KSqtg"
-	zaiOAuthCLIInitURL   = "https://zcode.z.ai/api/v1/oauth/cli/init"
-	zaiOAuthCLIPollURL   = "https://zcode.z.ai/api/v1/oauth/cli/poll/"
-	zaiOAuthTokenURL     = "https://zcode.z.ai/api/v1/oauth/token"
-	zaiBusinessLoginURL  = "https://api.z.ai/api/auth/z/login"
-	oauthTTL             = 15 * time.Minute
+	zaiOAuthClientID    = "client_P8X5CMWmlaRO9gyO-KSqtg"
+	zaiOAuthCLIInitURL  = "https://zcode.z.ai/api/v1/oauth/cli/init"
+	zaiOAuthCLIPollURL  = "https://zcode.z.ai/api/v1/oauth/cli/poll/"
+	zaiOAuthTokenURL    = "https://zcode.z.ai/api/v1/oauth/token"
+	zaiBusinessLoginURL = "https://api.z.ai/api/auth/z/login"
+	oauthTTL            = 15 * time.Minute
 )
+
+// isValidOAuthProvider 校验 provider 是否为服务端支持的两个取值之一。
+//
+// 服务端只认 `zai` / `bigmodel`，其余取值会返回 `code:1000 something went wrong`；
+// 在插件侧提前拦截非法值，避免把无效请求打到上游并给出明确错误。
+// [参数] provider: 待校验的 provider 取值。
+// [返回] true 表示合法。
+// 最近修改时间：2026-10-14；改动原因：新增，拦截非法 provider 取值。
+func isValidOAuthProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case providerFamilyZai, providerFamilyBigmodel:
+		return true
+	default:
+		return false
+	}
+}
+
+// providerFromMetadata 从宿主登录请求的 Metadata 中读取 provider 站点归属。
+//
+// 宿主 `AuthLoginStartRequest.Metadata` 是插件自定义登录上下文的载体；面板通过
+// 该字段指定 `zai` / `bigmodel`。缺省或非字符串时回退默认 `zai`。
+// [参数] metadata: 宿主请求携带的自定义上下文。
+// [返回] 归一化后的 family 标识。
+// 最近修改时间：2026-10-14；改动原因：新增，宿主侧 provider 传递通道。
+func providerFromMetadata(metadata map[string]any) string {
+	if metadata == nil {
+		return providerFamilyZai
+	}
+	if raw, ok := metadata["provider"].(string); ok {
+		return normalizeProviderFamily(raw)
+	}
+	return providerFamilyZai
+}
 
 var (
 	oauthHTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -62,6 +94,7 @@ type oauthLoginSession struct {
 	Completed    bool
 	TargetAuthID string // 若非空，表示针对存量账号执行激活/更新，就地覆盖该账号凭据
 	TargetLabel  string // 存量账号的保留展示名称
+	Provider     string // 本次授权使用的站点归属（`zai` / `bigmodel`），落盘时写入账号
 }
 
 var oauthSessions sync.Map
@@ -214,7 +247,11 @@ func zaiCLIPoll(flowID, pollToken string) (*zaiCLIPollResponse, error) {
 // settleZaiPollResult 将 ready 状态的轮询结果落盘为账号，并构造宿主凭据记录。
 // 若提供了 targetAuthID，优先在存量凭据中就地更新该账号的 APIKey、Token、AccessToken 及用户信息，
 // 保持原有 AuthID 不变，彻底避免新建重复账号卡片；若未提供则正常落盘为新账号。
-func settleZaiPollResult(resp *zaiCLIPollResponse, label string, targetAuthID string) (*pluginapi.AuthData, error) {
+// [参数] resp: 轮询响应；label: 账号备注名；targetAuthID: 定向更新目标；provider: 站点归属。
+// [返回] 宿主凭据记录与错误。
+// 最近修改时间：2026-10-14；改动原因：落盘时写入 provider family 归属。
+func settleZaiPollResult(resp *zaiCLIPollResponse, label string, targetAuthID string, provider string) (*pluginapi.AuthData, error) {
+	family := normalizeProviderFamily(provider)
 	status := strings.TrimSpace(resp.Data.Status)
 	switch status {
 	case "failed":
@@ -266,6 +303,7 @@ func settleZaiPollResult(resp *zaiCLIPollResponse, label string, targetAuthID st
 		target.ExpiresAt = expiresAt.Format(time.RFC3339)
 		target.UpdatedAt = time.Now().Format(time.RFC3339)
 		target.Disabled = false
+		target.ProviderFamily = family
 		target.TestFailed = false
 		if resp.Data.User != nil {
 			if target.UserID == "" {
@@ -296,7 +334,7 @@ func settleZaiPollResult(resp *zaiCLIPollResponse, label string, targetAuthID st
 		errSave = writeAuthFileDirect(fullPath, target)
 		stored = target
 	} else {
-		stored, errSave = saveZaiAccount(jwtToken, accessToken, "", resp.Data.User, expiresAt, label)
+		stored, errSave = saveZaiAccount(jwtToken, accessToken, "", resp.Data.User, expiresAt, label, family)
 	}
 
 	if errSave != nil {
@@ -324,10 +362,17 @@ func settleZaiPollResult(resp *zaiCLIPollResponse, label string, targetAuthID st
 }
 
 // startAccountOAuth 发起一次官方 CLI OAuth 流程并保存会话状态。
-// [参数] targetAuthID: 可选的定向激活目标账号；label: 账号备注名。
+// [参数] targetAuthID: 可选的定向激活目标账号；label: 账号备注名；provider: 站点归属
+// （`zai` 国际站 / `bigmodel` 中国站），非法值返回错误。
 // [返回] 官方初始化响应、state 状态码、错误。
-func startAccountOAuth(targetAuthID, label string) (*zaiCLIInitResponse, string, error) {
-	initResp, err := zaiCLIInit("zai")
+// 最近修改时间：2026-10-14；改动原因：provider 参数化，支持中国站 bigmodel 授权。
+func startAccountOAuth(targetAuthID, label, provider string) (*zaiCLIInitResponse, string, error) {
+	family := normalizeProviderFamily(provider)
+	if !isValidOAuthProvider(provider) {
+		return nil, "", fmt.Errorf("不支持的 OAuth provider: %q（仅支持 zai / bigmodel）", provider)
+	}
+
+	initResp, err := zaiCLIInit(family)
 	if err != nil {
 		return nil, "", err
 	}
@@ -352,14 +397,25 @@ func startAccountOAuth(targetAuthID, label string) (*zaiCLIInitResponse, string,
 		AuthorizeURL: authorizeURL,
 		TargetAuthID: strings.TrimSpace(targetAuthID),
 		TargetLabel:  strings.TrimSpace(label),
+		Provider:     family,
 	})
 
 	return initResp, state, nil
 }
 
 // handleStartLogin 处理宿主发起 OAuth 登录请求：发起官方 CLI 轮询流程并返回真实授权地址。
+// provider 从宿主请求的 Metadata 读取（缺省 `zai` 国际站），非法值返回明确错误。
+// [参数] raw: 宿主登录启动请求载荷，Metadata 可携带 provider 站点归属。
+// [返回] 授权启动响应与错误。
+// 最近修改时间：2026-10-14；改动原因：支持宿主按 provider 发起中国站 bigmodel 授权。
 func handleStartLogin(raw []byte) ([]byte, error) {
-	initResp, state, err := startAccountOAuth("", "")
+	var req pluginapi.AuthLoginStartRequest
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &req)
+	}
+	provider := providerFromMetadata(req.Metadata)
+
+	initResp, state, err := startAccountOAuth("", "", provider)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +523,7 @@ func handlePollLogin(raw []byte) ([]byte, error) {
 			Message: session.Error,
 		})
 	case "ready":
-		authData, errSettle := settleZaiPollResult(pollResp, session.TargetLabel, session.TargetAuthID)
+		authData, errSettle := settleZaiPollResult(pollResp, session.TargetLabel, session.TargetAuthID, session.Provider)
 		if errSettle != nil {
 			session.Completed = true
 			session.Error = errSettle.Error()
@@ -543,7 +599,7 @@ func handleOAuthBridge(req pluginapi.ManagementRequest) pluginapi.ManagementResp
 	// 主动查询一次，便于用户在桥接页即时看到结果。
 	if session.FlowID != "" {
 		if pollResp, errPoll := zaiCLIPoll(session.FlowID, session.PollToken); errPoll == nil {
-			if authData, errSettle := settleZaiPollResult(pollResp, session.TargetLabel, session.TargetAuthID); errSettle == nil {
+			if authData, errSettle := settleZaiPollResult(pollResp, session.TargetLabel, session.TargetAuthID, session.Provider); errSettle == nil {
 				session.Auth = authData
 				session.Completed = true
 				accountLabel := authData.Label

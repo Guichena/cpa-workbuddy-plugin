@@ -626,11 +626,13 @@ func handleClaimAccount(body []byte) ([]byte, error) {
 }
 
 // handleActivateStart 处理 POST /activate-start 发起账号官方 OAuth 授权登录。
-// [参数] body: 可包含 auth_id（指定存量账号就地更新凭据），为空时代表新账号授权登录。
-// [返回] 授权页面 URL、state 状态码以及 flow_id。
-// 最近修改时间：2026-10-14；改动原因：纠正「激活」措辞——该链路只完成授权登录，不下发每日额度。
+// [参数] body: 可包含 auth_id（指定存量账号就地更新凭据）与 provider（`zai` / `bigmodel`
+// 站点归属，缺省 `zai`），为空时代表新账号授权登录。
+// [返回] 授权页面 URL、state 状态码、flow_id 与生效的 provider。
+// 最近修改时间：2026-10-14；改动原因：provider 参数化，支持中国站 bigmodel 授权。
 func handleActivateStart(body []byte) ([]byte, error) {
 	authID := extractAuthIDFromBody(body)
+	provider := normalizeProviderFamily(gjson.GetBytes(body, "provider").String())
 	var label string
 	if authID != "" {
 		accounts, _ := listAllAuthFiles()
@@ -642,7 +644,7 @@ func handleActivateStart(body []byte) ([]byte, error) {
 		}
 	}
 
-	initResp, state, err := startAccountOAuth(authID, label)
+	initResp, state, err := startAccountOAuth(authID, label, provider)
 	if err != nil {
 		return makeHTTPResponse(http.StatusInternalServerError, []byte(fmt.Sprintf(`{"ok":false,"error":%q}`, err.Error())))
 	}
@@ -653,6 +655,7 @@ func handleActivateStart(body []byte) ([]byte, error) {
 		"flow_id":       initResp.Data.FlowID,
 		"authorize_url": initResp.Data.AuthorizeURL,
 		"auth_id":       authID,
+		"provider":      provider,
 	}
 	resBytes, _ := json.Marshal(res)
 	return makeHTTPResponse(http.StatusOK, resBytes)
@@ -716,7 +719,7 @@ func handleActivatePoll(state string) ([]byte, error) {
 		oauthSessions.Delete(state)
 		return makeHTTPResponse(http.StatusOK, []byte(`{"status":"error","message":"OAuth 授权失败或已取消"}`))
 	case "ready":
-		authData, errSettle := settleZaiPollResult(pollResp, session.TargetLabel, session.TargetAuthID)
+		authData, errSettle := settleZaiPollResult(pollResp, session.TargetLabel, session.TargetAuthID, session.Provider)
 		if errSettle != nil {
 			session.Completed = true
 			session.Error = errSettle.Error()
