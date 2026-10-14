@@ -5,6 +5,14 @@
 ## 事件
 
 
+- 2026-10-15：**zcode-provider 0.1.28/0.1.29/0.1.30 三连发：默认中国区 + 面板内无感验证领取 Start Plan + 面板额度改用 `billing/balance` 取真实用量，全部全链路发布生产**——用户诉求递进：① 「改成默认中国区，OAuth 登录页也默认中国区授权，并通过逆向工程激活额度，不用手动去 zcode 客户端登录激活」；② 生产两问题：「领取失败 `no permission`」+「部分账号额度已使用，但面板额度从不刷新、恒显示最满」。
+  - **0.1.28（新增能力）**：① 默认中国区——面板 `#oauthProvider` 下拉 `bigmodel` 置首位，`resolveOAuthProvider`/`providerFromMetadata` 空值默认 `bigmodel`（显式 `zai` 仍可用）；② claim 契约补三项此前遗漏必需项——`fetchClaimablePlanID()` 从 `/billing/preview` 动态解析 `plan_id`（带批次后缀 `zcode-v3-start-plan-0817`）、`zcodeDeviceMid()` 稳定 UUID v4、claim 请求补 `X-Device-Mid`；③ 面板新增 `runTracelessVerification` + `claimQuota`，未领取卡片按钮改「🎁 领取额度」，原「📖 领取指引」降级兜底。逆向依据 `app.asar` 3.15.1：官方用标准阿里云无感验证 SDK，插件端可完整复刻。
+  - **0.1.29（修复 0.1.28 缺陷）**：0.1.28 面板产出的 `captchaVerifyParam` 仅 76 字符、不含 `securityToken`，`/claim` 始终 `captcha_required`。根因（真实浏览器 A/B/C/D/E 五组受控实验锁定）：`initAliyunCaptcha` 未传 `prefix`/`region`，且只设了 SDK **不读**的全局名 `AliyunRequestVerificationConfig`（SDK 实读 `window.AliyunCaptchaConfig` 且**仅脚本加载期读取一次**）→ 请求打到 `undefined.captcha-open.aliyuncs.com`。修复：init 入参显式传 `prefix`/`region`（与时机无关的权威通道）+ 加载前预设 `window.AliyunCaptchaConfig`。修复后参数 **76→280 字符且含 `securityToken`**，生产 `/claim` 由 **captcha 层 `captcha_required` → 业务层 `no permission`**，证明 captcha 校验已通过。Bug 文档 `doc/4-bugs/2026-10-15_001240_*`。
+  - **0.1.30（修复面板额度恒满 + 文案友好化）**：① 根因——额度数据源 `GET /api/v1/zcode-plan/billing/current` **只返回授予量 `grant_units`，无任何已用/剩余字段**，面板 `quotaHTML` 还硬编码 `width:100%`；真实用量在 `GET /api/v1/zcode-plan/billing/balance?app_version=<v>`（`data.balances[]` 含 `total_units`/`used_units`/`remaining_units`/`available_units`，按 `entitlement_id` 关联），该端点**强制要求设备三头** `X-Platform`/`X-Device-Mid`/`X-ZCode-App-Version`，缺任一 → `400 code 3001 parameter error`（此前误判「balance 不可用」即漏了这三个头）。修复：`fetchAccountQuota` 主走 balance（带设备三头）取真实用量、失败回退 current；快照新增 `total_used`/`total_remain`/`has_usage`/`source` 与逐 entitlement 用量；面板进度条按「剩余/授予」渲染（≤30% 黄、≤10% 红），无用量通道时标注「暂未取到用量」并半透明区分。② 领取失败文案——`billing/preview` 对全部账号返回 `plans:[]`（上游活动态），claim 被业务层拒为英文 `no permission`；新增 `friendlyClaimError()` 翻译为可读中文，面板对「未开放」类降级为 warn。
+  - **发布链**：0.1.28 `89837d9`→CI `38590147511`→`80eadd8`(assets)→`9635fa0`(registry)；0.1.29 `c757927`→CI `38596835494`→`fb5f8d8`→`1a8bc97`→`db66489`→`0612449`(prune 0.1.27/0.1.28)；0.1.30 `a49101a`→CI `38607038707`→`1b80e6f`(assets 7/7 sha256 OK)→`6fd166d`(registry)。三次生产热重载均 `restart_required=false`、日志确认 `plugin hot reloaded`（0.1.28 retired 0.1.27 / 0.1.29 retired 0.1.28 / 0.1.30 retired 0.1.29），**零容器重启**，落盘 `.so` sha256 与本地 zip 逐字节一致。
+  - **生产验收（0.1.30）**：`/credits` 返回 `source=balance has_usage=True` 且用量真实（`zcode-1185ceb16c25ae48` used=5000221 remain=2999779；`zcode-d7a0cb4afa8f77c0` used=5000019 remain=2999981）；逐 entitlement 明细 `GLM-5.3 used=19 remaining=2999981` / `GLM-5.3-Flash used=5000000 remaining=0`，关联正确；两种 device-mid 返回相同数据。
+  - 门禁：三版 `cgo-shim-build.py zcode` build/vet/test 全绿；哨兵变异（禁用用量解析 / 恢复 family 分支）精确 FAIL 后恢复全绿；面板 JS `node --check` 双块 rc=0；`gofmt -l` LF 归一后空；`POLLUTION: PASS`；`STYLE: PASS`。知识库《Z.ai-ZCode-OAuth授权契约-CLI轮询模式》新增第六/七节（插件端自主领取 + billing/balance 用量契约）。
+
 - 2026-10-14：**zcode-provider 0.1.27 修复 bigmodel 推理端点误用 `open.bigmodel.cn` 致 401（GAP-006），全链路发布生产**——① **CYCLE-3 真实账号端到端**（用户提供 bigmodel 账号，面板选「中国区」授权）：授权落盘 `provider_family=bigmodel`、**额度自带每日 800 万**（`plan_id=zcode-v3-start-plan-0817`、`plan_status=active`、GLM-5.3 300万 + Flash 500万，**无需客户端 claim**）、模型清单与 zai **完全一致**（5 个），**GAP-004 / GAP-005 解除**；但推理 3/3 稳定 401。② **GAP-006 根因（asar 逆向 + 生产对照实验双重证据）**：0.1.25 为 bigmodel 选的 `open.bigmodel.cn/api/anthropic` **不接受 ZCode OAuth JWT**——实测该端点对 bigmodel 与 zai **两类账号 JWT 都返回 401**；同一 bigmodel JWT 打 `zcode.z.ai/api/v1/zcode-plan/anthropic` 则**鉴权通过**（同一 IP 对照：无效 JWT → 401、空 JWT → 401、有效 JWT → 405/3012 或 429/3009，证明**鉴权先于风控生效**）。asar 佐证（`app.asar` 3.15.1）：`open.bigmodel.cn` 仅服务 `bigmodelIndividualCodingPlan`（**付费个人版**）；`bigmodelStartPlan`（**免费版**，即 OAuth 授权形态）走默认端点解析，且 `resolveCurrent` 中 start-plan **不分 family**、统一用 `zcodeJwtToken`。③ **修复**：`resolveUpstreamTargets` 移除 bigmodel 专用端点分支（删除 `bigmodelCodingPlanBaseURL` 常量），start-plan 形态下中国站与国际站**共用** `zcode.z.ai`；`provider_family` 字段保留（面板归属展示用），不再影响端点选择；测试断言改为「bigmodel 走 zcode.z.ai 且不得含 open.bigmodel.cn」+ 反向断言，哨兵变异精确 FAIL。④ **发布链**：`c19493b`(fix 8 文件含 Bug/测试/6-review 文档) → CI run `38576894736` success → `bcb1f76`(8 assets) → `22ec7da`(registry) → `72498f1`(prune 0.1.26)；远端 7/7 ALL PASS；生产热重载 `active_version=0.1.27 retired_version=0.1.26`，零容器重启，落盘 `.so` sha256 `8b153250…` 逐字节一致；**生产复测**：bigmodel 探活由 **401 → 429/3009 与 405/3012**（鉴权通过），与 zai 账号行为**完全一致**。门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。⑤ 遗留：上游 `zcode.z.ai` 对生产 IP 存在**时段性 WAF（405/3012）与限流（429/3009）**，zai 账号同样受影响，属独立于插件的外部因素（13:20 曾有 zai 推理成功 200/970ms 证明非永久封禁）。Bug 文档 `doc/4-bugs/2026-10-14_220000_zcode_bigmodel推理端点误用open_bigmodel致401鉴权失败根因诊断.md`。同期并行会话完成 qoder 两插件 0.9.36 / 0.1.16（tools 对齐修复）发布。
 
 - 2026-10-14：**zcode-provider 0.1.25 发布 bigmodel 中国区授权能力 + 0.1.26 修复非法 provider 入口校验失效，均全链路发布生产**——① **0.1.25（CYCLE-1/2 发版）**：把已提交的 CYCLE-1（provider 参数化 + 端点 family 分支）与 CYCLE-2（面板 provider 下拉 + 账号归属徽标）bump 发版上线。提交链 `797d807`(bump 3 文件) → CI run `38566121254` success → `acbd5ed`(8 assets) → `0b86bef`(registry) → `170c25a`(prune 0.1.24)；远端 7/7 artifacts ALL PASS；生产 `plugin-store install` 热重载 `active_version=0.1.25 retired_version=0.1.24`，零容器重启，落盘 `.so` sha256 `cef55263…` 与本地 zip 逐字节一致，accounts/panel 均 200（面板 72818 字节，含 `oauthProvider` 下拉 + `providerBadge`）。② **0.1.26（生产验证中发现的真实缺陷修复，用户决策前向修复）**：生产三臂直连复测发现 `POST /activate-start` 传非法 provider（`zhipu`）**静默回退为 `zai`** 并返回国际站授权地址，违反 AC-006「未知 provider 返回明确错误，不静默回退」。根因：HTTP 入口 `handleActivateStart` 与宿主入口 `providerFromMetadata` 均**先调用 `normalizeProviderFamily()`（语义为「非法值回退 zai」，本用于存量数据读取）再做校验**，非法值被提前改写成 `zai`，致下游 `isValidOAuthProvider()` 永远拿不到原始值、校验形同虚设；CYCLE-1 用例 `TestStartAccountOAuth_RejectsUnknownProvider` 直调函数层、绕过入口归一化，故未拦截。修复：新增 `resolveOAuthProvider(raw)` 统一入口解析——**先校验、后归一化**，空值仍默认 `zai`；`handleActivateStart` 非法值返回 **400**，`providerFromMetadata` 改为原样透传，`startAccountOAuth` 改走统一解析；新增 `TestResolveOAuthProvider` / `TestHandleActivateStart_RejectsUnknownProvider`（HTTP 层 400 且不触达上游 mock）/ `TestHandleActivateStart_AcceptsBigmodelProvider`，哨兵反证 3 例精确 FAIL。提交链 `cbbca35`(fix 9 文件含 Bug/测试/6-review 文档) → CI run `38569617734` success → `0bd01d7`(8 assets) → `287e490`(registry) → `334bef9`(prune 0.1.25)；远端 7/7 ALL PASS；生产热重载 `active_version=0.1.26 retired_version=0.1.25`，零容器重启，落盘 `.so` sha256 `a951e3fa…` 逐字节一致；**生产三臂复测确认修复**：`bigmodel`→`bigmodel.cn`、`zai`→`chat.z.ai`（3/3）、`zhipu`→HTTP 400 + 明确错误。门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。Bug 文档 `doc/4-bugs/2026-10-14_210000_zcode非法provider被归一化提前改写致HTTP入口校验失效静默回退根因诊断.md`。待办：**CYCLE-3 需用户提供真实 bigmodel 账号**（面板选「中国区」发起授权，在 `bigmodel.cn/login` 完成登录），解除 GAP-004（中国区是否自带每日额度）/ GAP-005（模型清单差异）并覆盖 AC-002。
@@ -43,8 +51,6 @@
 
 - 2026-10-09：workbuddy-provider **0.15.4** / workbuddy-ai-provider **0.1.9** / traework-provider **0.2.3** 发布部署（三插件测试按钮改为弹出模型选择窗口按指定模型测试）——用户诉求：面板卡片「测试」按钮原为随机挑模型直接测，改为点击后弹出该账号支持的模型小窗口、点选指定模型再测。后端：三插件 models.go 新增 authModelsForIndex + handleModelsQuery，management.go 新增只读 GET /models?auth_index= 路由，active_ping.go 的 handleTestActiveWithAuth(sa, authIndex, model) 支持指定模型（model 空则保持随机，兼容旧面板）；前端：三插件 panel.html 新增测试弹窗（openTestModal / loadTestModels / runTestModel），无模型时提示「暂无可用模型」并允许关闭。本地：cgo-shim 三插件 build/vet/test 全绿 + 必失败哨兵确证真实进编译；三面板 Node vm 回归各 17 项 PASS + 旧版反证 FAIL；6-review STYLE: PASS。发布链 ce6b4e2（32 文件）→ CI 三 run success（37940758486 / 37940778484 / 37940786472，head=ce6b4e2）→ fe5742d（24 资产，三目录 7/7 sha256 OK）→ 207e22c（registry 回填）→ ada831f（prune 旧版 0.15.3 / 0.1.8 / 0.2.2）；远端 49/49 当前资产 200、被删旧版 404。生产：三插件 plugin-store install 全部 installed，落盘 .so sha256 与本地 zip 完全一致（workbuddy 0.15.4 9c3b85b6… / workbuddy-ai 0.1.9 dd77aab4… / traework 0.2.3 2d671e16…），热重载 active_version 命中目标版本，panel / accounts 三插件全 200；行为验收 /models 三插件返回真实模型（17 / 27 / 大量）、缺 auth_index 返回 auth_index is required、/test-active 指定 deepseek-v4.1-flash 在 traework 成功（1.625s，回显该 model），workbuddy 因额度 429 但错误文案确认使用指定模型。
 
-- 2026-10-09：workbuddy-ai-provider **0.1.8** 发布部署（国际版每日签到替换失效加油包）——面板把已失效的「领取专家加油包」入口替换为国际版每日签到（状态查询 + 领取积分），新增自动签到开关（00/04/08/12/16/20 六时段）与批量签到；发布链 583bb05→b4e3a3e（8 资产 7/7 sha256 OK）→45f6ce5（registry）；CI run 37836464993 全 57 jobs success；生产热重载 active_version=0.1.8 retired_version=0.1.7、落盘 .so sha256 baf416d3…c49a 与本地 zip 一致；生产 /checkin 按契约透传上游结果（code=10001 签到活动未开启，未伪造成功），四路请求头对照 T0-T3 零差异 + 全 11 账号 active=false + CN 域反证（CN active=true）+ banner 12302 判定为上游活动离线，登记 GAP-001 环境性阻断。
-
 ## 计数锚点区
 
 > 本区由 `memory-usage-tracking-rules` 收口闸门维护：HISTORY 仅窄读计入，会话启动不读不计；被裁剪事件的锚点随事件一起删除（不保留 retired）；本区计数仅作主题热度弱信号。锚点 key 用事件 `- YYYY-MM-DD：` 后的核心主题短语（约前 12 字符，可前缀匹配）。
@@ -52,10 +58,15 @@
 ```yaml
 version: 1
 anchors:
-- title: '**zcode-provider 0.1.27 修复 bigmodel'
+- title: '**zcode-provider 0.1.28/0.1.29/0.1.30 三连发'
   usage_count: 0
   usage_days: 0
   last_used_at: null
+  absorbed_to: null
+- title: '**zcode-provider 0.1.27 修复 bigmodel'
+  usage_count: 1
+  usage_days: 1
+  last_used_at: 2026-10-15
   absorbed_to: null
 - title: '**zcode-provider 0.1.25 发布 bigmodel'
   usage_count: 0
@@ -67,7 +78,12 @@ anchors:
   usage_days: 0
   last_used_at: null
   absorbed_to: null
-- title: 'zcode-provider **0.1.22 纠正「激活开通」'
+- title: '**四插件（workbuddy/workbuddy-ai/traework/zcode）定时探活降频至 4 小时'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
+- title: '**zcode-provider 0.1.22 纠正「激活开通」'
   usage_count: 0
   usage_days: 0
   last_used_at: null
@@ -77,12 +93,22 @@ anchors:
   usage_days: 0
   last_used_at: null
   absorbed_to: null
+- title: '**qoder-ai-provider 0.1.9 / qoderwork-provider 0.9.30 修复「上游'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
+- title: '**彻底废弃并删除 Gemini 插件'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
 - title: '**沉淀「HTTP 200 首包业务报错帧假成功'
   usage_count: 0
   usage_days: 0
   last_used_at: null
   absorbed_to: null
-- title: '**新增「生产配置存储红线」'
+- title: '**新增「生产配置存储红线（不手工改数据库表，强制）」'
   usage_count: 0
   usage_days: 0
   last_used_at: null
@@ -131,10 +157,5 @@ anchors:
   usage_count: 1
   usage_days: 1
   last_used_at: 2026-10-10
-  absorbed_to: null
-- title: 'workbuddy-ai-provider **0.1.8** 发布部署'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
   absorbed_to: null
 ```

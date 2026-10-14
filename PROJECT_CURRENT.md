@@ -17,7 +17,7 @@
 ## 项目概况
 
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
-  - `zcode-provider`: **0.1.29**（修复面板无感验证未传 captcha 配置致领取参数无效；0.1.28 面板内无感验证领取 Start Plan + OAuth 默认中国区；0.1.27 修复 bigmodel 推理端点误用 `open.bigmodel.cn` 致 401）
+  - `zcode-provider`: **0.1.30**（面板额度改用 `billing/balance` 取真实已用/剩余（0.1.29 前恒显示授予量满格）；领取失败 `no permission` 翻译为友好中文；0.1.29 修复面板无感验证 captcha 配置缺陷；0.1.28 面板内无感验证领取 Start Plan + OAuth 默认中国区）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoderwork-provider`: **0.9.36**（tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00）
   - `qoder-ai-provider`: **0.1.16**（tools 对齐修复；0.1.15 max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册；签到 10:00/22:00）
@@ -26,11 +26,21 @@
   - `workbuddy-ai-provider`: **0.1.15**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.1.14 max_tokens 32768 底线，探活改全量模型按序测试）
   - `workbuddy-token-usage`: **0.2.8**（0.2.8 让退役实例的 feed 导入协程在连续 3 轮关闭句柄后自行退出；0.2.7 修复宿主配置重载换句柄窗口导致的用量记录丢失；0.2.6 移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细与维度汇总展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
-- 当前时间：2026-10-13 (GMT+8)
+- 当前时间：2026-10-15 (GMT+8)
 
 ## 活动会话进展摘要
 
-- 当前会话（2026-10-14/15）：**zcode-provider 默认中国区 + 面板内无感验证领取额度（0.1.28 新增 → 0.1.29 修复配置缺陷），全链路发布生产**：
+- 当前会话（2026-10-15）：**zcode-provider 面板额度改用 `billing/balance` 取真实用量 + 领取失败文案友好化（0.1.30），全链路发布生产**：
+  - 需求背景：用户报两个生产问题——① 面板点「🎁 领取额度」toast 显示 `claim failed: no permission`；② 生产多个账号额度已被消耗，但面板额度从不刷新、恒显示最满（绿色进度条 100%）。
+  - **问题②根因**：额度数据源 `GET /api/v1/zcode-plan/billing/current` **只返回授予量 `grant_units`，没有任何已用/剩余字段**；面板 `quotaHTML` 还硬编码 `width:100%`。真实用量在 `GET /api/v1/zcode-plan/billing/balance?app_version=<v>`（`data.balances[]` 含 `total_units`/`used_units`/`remaining_units`/`available_units`），该端点**强制要求设备三头** `X-Platform` / `X-Device-Mid` / `X-ZCode-App-Version`，缺任一 → `400 code 3001 parameter error`——这正是此前误判「balance 不可用」的原因。
+  - **问题①根因**：上游 `billing/preview` 当前对全部账号返回 `plans:[]`（未下发可领取计划），claim 走 fallback planId 被上游业务层拒为英文 `no permission`，属**上游活动态非插件缺陷**。
+  - **0.1.30 实施（10 文件）**：① `quota.go` — `fetchAccountQuota` 改为**主走 balance**（携带设备三头 + `app_version`）取真实已用/剩余，失败回退 current；快照新增 `total_used`/`total_remain`/`has_usage`/`source` 与逐 entitlement 用量字段；新增 `fetchQuotaFromEndpoint(jwt, endpoint, withUsage)` / `balanceEndpoint()` / `balanceURLForTest`。② `panel.html` — `quotaHTML` 按「剩余/授予」渲染进度条（≤30% 转黄、≤10% 转红），卡片与汇总区展示「已用/剩余」，无用量通道时标注「每日授予额度（暂未取到用量）」并以半透明满格条区分。③ `management.go` — 新增 `friendlyClaimError()` 把 `no permission`/`1003`/`1001` 翻译为可读中文。④ 测试 `quota_test.go` 新增 `TestFetchAccountQuota_ParsesBalanceUsage` / `TestFriendlyClaimError`，`TestFetchAccountQuota_ParsesPlan` 改为验证 balance→current 回退。
+  - **发布闭环**：提交 `a49101a`(fix 10 文件) → CI `38607038707` success → `1b80e6f`(assets 7/7 sha256 OK) → `6fd166d`(registry)；远端 raw URL 全部 200；生产热重载 `active_version=0.1.30 retired_version=0.1.29`，**零容器重启**。
+  - **生产验证**：`/credits` 返回 `source=balance has_usage=True` 且用量真实（`zcode-1185ceb16c25ae48` used=5000221 remain=2999779；`zcode-d7a0cb4afa8f77c0` used=5000019 remain=2999981）；逐 entitlement 明细 `GLM-5.3 used=19 remaining=2999981` / `GLM-5.3-Flash used=5000000 remaining=0`，确认关联正确；两种 device-mid 返回相同数据，证明设备中间层不影响用量。
+  - 门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；哨兵变异（禁用用量解析）精确 FAIL 后恢复全绿；`gofmt -l` LF 归一后空；`POLLUTION: PASS`；`STYLE: PASS`（`doc/6-review/2026-10-15_025500_*`）。
+  - 文档：Bug 主文档 `doc/4-bugs/2026-10-15_023000_zcode面板额度永远显示满额根因诊断.md`、测试主文档 `doc/5-tests/2026-10-15_024500_zcode面板额度真实用量修复测试.md`；知识库《Z.ai-ZCode-OAuth授权契约》新增第七节 billing/balance 用量契约。
+
+- 上一会话（2026-10-14/15）：**zcode-provider 默认中国区 + 面板内无感验证领取额度（0.1.28 新增 → 0.1.29 修复配置缺陷），全链路发布生产**：
   - 需求背景：用户要求「默认中国区，OAuth 登录页也默认中国区授权」，并「通过逆向工程激活额度，不用手动去 zcode 客户端登录激活」；经确认范围收敛为「只做无感验证（不做交互滑块）」+「先预研可行性」。
   - 预研（`doc/5-tests/2026-10-14_151500_*`）：逆向 asar 3.15.1 + 真实浏览器实测，证实官方用的就是标准阿里云无感验证 SDK，**插件端可自主领取**（推翻此前「只能引导用户去桌面客户端」的结论）；识别三项此前遗漏的必需项：`region=sgp`（非 configs 字面下发的 `cn`）、`plan_id` 带批次后缀 `zcode-v3-start-plan-0817`（须由 `/billing/preview` 动态解析）、`X-Device-Mid`（UUID v4）。
   - **0.1.28 实施**：① 默认中国区——面板下拉 `bigmodel` 置首位 + `resolveOAuthProvider`/`providerFromMetadata` 空值默认 `bigmodel`（显式 `zai` 仍可用）；② claim 契约——新增 `fetchClaimablePlanID()` 动态解析 planId、`zcodeDeviceMid()` 稳定 UUID、claim 请求补 `X-Device-Mid`；③ 面板新增 `runTracelessVerification` + `claimQuota`，未领取卡片按钮改「🎁 领取额度」，原「📖 领取指引」降级兜底。发布链 `89837d9`→CI `38590147511`→`80eadd8`(assets)→`9635fa0`(registry)；生产热重载 `active_version=0.1.28 retired_version=0.1.27`，零容器重启。
