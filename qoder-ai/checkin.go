@@ -54,6 +54,12 @@ func nextCheckinTime(now time.Time) time.Time {
 	return earliest
 }
 
+// schedulerLoop 驱动签到与 token 保活共用的定时唤醒：到达并集时刻后执行签到，
+// 命中保活窗口时同 tick 执行一次 token 刷新。
+//
+// [参数] stop: 关闭信号通道，收到后停止定时器并退出循环。
+// [返回] 无（阻塞循环，随 stop 关闭返回）。
+// 最近修改时间：2026-10-14 23:26:48；改动原因：签到恢复每 4 小时，移除已冗余的时段门控。
 func schedulerLoop(stop chan struct{}) {
 	for {
 		next := nextCheckinTime(time.Now())
@@ -63,11 +69,7 @@ func schedulerLoop(stop chan struct{}) {
 			timer.Stop()
 			return
 		case <-timer.C:
-			// 签到只在 checkinHours 时段触发：nextCheckinTime 取 checkin 与
-			// keepalive 两表并集唤醒，若不门控，签到会在 keepalive 时刻重复执行。
-			if shouldRunCheckinNow(time.Now()) {
-				runAutoCheckin()
-			}
+			runAutoCheckin()
 			// Fire keepalive if the current tick falls within its scheduled
 			// window (e.g. 04:00 keepalive fires on the 04:00 tick even though
 			// the previous checkin tick was 00:00).
@@ -76,19 +78,6 @@ func schedulerLoop(stop chan struct{}) {
 			}
 		}
 	}
-}
-
-// shouldRunCheckinNow reports whether the current local time falls within one
-// hour after any scheduled checkin hour today. Guards runAutoCheckin against
-// the keepalive-only ticks produced by the shared timer schedule.
-func shouldRunCheckinNow(now time.Time) bool {
-	for _, h := range checkinHours {
-		t := time.Date(now.Year(), now.Month(), now.Day(), h, 0, 0, 0, now.Location())
-		if !now.Before(t) && now.Before(t.Add(time.Hour)) {
-			return true
-		}
-	}
-	return false
 }
 
 // runAutoCheckin is the scheduled lifecycle tick (every 4 hours: 00:00 / 04:00 / 08:00 / 12:00 / 16:00 / 20:00).

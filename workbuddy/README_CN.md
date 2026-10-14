@@ -18,7 +18,7 @@
 - **积分生命周期** — CN 账号耗尽自动 `disabled`，签到回血后自动恢复；
   Global 账号耗尽**删除** auth 文件（一次性 trial 额度）。Executor 遇到硬
   积分错误立即触发 reconcile。
-- **每日签到** — CN 账号每天 09:00 和 21:00 自动签到（可配置）。面板可手动
+- **每日签到** — CN 账号每 4 小时自动签到一次（00/04/08/12/16/20 本地时间，可配置）。面板可手动
   全部签到。Per-account 互斥锁防止多浏览器标签并发重复签到。
 - **Trial 领取** — Global 账号可在面板领取一次性 250 积分专家加油包。
 - **积分面板** — 内嵌面板 `/v0/resource/plugins/workbuddy/panel`，含积分
@@ -99,7 +99,7 @@ plugins:
     workbuddy:
       enabled: true
 
-      # CN 账号每日自动签到（默认 true），09:00 和 21:00 本地时间。
+      # CN 账号每日自动签到（默认 true），每 4 小时一次（00/04/08/12/16/20 本地时间）。
       checkin_auto: true
 
       # 积分生命周期：CN 耗尽禁用 / Global 耗尽删除 / CN 回血恢复（默认 false）。

@@ -227,7 +227,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 		"scheduler_mode": loadedSchedulerMode(),
 		"checkin_auto":   auto,
 		"lifecycle_auto": lifecycleEnabled(),
-		"schedule":       []string{"10:00", "22:00"},
+		"schedule":       []string{"00:00", "04:00", "08:00", "12:00", "16:00", "20:00"},
 		"server_time":    time.Now().Format("2006-01-02 15:04:05"),
 		"summary":        sum,
 	}

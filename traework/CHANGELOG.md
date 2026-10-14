@@ -1,5 +1,14 @@
 # TraeWork Plugin Changelog
 
+## 0.2.13
+
+### Chore - 修正面板签到时刻文案漂移（后端调度本为每 4 小时）
+
+- 变更要点:
+  1. `panel.html` 副标题、自动签到开关提示与开关成功提示由 `09:00/21:00` 修正为 `00/04/08/12/16/20`：后端 `autoCheckinTimes` 一直是每 4 小时六槽，面板文案自早期版本起即未同步，属纯文案漂移修正，调度行为无任何变化。
+- 验证: 面板内联 JS 经 vm + DOM 桩真实执行无 ReferenceError；`cgo-shim-build.py traework` build/vet/test 全绿（文案改动经 `go:embed` 进二进制，无 Go 逻辑变更）。
+- 涉及文件: traework/panel.html、traework/VERSION
+
 ## 0.2.12
 
 ### Chore - 定时探活降频至 4 小时并修正失败账号节流缺陷

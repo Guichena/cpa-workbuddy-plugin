@@ -14,9 +14,8 @@ import (
 	"time"
 )
 
-// check-in schedule: 每天 10:00 与 22:00（本地时间）。
-// 2026-10-12 由每 4 小时（[0,4,8,12,16,20]）收敛为两次，减少上游 billing 调用。
-var checkinHours = []int{10, 22}
+// check-in schedule: 每 4 小时一次，本地时间 00:00/04:00/08:00/12:00/16:00/20:00。
+var checkinHours = []int{0, 4, 8, 12, 16, 20}
 
 // plugin-level config decoded from plugin.register/reconfigure config_yaml.
 var (

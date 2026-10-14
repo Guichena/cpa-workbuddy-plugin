@@ -23,8 +23,8 @@ dashboard.
   re-enabled when a check-in restores them. Global accounts are deleted on
   exhaustion (one-shot trial quota). Hard credit errors from the executor
   trigger an immediate reconcile.
-- **Daily check-in** — CN accounts are checked in at 09:00 and 21:00 local
-  time (configurable). Manual "check in all" from the panel. Per-account
+- **Daily check-in** — CN accounts are checked in every 4 hours (00/04/08/12/16/20
+  local time, configurable). Manual "check in all" from the panel. Per-account
   mutex prevents duplicate claims from racing browser tabs.
 - **Trial claim** — Global accounts can claim the one-time 250-credit expert
   trial pack from the panel.
@@ -114,7 +114,7 @@ plugins:
       enabled: true
 
       # Daily check-in automation for CN accounts (default true).
-      # Runs at 09:00 and 21:00 local time.
+      # Runs every 4 hours at 00/04/08/12/16/20 local time.
       checkin_auto: true
 
       # Credit lifecycle: disable CN on exhaust, delete Global on exhaust,

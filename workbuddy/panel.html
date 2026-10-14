@@ -224,7 +224,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 <body>
 <div class="wrap">
   <h1>WorkBuddy 账号面板</h1>
-  <div class="sub">积分余额 · 每日签到（09:00/21:00）· 耗尽自动关/删</div>
+  <div class="sub">积分余额 · 每日签到（00/04/08/12/16/20）· 耗尽自动关/删</div>
   <div id="authBox" class="card" style="display:none;margin-bottom:16px">
     <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
     <div style="display:flex;gap:8px">
@@ -239,7 +239,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     <button class="sec" id="unfreezeAllBtn" onclick="unfreezeAll(this)" title="将异常池中所有账号解除冻结（每日 0 点也会自动做）">全部解冻</button>
     <input id="searchInput" class="search" type="search" placeholder="搜索 nickname / UID" oninput="onSearchChange(this.value)" autocomplete="off">
 <button class="sec sort-btn" id="sortBtn" onclick="toggleSort(this)" title="当前：创建时间倒序（新→旧），点击切积分升序">创建 ↓</button>
-    <label class="toggle" title="每日 09:00 / 21:00 定时签到"><input type="checkbox" id="autoToggle" onchange="toggleAuto(this.checked)"> 自动签到</label>
+    <label class="toggle" title="每日 00/04/08/12/16/20 点定时签到"><input type="checkbox" id="autoToggle" onchange="toggleAuto(this.checked)"> 自动签到</label>
     <span class="toggle" id="svtime"></span>
     <span class="toggle ref-progress" id="refreshProgress" style="display:none"></span>
   </div>

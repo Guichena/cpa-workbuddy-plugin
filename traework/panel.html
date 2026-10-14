@@ -221,7 +221,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 <body>
 <div class="wrap">
   <h1>TraeWork 账号面板</h1>
-  <div class="sub">积分余额 · 每日签到（09:00/21:00）· 失败计数 · 会话路由 · 生命周期</div>
+  <div class="sub">积分余额 · 每日签到（00/04/08/12/16/20）· 失败计数 · 会话路由 · 生命周期</div>
   <div id="authBox" class="card" style="display:none;margin-bottom:16px">
     <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
     <div style="display:flex;gap:8px">
@@ -237,7 +237,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     <button class="sec" onclick="runKeepalive(this)" title="手动刷新全部账号的 access token（临近过期才刷新）">保号刷新</button>
     <input id="searchInput" class="search" type="search" placeholder="搜索 nickname / UID" oninput="onSearchChange(this.value)" autocomplete="off">
     <button class="sec sort-btn" id="sortBtn" onclick="toggleSort(this)" title="按可用积分切换升序/降序">积分 ↕</button>
-    <label class="toggle" title="本地时间 09:00 / 21:00 自动签到"><input type="checkbox" id="autoToggle" onchange="toggleAuto(this.checked)"> 自动签到</label>
+    <label class="toggle" title="本地时间 00/04/08/12/16/20 自动签到"><input type="checkbox" id="autoToggle" onchange="toggleAuto(this.checked)"> 自动签到</label>
     <span class="toggle" id="svtime"></span>
     <span class="toggle ref-progress" id="refreshProgress" style="display:none"></span>
   </div>
@@ -871,7 +871,7 @@ async function toggleAuto(on){
   try{
     const r=await api("/checkin/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:on})});
     if(r.error)toast("设置失败","err",r.error);
-    else toast("自动签到","ok",on?"已开启（09:00/21:00）":"已关闭");
+    else toast("自动签到","ok",on?"已开启（00/04/08/12/16/20）":"已关闭");
   }catch(e){toast("设置失败","err",e.message);document.getElementById("autoToggle").checked=!on;}
 }
 async function selectAuth(authIndex,btn){

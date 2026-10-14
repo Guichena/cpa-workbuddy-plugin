@@ -1,5 +1,16 @@
 # QoderWork Plugin Changelog
 
+## 0.9.38
+
+### Feat - 签到恢复每 4 小时，与其余签到插件统一节奏
+
+- 变更要点:
+  1. `usage_config.go` 的 `checkinHours` 由 `[10, 22]` 恢复为 `[0, 4, 8, 12, 16, 20]`：与 `keepaliveHours` 取值重新一致，签到节奏回到本地时间每 4 小时一次。
+  2. `checkin.go` 移除 `shouldRunCheckinNow` 时段门控：该门控仅在「签到表 ≠ 保活表」时才有意义（当初收敛为 10:00/22:00 而保活仍为六槽，共享定时器会在保活时刻误触发签到）；两表取值一致后并集唤醒即等于签到表本身，门控退化为恒真死代码，删除后与 workbuddy / workbuddy-ai / traework 同构。
+  3. 面板文案与 `schedule` 字段同步：`panel.go` 的 `schedule` 改为六槽、`panel.html` 副标题与开关提示改为 `00/04/08/12/16/20`。
+- 验证: `checkin_schedule_test.go` 重写为锁定六槽表 + 验证 `nextCheckinTime` 并集唤醒与跨天顺延；`cgo-shim-build.py qoderwork` build/vet/test 全绿；面板内联 JS 经 vm + DOM 桩真实执行无 ReferenceError。
+- 涉及文件: qoderwork/checkin.go、qoderwork/usage_config.go、qoderwork/panel.go、qoderwork/panel.html、qoderwork/checkin_schedule_test.go、qoderwork/VERSION
+
 ## 0.9.37
 
 ### Fix - 对齐 workbuddy 补齐三处功能遗漏（tool_choice 规整 / 计费重试 / 推理强度上报）

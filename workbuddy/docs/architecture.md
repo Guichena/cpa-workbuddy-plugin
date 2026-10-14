@@ -93,7 +93,7 @@ client → CPA → plugin.handleExecStream
   → host calls UsagePlugin.HandleUsage → handleUsage → forwardUsageToCPAMP (sync)
 ```
 
-### Daily check-in (CN, 09:00 / 21:00)
+### Daily check-in (CN, every 4 hours: 00/04/08/12/16/20)
 
 ```
 schedulerLoop → runAutoCheckin (sem=4 concurrent)
