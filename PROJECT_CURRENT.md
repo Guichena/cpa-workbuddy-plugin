@@ -17,10 +17,10 @@
 ## 项目概况
 
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
-  - `zcode-provider`: **0.1.26**（修复非法 provider 在 HTTP 入口被静默回退 zai 的入口校验失效缺陷；0.1.25 支持 bigmodel 中国区 OAuth 授权 + 面板双站选择；0.1.24 定时探活降频至 4 小时并修正失败账号节流缺陷）
+  - `zcode-provider`: **0.1.27**（修复 bigmodel 推理端点误用 `open.bigmodel.cn` 致 401，改为与国际站共用 `zcode.z.ai`；0.1.26 修复非法 provider 在 HTTP 入口被静默回退 zai；0.1.25 支持 bigmodel 中国区 OAuth 授权 + 面板双站选择）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
-  - `qoderwork-provider`: **0.9.35**（max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00；移除自动探活与 test_failed）
-  - `qoder-ai-provider`: **0.1.15**（max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册；签到 10:00/22:00；移除自动探活与 test_failed）
+  - `qoderwork-provider`: **0.9.36**（tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00）
+  - `qoder-ai-provider`: **0.1.16**（tools 对齐修复；0.1.15 max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册；签到 10:00/22:00）
   - `traework-provider`: **0.2.12**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.2.11 max_tokens 32768 底线 + payload 层同步，探活改全量模型按序测试）
   - `workbuddy-provider`: **0.15.9**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.15.8 max_tokens 32768 底线，探活改全量模型按序测试）
   - `workbuddy-ai-provider`: **0.1.15**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.1.14 max_tokens 32768 底线，探活改全量模型按序测试）
@@ -39,8 +39,9 @@
   - **0.1.25 发布闭环（本会话完成）**：bump `0.1.25` → 提交 `797d807` → push → CI run `38566121254` success → 下载 8 资产（7/7 sha256 校验 OK）→ `acbd5ed`(assets) → `0b86bef`(registry) → `170c25a`(prune 0.1.24)；远端 7/7 artifacts ALL PASS 无旧版残留；生产 `plugin-store install` **热重载成功**（`active_version=0.1.25 retired_version=0.1.24`，零容器重启），落盘 `.so` sha256 `cef55263…` 与本地 zip 逐字节一致；accounts/panel 均 200，面板含 `oauthProvider` 下拉与 `providerBadge`。
   - **0.1.26 缺陷修复（生产验证中发现，用户决策前向修复）**：生产直连三臂复测发现 `POST /activate-start` 传非法 provider（`zhipu`）**静默回退为 `zai`** 返回国际站授权地址，违反 AC-006。根因：入口先 `normalizeProviderFamily()`（语义为「非法值回退 zai」）再校验，非法值被提前改写致 `isValidOAuthProvider()` 永不触发。修复：新增 `resolveOAuthProvider(raw)` **先校验后归一化**，`handleActivateStart` 非法值返回 400，`providerFromMetadata` 改为原样透传；新增 3 用例 + 哨兵反证 3 例精确 FAIL。Bug 文档 `doc/4-bugs/2026-10-14_210000_*`。
   - **0.1.26 发布闭环（本会话完成）**：提交 `cbbca35`（fix 9 文件）→ push → CI run `38569617734` success → 8 资产下载 7/7 校验 OK → `0bd01d7`(assets) → `287e490`(registry) → `334bef9`(prune 0.1.25)；远端 7/7 ALL PASS 无旧版残留；生产热重载 `active_version=0.1.26 retired_version=0.1.25`，零容器重启；落盘 `.so` sha256 `a951e3fa…` 与本地 zip 逐字节一致；**生产三臂复测**：`bigmodel`→`bigmodel.cn`、`zai`→`chat.z.ai`（3/3）、`zhipu`→**HTTP 400 + 明确错误**（缺陷确认修复）。
+  - **0.1.27 修复（GAP-006，本会话完成）**：CYCLE-3 发现 bigmodel 推理稳定 401。根因（asar 逆向 + 生产对照实验双重证据）：0.1.25 为 bigmodel 选的 `open.bigmodel.cn/api/anthropic` **不接受 ZCode OAuth JWT**（实测该端点对 bigmodel 与 zai 两类账号 JWT 均 401）；同一 bigmodel JWT 打 `zcode.z.ai/api/v1/zcode-plan/anthropic` 则**鉴权通过**（同一 IP 对照：无效 JWT→401、有效 JWT→405/3012 或 429/3009，证明鉴权先于风控）。asar 佐证：`open.bigmodel.cn` 仅服务 `bigmodelIndividualCodingPlan`（付费个人版），`bigmodelStartPlan`（免费版）走默认端点且 `resolveCurrent` 中 start-plan **不分 family**。修复：`resolveUpstreamTargets` 移除 bigmodel 专用端点分支（删除 `bigmodelCodingPlanBaseURL`），start-plan 形态下两站共用 `zcode.z.ai`。提交链 `c19493b`(fix 8 文件) → CI run `38576894736` success → `bcb1f76`(assets) → `22ec7da`(registry) → `72498f1`(prune 0.1.26)；远端 7/7 ALL PASS；生产热重载 `active_version=0.1.27 retired_version=0.1.26`，零容器重启，落盘 `.so` sha256 `8b153250…` 逐字节一致；**生产复测**：bigmodel 探活由 **401 → 429/3009 与 405/3012**（鉴权通过），与 zai 账号行为**完全一致**。Bug 文档 `doc/4-bugs/2026-10-14_220000_*`。
   - 门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；哨兵变异精确 FAIL 后恢复全绿；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。
-  - 待办：**CYCLE-3 需用户提供真实 bigmodel 账号**（面板选「中国区」发起授权，在 `bigmodel.cn/login` 完成登录），解除 GAP-004（中国区是否自带每日额度）/ GAP-005（模型清单差异）并覆盖 AC-002。
+  - 待办：**GAP-004 / GAP-005 / GAP-006 均已解除**；上游 `zcode.z.ai` 对生产 IP 存在时段性 WAF（405/3012）与限流（429/3009），zai 账号同样受影响，属独立于本插件的外部因素，待观测（13:20 曾有 zai 推理成功 200/970ms 证明非永久封禁）。
 
 - 当前会话（2026-10-14）：**四插件（workbuddy/workbuddy-ai/traework/zcode）定时探活降频至 4 小时并修正失败账号节流缺陷，全链路发布生产**：
   - 需求背景：用户先问「真的需要定时探测吗」，选定「移除探活 + test_failed 机制」后中途改口为「探活还是留下，但 4 小时一次就够了，不要那么频繁」；最终方向为**保留探活与 test_failed 标签全链路，仅把节流间隔 30 分钟 → 4 小时**。
