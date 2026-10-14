@@ -1,5 +1,16 @@
 # QoderWork Plugin Changelog
 
+## 0.9.37
+
+### Fix - 对齐 workbuddy 补齐三处功能遗漏（tool_choice 规整 / 计费重试 / 推理强度上报）
+
+- 变更要点:
+  1. **tool_choice 形态规整（对齐 workbuddy `normalizeToolsInPlace`）**：`body.go` 新增 `normalizeToolChoice`，把客户端各形态的 tool_choice 归一为上游可识别的字符串——对象形 `{"type":"auto|required"}` → 字符串、`{"type":"function","function":{"name":"x"}}` → 函数名、`"none"` → 剥离整组 tools。此前 `alignToolsWithClient` 把 `tool_choice` 原样透传，而上游只认字符串形态：实测 `tool_choice:"none"` 时上游照常发出工具调用，与「禁用工具」意图相反。
+  2. **计费接口瞬时重试（对齐 workbuddy `billingCall`）**：`billing.go` 新增 `billingDo` 包装（300ms/900ms 退避，仅 5xx 与传输错误重试），应用于 `fetchCheckinStatus` / `fetchUserResource` / `fetchPaymentType` / `performCheckinCall`。此前单次直调，上游 5xx 或 host 桥接抖动会让面板积分与计划整行空白（stale-while-error 仅在已有前值时才兜底）。
+  3. **reasoning_effort 上报（对齐 workbuddy `reasoningEffortFromBody`）**：客户端请求的推理强度写入 usage feed，补齐 dashboard 用量明细的推理强度维度（此前恒为空，与 workbuddy 数据不可比）。该值不进上游 body（Qoder 模板无此字段位点）。
+- 验证: 新增 `tools_alignment_test.go` 4 个用例（tool_choice 归一矩阵 / none 抑制 / 对象形归一）+ `billing_retry_test.go` 4 个用例（5xx 重试成功 / 4xx 不重试 / 重试重建 Body / feed 上报）；哨兵反证三组均精确 FAIL 后复绿。
+- 涉及文件: qoderwork/body.go、qoderwork/billing.go、qoderwork/main.go、qoderwork/stream.go、qoderwork/tools_alignment_test.go、qoderwork/billing_retry_test.go、qoderwork/main.go、qoderwork/VERSION
+
 ## 0.9.36
 
 ### Fix - 模板硬编码工具集致普通问答被劫持为 agent 工具调用（推理「一小段就停」）

@@ -164,7 +164,7 @@ func parseQoderSSEChunk(line string) (string, bool) {
 // the outbound call and host transport policy applies. The host bridge emits
 // arbitrary 32KB chunks, so we adapt to io.Reader and keep the bufio.Scanner
 // SSE line framing unchanged.
-func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, streamID string, sseFramed bool, requestedModel, upstreamModel, authUID string, started time.Time, authID, accountLabel, sessionKey string) {
+func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, streamID string, sseFramed bool, requestedModel, upstreamModel, authUID string, started time.Time, authID, reasoningEffort, accountLabel, sessionKey string) {
 	// Always close the host stream exactly once on every exit path.
 	closed := false
 	closeOnce := func() {
@@ -221,7 +221,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 	for attempt := 0; attempt <= budget; attempt++ {
 		stream, statusCode, _, err := hostHTTPDoStream(curReq)
 		if err != nil {
-			publishUsage(requestedModel, upstreamModel, curAuthUID, started, usage.Detail{}, true, 0, err.Error(), "", 0, curAccountLabel, sessionKey)
+			publishUsage(requestedModel, upstreamModel, curAuthUID, started, usage.Detail{}, true, 0, err.Error(), reasoningEffort, 0, curAccountLabel, sessionKey)
 			noteAccountFailure(curAuthID, 0, err.Error())
 			streamEmitError(streamID, fmt.Sprintf("http_error: %v", err))
 			return
@@ -230,7 +230,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			// Drain the error body via the same bridge so the message is complete.
 			errPayload := readAllUpstreamErr(newHostStreamReader(stream))
 			stream.Close()
-			publishUsage(requestedModel, upstreamModel, curAuthUID, started, usage.Detail{}, true, statusCode, errPayload, "", 0, curAccountLabel, sessionKey)
+			publishUsage(requestedModel, upstreamModel, curAuthUID, started, usage.Detail{}, true, statusCode, errPayload, reasoningEffort, 0, curAccountLabel, sessionKey)
 			if isDailyCountExceeded(statusCode, errPayload) {
 				_ = triggerDailyCooldown("", curAuthID)
 			}
@@ -310,7 +310,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			if err := streamEmit(streamID, []byte(cleaned)); err != nil {
 				// Client disconnected / host closed stream — abort; do not report success.
 				stream.Close()
-				publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, 0, "stream_emit: "+err.Error(), "", collector.ttftNS(started), curAccountLabel, sessionKey)
+				publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, 0, "stream_emit: "+err.Error(), reasoningEffort, collector.ttftNS(started), curAccountLabel, sessionKey)
 				return
 			}
 			emitted = true
@@ -319,7 +319,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 		// surface it as an error frame and record the attempt as failed.
 		stream.Close()
 		if err := scanner.Err(); err != nil {
-			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, 0, err.Error(), "", collector.ttftNS(started), curAccountLabel, sessionKey)
+			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, 0, err.Error(), reasoningEffort, collector.ttftNS(started), curAccountLabel, sessionKey)
 			noteAccountFailure(curAuthID, 0, err.Error())
 			streamEmitError(streamID, fmt.Sprintf("upstream stream read error: %v", err))
 			return
@@ -332,7 +332,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 				_ = triggerDailyCooldown("", curAuthID)
 			}
 			noteAccountFailure(curAuthID, http.StatusForbidden, sseErr)
-			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, statusCode, sseErr, "", collector.ttftNS(started), curAccountLabel, sessionKey)
+			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, statusCode, sseErr, reasoningEffort, collector.ttftNS(started), curAccountLabel, sessionKey)
 			// 200 内业务错误帧与 HTTP 4xx 同责：零泄漏（emitted=false）且账号级
 			// 分类命中且预算允许时换号续试；已泄漏分片时换号会造成输出重复或
 			// 拼接错乱，只能透传错误收尾。
@@ -369,11 +369,11 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			// noteAccountFailure; no consecutive-failure bump, no freeze),
 			// not a success.
 			const emptyStreamErr = "upstream stream closed before first payload"
-			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, statusCode, emptyStreamErr, "", collector.ttftNS(started), curAccountLabel, sessionKey)
+			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, statusCode, emptyStreamErr, reasoningEffort, collector.ttftNS(started), curAccountLabel, sessionKey)
 			noteAccountFailure(curAuthID, statusCode, emptyStreamErr)
 			return
 		}
-		publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), false, 0, "", "", collector.ttftNS(started), curAccountLabel, sessionKey)
+		publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), false, 0, "", reasoningEffort, collector.ttftNS(started), curAccountLabel, sessionKey)
 		invalidateAccountCredits(curAuthID, curAuthUID)
 		resetAccountFailover(curAuthID)
 		return

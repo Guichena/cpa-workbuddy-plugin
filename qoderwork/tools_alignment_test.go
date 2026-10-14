@@ -101,3 +101,89 @@ func TestBuildQoderBody_EmptyClientTools_StripsTemplateTools(t *testing.T) {
 		t.Fatalf("空 tools 数组应等价于未声明, got %v", v)
 	}
 }
+
+// toolProbe 构造一个最小可用的客户端工具声明，供 tool_choice 用例复用。
+func toolProbe() []any {
+	return []any{map[string]any{
+		"type":     "function",
+		"function": map[string]any{"name": "get_weather", "parameters": map[string]any{"type": "object"}},
+	}}
+}
+
+// TestNormalizeToolChoice 覆盖 tool_choice 各形态的归一结果。
+// 回归背景：上游只认字符串形态，对象形与 "none" 会被静默忽略——实测
+// tool_choice:"none" 时上游照常发出工具调用，与「禁用工具」意图相反。
+func TestNormalizeToolChoice(t *testing.T) {
+	cases := []struct {
+		name         string
+		in           any
+		wantChoice   string
+		wantSuppress bool
+	}{
+		{"nil", nil, "", false},
+		{"空字符串", "", "", false},
+		{"字符串 auto", "auto", "auto", false},
+		{"字符串 required", "required", "required", false},
+		{"字符串 NONE 大写", "NONE", "", true},
+		{"对象 type=none", map[string]any{"type": "none"}, "", true},
+		{"对象 type=auto", map[string]any{"type": "auto"}, "auto", false},
+		{"对象 type=required", map[string]any{"type": "required"}, "required", false},
+		{"对象 type=function 带 function.name", map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}}, "get_weather", false},
+		{"对象 type=function 带顶层 name", map[string]any{"type": "function", "name": "search"}, "search", false},
+		{"对象 type=function 无名回退 auto", map[string]any{"type": "function"}, "auto", false},
+		{"对象 未知 type 视为缺省", map[string]any{"type": "weird"}, "", false},
+		{"非法类型（数字）视为缺省", 123, "", false},
+	}
+	for _, c := range cases {
+		gotChoice, gotSuppress := normalizeToolChoice(c.in)
+		if gotChoice != c.wantChoice || gotSuppress != c.wantSuppress {
+			t.Errorf("%s: normalizeToolChoice(%v) = (%q, %v), want (%q, %v)",
+				c.name, c.in, gotChoice, gotSuppress, c.wantChoice, c.wantSuppress)
+		}
+	}
+}
+
+// TestBuildQoderBody_ToolChoiceNone_SuppressesTools 验证客户端以 tool_choice=none
+// 明确禁用工具时，tools 与 tool_choice 均被剥离（上游不认 "none"，唯一可靠抑制）。
+func TestBuildQoderBody_ToolChoiceNone_SuppressesTools(t *testing.T) {
+	for _, tc := range []any{"none", map[string]any{"type": "none"}} {
+		req := &openAIRequest{
+			Model:      "qwen-3.8-max",
+			Messages:   []openAIMessage{{Role: "user", Content: "你好"}},
+			Tools:      toolProbe(),
+			ToolChoice: tc,
+		}
+		parsed := buildToolsProbe(t, req)
+		if v, present := parsed["tools"]; present {
+			t.Fatalf("tool_choice=%v 时应剥离 tools, got %v", tc, v)
+		}
+		if v, present := parsed["tool_choice"]; present {
+			t.Fatalf("tool_choice=%v 时应剥离 tool_choice, got %v", tc, v)
+		}
+	}
+}
+
+// TestBuildQoderBody_ToolChoiceObject_Normalized 验证对象形 tool_choice 被归一为
+// 上游可识别的字符串形态（原样透传对象会被上游静默忽略）。
+func TestBuildQoderBody_ToolChoiceObject_Normalized(t *testing.T) {
+	cases := []struct {
+		in   any
+		want string
+	}{
+		{map[string]any{"type": "auto"}, "auto"},
+		{map[string]any{"type": "required"}, "required"},
+		{map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}}, "get_weather"},
+	}
+	for _, c := range cases {
+		req := &openAIRequest{
+			Model:      "qwen-3.8-max",
+			Messages:   []openAIMessage{{Role: "user", Content: "北京天气"}},
+			Tools:      toolProbe(),
+			ToolChoice: c.in,
+		}
+		parsed := buildToolsProbe(t, req)
+		if got, _ := parsed["tool_choice"].(string); got != c.want {
+			t.Fatalf("tool_choice=%v 归一为 %q, want %q", c.in, got, c.want)
+		}
+	}
+}

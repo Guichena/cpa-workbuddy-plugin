@@ -128,23 +128,86 @@ func decodeOpenAIContent(raw json.RawMessage) (string, error) {
 // 与 agent 会话上下文，而客户端普通问答并不具备这些工具的执行回路；若不剥离，
 // 上游会把每次问答都当 agent 任务作答：先输出一句编排语，再发出工具调用并以
 // finish_reason=tool_calls 结束本轮，下游表现为「推理一小段就停、等用户继续」。
-// 因此：客户端未声明工具时剥离模板工具集，声明了则用客户端工具覆盖并透传
-// tool_choice，使真正的 agent 客户端仍获得完整工具回环。
+// 因此：客户端未声明工具时剥离模板工具集，声明了则用客户端工具覆盖。
+// tool_choice 由 normalizeToolChoice 归一后写入：上游只认字符串形态，客户端
+// 常见的对象形（{"type":"function",...}）与 "none" 会被静默忽略——实测
+// tool_choice:"none" 时上游照常发出工具调用，与「禁用工具」意图相反。
 // [参数] base: 模板解析后的 body 根对象（就地修改）；req: 客户端请求。
 // [返回] 无。
-// 最近修改时间 2026-10-14；改动原因：修复模板硬编码工具集致普通问答被劫持为 agent 工具调用
+// 最近修改时间 2026-10-14；改动原因：补齐 tool_choice 形态规整，修复 "none" 被上游忽略致工具抑制失效
 func alignToolsWithClient(base map[string]any, req *openAIRequest) {
-	if req != nil && len(req.Tools) > 0 {
-		base["tools"] = req.Tools
-		if req.ToolChoice != nil {
-			base["tool_choice"] = req.ToolChoice
-		} else {
-			delete(base, "tool_choice")
-		}
+	if req == nil || len(req.Tools) == 0 {
+		delete(base, "tools")
+		delete(base, "tool_choice")
 		return
 	}
-	delete(base, "tools")
-	delete(base, "tool_choice")
+	base["tools"] = req.Tools
+	choice, suppress := normalizeToolChoice(req.ToolChoice)
+	if suppress {
+		// tool_choice=none：上游不认该值，唯一可靠抑制是整组删除 tools。
+		delete(base, "tools")
+		delete(base, "tool_choice")
+		return
+	}
+	if choice != "" {
+		base["tool_choice"] = choice
+	} else {
+		delete(base, "tool_choice")
+	}
+}
+
+// normalizeToolChoice 把 OpenAI 各形态的 tool_choice 归一为上游可识别的字符串。
+// 覆盖四种形态：字符串（auto/none/required）、对象形
+// {"type":"auto|none|required|function", ...}、函数指定形（提取 name）、
+// 以及未知/非法值（视为缺省）。语义与 workbuddy 的 normalizeToolsInPlace 一致。
+// [参数] tc: 客户端 tool_choice 原值（any，可能为 nil/字符串/对象）。
+// [返回] choice: 归一后的字符串（"auto"/"required"/函数名；空表示无显式选择）；
+// suppress: 是否要求禁用工具（tool_choice=none）。
+// 最近修改时间 2026-10-14；改动原因：新增 tool_choice 形态规整（对齐 workbuddy）
+func normalizeToolChoice(tc any) (choice string, suppress bool) {
+	switch v := tc.(type) {
+	case nil:
+		return "", false
+	case string:
+		s := strings.ToLower(strings.TrimSpace(v))
+		switch s {
+		case "none":
+			return "", true
+		case "auto", "required":
+			return s, false
+		case "":
+			return "", false
+		default:
+			// 非标准字符串（含具体函数名）原样透传，上游按函数名处理。
+			return strings.TrimSpace(v), false
+		}
+	case map[string]any:
+		typ, _ := v["type"].(string)
+		typ = strings.ToLower(strings.TrimSpace(typ))
+		switch typ {
+		case "none":
+			return "", true
+		case "auto", "required":
+			return typ, false
+		case "function":
+			name := ""
+			if fn, ok := v["function"].(map[string]any); ok {
+				name, _ = fn["name"].(string)
+			}
+			if name == "" {
+				name, _ = v["name"].(string)
+			}
+			name = strings.TrimSpace(name)
+			if name != "" {
+				return name, false
+			}
+			return "auto", false
+		default:
+			return "", false
+		}
+	default:
+		return "", false
+	}
 }
 
 // openAIRequest is the CPA-facing chat completion request.

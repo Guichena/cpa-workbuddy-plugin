@@ -5,13 +5,58 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// billingRetryDelays 是计费类 GET/POST 的瞬时错误退避序列（对齐 workbuddy
+// management.go 的同名常量）：仅 5xx 与传输错误重试，4xx 与业务错误立即返回。
+var billingRetryDelays = []time.Duration{300 * time.Millisecond, 900 * time.Millisecond}
+
+// billingDo 发送一次计费类请求，对上游 5xx / 传输错误做有限退避重试。
+// 计费链路（quota/plan/campaigns）的偶发 5xx 或 host 桥接抖动若不做重试，
+// 会让面板的积分与计划整行空白（stale-while-error 仅在已有前值时才兜底，
+// 首刷与 force 刷新无保护）。
+// [参数] req: 待发送请求；reqBody: 请求体字节（用于每次重试重建 Body，
+// 因 hostHTTPDo 会消费 req.Body）。
+// [返回] hostHTTPResponse: 最终响应；error: 传输错误（含重试后仍失败）。
+// 最近修改时间：2026-10-14；改动原因：补齐计费接口瞬时重试（对齐 workbuddy billingCall）
+func billingDo(req *http.Request, reqBody []byte) (*hostHTTPResponse, error) {
+	var (
+		resp *hostHTTPResponse
+		err  error
+	)
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			time.Sleep(billingRetryDelays[attempt-1])
+		}
+		// hostHTTPDo 读取并关闭 req.Body，重试前必须重建。
+		if reqBody != nil {
+			req.Body = io.NopCloser(bytes.NewReader(reqBody))
+		}
+		resp, err = hostHTTPDo(req)
+		transient := err != nil || resp.StatusCode >= 500
+		if !transient || attempt >= len(billingRetryDelays) {
+			break
+		}
+	}
+	if err != nil {
+		// 可观测性：计费链路静默失败会让账号 note 停留在「积分未知」且无线索。
+		log.Printf("[qoder-ai] billing %s failed: %v", req.URL.Path, err)
+		return nil, err
+	}
+	if resp.StatusCode >= 500 {
+		log.Printf("[qoder-ai] billing %s upstream http %d after retries", req.URL.Path, resp.StatusCode)
+	}
+	return resp, nil
+}
 
 func billingHeaders(req *http.Request, sa *storedAuth) {
 	// Qoder AI billing endpoints authenticate with the active token as a
@@ -79,7 +124,7 @@ func fetchCheckinStatus(sa *storedAuth) (*checkinSummary, error) {
 		return nil, err
 	}
 	campaignHeaders(req, sa)
-	resp, err := hostHTTPDo(req)
+	resp, err := billingDo(req, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +209,7 @@ func fetchUserResource(sa *storedAuth) (*creditsSummary, error) {
 		return nil, err
 	}
 	billingHeaders(req, sa)
-	resp, err := hostHTTPDo(req)
+	resp, err := billingDo(req, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +251,7 @@ func fetchPaymentType(sa *storedAuth) string {
 		return ""
 	}
 	billingHeaders(req, sa)
-	resp, err := hostHTTPDo(req)
+	resp, err := billingDo(req, nil)
 	if err != nil || resp.StatusCode >= 400 {
 		return ""
 	}
@@ -239,7 +284,8 @@ func performCheckinCall(sa *storedAuth, campaignID string) (map[string]any, erro
 			return nil, err
 		}
 		campaignHeaders(req, sa)
-		resp, err := hostHTTPDo(req)
+		// claim 语义幂等（重复领取返回 replayed=true），5xx 重试安全。
+		resp, err := billingDo(req, []byte("{}"))
 		if err != nil {
 			return map[string]any{"success": false, "message": err.Error()}, nil
 		}

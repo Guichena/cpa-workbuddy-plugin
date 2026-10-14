@@ -344,7 +344,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.1.16"
+var version = "0.1.17"
 
 func wbRegistration() registration {
 	return registration{
@@ -693,7 +693,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 	// "会话" (session) column. Extracted from the same priority chain
 	// scheduler.pick uses (extractSessionKeyFromSources here,
 	// extractSessionKey on the scheduler side). qoderwork does not rewrite
-	// reasoning_effort, so the feed's reasoning_effort field stays "".
+	// the client's reasoning_effort; the value is reported verbatim to the feed.
 	sessionKey := extractSessionKeyFromSources(req.Headers, req.Metadata)
 	// Build the Qoder AI agent_chat_generation body from the OpenAI request,
 	// then QoderEncoding-encode it. The template embeds a 10657-token system
@@ -707,9 +707,12 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, 0, "payload parse: "+err.Error(), "", 0, accountLabel, sessionKey)
 		return nil, fmt.Errorf("payload parse: %w", err)
 	}
+	// 客户端请求的推理强度：写入 usage feed 供 dashboard 展示。该值不进上游
+	// body（Qoder 模板无此字段位点），仅用于对齐 workbuddy 的用量维度。
+	reasoningEffort := strings.TrimSpace(qwReq.ReasoningEffort)
 	body, err := buildQoderBody(qwReq, upstreamModel, uiUserType(nil))
 	if err != nil {
-		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, 0, "body build: "+err.Error(), "", 0, accountLabel, sessionKey)
+		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, 0, "body build: "+err.Error(), reasoningEffort, 0, accountLabel, sessionKey)
 		return nil, fmt.Errorf("body build: %w", err)
 	}
 	encodedBody := qoderEncode(body)
@@ -807,7 +810,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 		// After exhausting retries (or a non-account-level error), mirror
 		// the historical accounting path: note the failure on the LAST
 		// account actually contacted and propagate the error.
-		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, parseUpstreamStatusFromErr(completionErr), completionErr.Error(), "", 0, accountLabel, sessionKey)
+		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, parseUpstreamStatusFromErr(completionErr), completionErr.Error(), reasoningEffort, 0, accountLabel, sessionKey)
 		reconcileAfterExecutorError(usedAuthID, parseUpstreamStatusFromErr(completionErr), completionErr.Error())
 		statusCode := parseUpstreamStatusFromErr(completionErr)
 		if isDailyCountExceeded(statusCode, completionErr.Error()) {
@@ -824,7 +827,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 	}
 	// Success path: credit invalidation + failover counter reset use
 	// the actual account that served the request.
-	publishUsage(req.Model, upstreamModel, authUID, started, usageDetailFromCompletion(completion), false, 0, "", "", 0, accountLabel, sessionKey)
+	publishUsage(req.Model, upstreamModel, authUID, started, usageDetailFromCompletion(completion), false, 0, "", reasoningEffort, 0, accountLabel, sessionKey)
 	invalidateAccountCredits(usedAuthID, authUID)
 	resetAccountFailover(usedAuthID)
 	return okEnvelope(pluginapi.ExecutorResponse{Payload: completion})
@@ -918,9 +921,12 @@ func handleExecStream(raw []byte) ([]byte, error) {
 		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, 0, "payload parse: "+err.Error(), "", 0, accountLabel, sessionKey)
 		return nil, fmt.Errorf("payload parse: %w", err)
 	}
+	// 客户端请求的推理强度：写入 usage feed 供 dashboard 展示。该值不进上游
+	// body（Qoder 模板无此字段位点），仅用于对齐 workbuddy 的用量维度。
+	reasoningEffort := strings.TrimSpace(qwReq.ReasoningEffort)
 	body, err := buildQoderBody(qwReq, upstreamModel, uiUserType(nil))
 	if err != nil {
-		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, 0, "body build: "+err.Error(), "", 0, accountLabel, sessionKey)
+		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, 0, "body build: "+err.Error(), reasoningEffort, 0, accountLabel, sessionKey)
 		return nil, fmt.Errorf("body build: %w", err)
 	}
 	encodedBody := qoderEncode(body)
@@ -933,7 +939,7 @@ func handleExecStream(raw []byte) ([]byte, error) {
 		collector := &sseUsageCollector{}
 		chunks, statusCode, errCollect := collectUpstreamStreamQoder(encodedBody, sa, upstreamModel, sseFramed, collector)
 		if errCollect != nil {
-			publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, statusCode, errCollect.Error(), "", collector.ttftNS(started), accountLabel, sessionKey)
+			publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, statusCode, errCollect.Error(), reasoningEffort, collector.ttftNS(started), accountLabel, sessionKey)
 			// Unlike the workbuddy plugin, collectUpstreamStreamQoder does not
 			// run reconcileByUID internally — handle both cases here.
 			// statusCode=0 → transport failure, failover note only;
@@ -949,7 +955,7 @@ func handleExecStream(raw []byte) ([]byte, error) {
 			}
 			return nil, errCollect
 		}
-		publishUsage(req.Model, upstreamModel, authUID, started, collector.detail(), false, 0, "", "", collector.ttftNS(started), accountLabel, sessionKey)
+		publishUsage(req.Model, upstreamModel, authUID, started, collector.detail(), false, 0, "", reasoningEffort, collector.ttftNS(started), accountLabel, sessionKey)
 		invalidateAccountCredits(req.AuthID, authUID)
 		resetAccountFailover(req.AuthID)
 		return okEnvelope(streamResponse{Headers: headers, Chunks: chunks})
@@ -974,7 +980,7 @@ func handleExecStream(raw []byte) ([]byte, error) {
 		streamClose(req.StreamID)
 		return okEnvelope(streamResponse{Headers: headers})
 	}
-	go pumpUpstreamStream(httpReq, cancel, req.StreamID, sseFramed, req.Model, upstreamModel, authUID, started, req.AuthID, accountLabel, sessionKey)
+	go pumpUpstreamStream(httpReq, cancel, req.StreamID, sseFramed, req.Model, upstreamModel, authUID, started, req.AuthID, reasoningEffort, accountLabel, sessionKey)
 	return okEnvelope(streamResponse{Headers: headers})
 }
 
