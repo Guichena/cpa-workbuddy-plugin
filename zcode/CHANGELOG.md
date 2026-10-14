@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.25] - 2026-10-14
+
+### Added
+- **支持 bigmodel（中国区）OAuth 授权，与国际站 `zai` 双 provider 共存**：
+  - OAuth 授权链路 `provider` 参数化：`startAccountOAuth` / `zaiCLIInit` / `settleZaiPollResult` / `saveZaiAccount` 全链接受 `provider`（`zai` / `bigmodel`），未知取值返回明确错误，不静默回退。
+  - `StoredAuth` 新增 `provider_family` 字段（缺省视为 `zai`，向后兼容）；`normalizeProviderFamily` / `providerFamilyOf` 统一归一化。
+  - 上游端点按 family 分支：`resolveUpstreamTargets` 在 bigmodel 下走 `open.bigmodel.cn/api/anthropic`；业务令牌端点 `businessLoginEndpointFor` 按 family 隔离并分键缓存。
+  - 面板工具栏新增 provider 下拉（国际站 / 中国区，默认 `zai`），`openOAuthBridge()` 透传选中值；账号卡片新增归属徽标 `providerBadge(a)`，后端 `accountSummary` 透出 `provider_family`。
+  - 新增 `provider_family_test.go`（8 例）、`upstream_target_test.go`（6 例）与 `TestHandleListAccounts_ExposesProviderFamily`。
+- 修正面板回归脚本阶段 1「无额度卡片」断言长期失配（实现已改为「未领取」提示，断言仍停在旧措辞）。
+
 ## [0.1.24] - 2026-10-14
 
 ### Changed
