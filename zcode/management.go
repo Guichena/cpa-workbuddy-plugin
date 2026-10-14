@@ -547,6 +547,28 @@ func handleRefreshStatus() ([]byte, error) {
 	return makeHTTPResponse(http.StatusOK, body)
 }
 
+// friendlyClaimError 把上游 claim 业务层错误翻译为面向用户的中文提示。
+//
+// 上游在「当前无可领取计划」时返回英文 `no permission`；这类属于上游活动态而非
+// 插件缺陷，直接抛英文原文会让用户误判为操作失败。此处按已知语义映射为可读提示，
+// 未知错误保留原文以便排障。
+// [参数] errMsg: claimAccountStartPlan 返回的原始错误信息。
+// [返回] 面向用户的中文提示。
+// 最近修改时间：2026-10-15；改动原因：新增，把 no permission 等上游英文错误翻译为友好提示。
+func friendlyClaimError(errMsg string) string {
+	lower := strings.ToLower(errMsg)
+	switch {
+	case strings.Contains(lower, "no permission"):
+		return "当前上游未开放 Start Plan 领取（活动暂不可领取），请稍后重试或在 ZCode 客户端内领取"
+	case strings.Contains(lower, "1003"), strings.Contains(errMsg, "已领取"), strings.Contains(lower, "already exists"):
+		return "该账号已领取 Start Plan，无需重复领取"
+	case strings.Contains(lower, "1001"), strings.Contains(lower, "target not found"):
+		return "上游未找到可领取的 Start Plan（批次可能已变更），请稍后重试"
+	default:
+		return errMsg
+	}
+}
+
 // handleClaimAccount 处理 POST /claim 激活账号 Start Plan 请求。
 //
 // [参数] body: 包含 auth_index / auth_id，以及可选的 captcha_verify_param、captcha_region。
@@ -593,7 +615,8 @@ func handleClaimAccount(body []byte) ([]byte, error) {
 			})
 			return makeHTTPResponse(http.StatusOK, bodyResp)
 		}
-		return makeHTTPResponse(http.StatusBadRequest, []byte(fmt.Sprintf(`{"error":%q}`, errMsg)))
+		// 上游业务层错误按语义翻译为中文提示，避免把英文原文直接抛给用户。
+		return makeHTTPResponse(http.StatusBadRequest, []byte(fmt.Sprintf(`{"error":%q}`, friendlyClaimError(errMsg))))
 	}
 
 	// 激活成功后，若套餐中含有可用模型，尝试动态更新至该账号的 Models 字段中

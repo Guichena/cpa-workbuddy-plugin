@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.30] - 2026-10-15
+
+### Fixed
+- **面板额度永远显示满额（绿色进度条恒 100%），已用额度从不刷新**：
+  - 现象：生产多个账号额度已被消耗，但面板始终显示「合计 8.00M」满格，进度条不随真实用量变化。
+  - 根因：额度数据源 `GET /api/v1/zcode-plan/billing/current` **只返回授予量 `grant_units`，没有任何已用/剩余字段**；面板 `quotaHTML` 还硬编码 `width:100%`，导致「显示的是授予量、进度条恒满」。真实用量在 `GET /api/v1/zcode-plan/billing/balance?app_version=<v>`（客户端 `fetchZaiStartPlanBalanceEnvelope` 的通道），返回 `data.balances[]` 含 `total_units` / `used_units` / `remaining_units` / `available_units`。该端点**强制校验设备三头** `X-Platform` / `X-Device-Mid` / `X-ZCode-App-Version`，缺任一上游返回 `400 code 3001 parameter error`——这也是此前误判「balance 不可用、只能读 current」的原因。
+  - 修复：`fetchAccountQuota` 改为**主走 balance**（携带设备三头 + `app_version`）取真实已用/剩余，失败时回退 current（仅授予量）；快照新增 `total_used` / `total_remain` / `has_usage` / `source` 与逐 entitlement 的 `used_units` / `remaining_units` / `available_units` / `has_usage`。面板进度条改为按「剩余/授予」渲染（剩余 ≤30% 转黄、≤10% 转红），卡片与汇总区同时展示「已用/剩余」；无用量通道时明确标注「每日授予额度（暂未取到用量）」并以半透明满格条区分，避免再被误读为满额。
+  - 验证：生产真实账号实测 balance 返回真实用量（`zcode-d7a0cb4afa8f77c0` 的 GLM-5.3 `used_units=19` / `remaining_units=2999981`），修复后面板据此渲染；新增回归守卫 `TestFetchAccountQuota_ParsesBalanceUsage`（哨兵变异禁用用量解析后精确 FAIL）。
+
+### Changed
+- **「领取失败 no permission」翻译为友好中文提示**：
+  - 根因：上游 `billing/preview` 当前对所有账号返回 `plans:[]`（未下发可领取计划），此时 claim 走 fallback planId 被上游业务层拒为英文 `no permission`；这属于**上游活动态**而非插件缺陷。
+  - 修复：新增 `friendlyClaimError()` 把 `no permission` / `1003 already exists` / `1001 target not found` 翻译为可读中文（「当前上游未开放 Start Plan 领取…」等），未知错误保留原文便于排障；面板对「未开放」类提示降级为 warn 级别，不再一律显示为红色失败。
+
 ## [0.1.29] - 2026-10-15
 
 ### Fixed

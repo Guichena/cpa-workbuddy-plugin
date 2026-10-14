@@ -12,7 +12,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-// TestFetchAccountQuota_ParsesPlan 验证 billing/current 响应被正确解析为额度快照。
+// TestFetchAccountQuota_ParsesPlan 验证 balance 主通道不可用时回退 current，仍能解析授予量。
 func TestFetchAccountQuota_ParsesPlan(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
@@ -27,6 +27,15 @@ func TestFetchAccountQuota_ParsesPlan(t *testing.T) {
 	oldURL := quotaURLForTest
 	quotaURLForTest = srv.URL
 	defer func() { quotaURLForTest = oldURL }()
+	// balance 主通道指向返回 3001 的端点，验证自动回退 current。
+	oldBal := balanceURLForTest
+	balanceURLForTest = srv.URL + "/balance"
+	defer func() { balanceURLForTest = oldBal }()
+	balSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":3001,"msg":"parameter error"}`))
+	}))
+	defer balSrv.Close()
+	balanceURLForTest = balSrv.URL
 
 	snap, err := fetchAccountQuota(&StoredAuth{AuthID: "zcode-test", Token: "jwt-token"})
 	if err != nil {
@@ -43,6 +52,57 @@ func TestFetchAccountQuota_ParsesPlan(t *testing.T) {
 	}
 	if snap.Entitlements[0].Capability != "model:glm-5.3" {
 		t.Fatalf("expected capability model:glm-5.3, got %q", snap.Entitlements[0].Capability)
+	}
+	// 回退通道无用量数据：HasUsage=false，剩余口径回退为授予量。
+	if snap.HasUsage || snap.Source != "current" || snap.TotalRemain != 8000000 {
+		t.Fatalf("expected fallback current snapshot without usage, got %+v", snap)
+	}
+}
+
+// TestFetchAccountQuota_ParsesBalanceUsage 验证 balance 主通道解析真实已用/剩余用量。
+// 这是「面板额度永远显示满额」缺陷的回归守卫：真实用量必须被读取并体现在快照中。
+func TestFetchAccountQuota_ParsesBalanceUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// balance 端点必须携带设备三头，缺失即上游 3001。
+		for _, h := range []string{"X-Platform", "X-Device-Mid", "X-ZCode-App-Version"} {
+			if strings.TrimSpace(r.Header.Get(h)) == "" {
+				t.Errorf("balance 端点缺少必需头 %s", h)
+			}
+		}
+		if !strings.Contains(r.URL.RawQuery, "app_version=") {
+			t.Errorf("balance 端点缺少 app_version 查询参数, got %q", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"msg":"","data":{"server_time":1,"plans":[{"user_plan_id":"upl_1","plan_id":"zcode-v3-start-plan-0817","name":"ZCode Start Plan","status":"active","entitlements":[{"entitlement_id":"ent_1","show_name":"GLM-5.3","meter":"model_usage","unit_type":"token","capabilities":["model:glm-5.3"],"grant_units":3000000,"period":"daily","priority":110},{"entitlement_id":"ent_2","show_name":"GLM-5.3-Flash","meter":"model_usage","unit_type":"token","capabilities":["model:glm-5.3-flash"],"grant_units":5000000,"period":"daily","priority":80}]}],"balances":[{"entitlement_id":"ent_1","show_name":"GLM-5.3","total_units":3000000,"used_units":1200000,"remaining_units":1800000,"available_units":1800000,"period_start":1,"period_end":2,"expires_at":2},{"entitlement_id":"ent_2","show_name":"GLM-5.3-Flash","total_units":5000000,"used_units":500000,"remaining_units":4500000,"available_units":4500000,"period_start":1,"period_end":2,"expires_at":2}]}}`))
+	}))
+	defer srv.Close()
+
+	oldBal := balanceURLForTest
+	balanceURLForTest = srv.URL
+	defer func() { balanceURLForTest = oldBal }()
+
+	snap, err := fetchAccountQuota(&StoredAuth{AuthID: "zcode-bal", Token: "jwt-token"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if snap.Source != "balance" || !snap.HasUsage {
+		t.Fatalf("expected balance source with usage, got source=%q has_usage=%v", snap.Source, snap.HasUsage)
+	}
+	if snap.TotalGrant != 8000000 {
+		t.Fatalf("expected total grant 8000000, got %d", snap.TotalGrant)
+	}
+	if snap.TotalUsed != 1700000 {
+		t.Fatalf("expected total used 1700000, got %d", snap.TotalUsed)
+	}
+	if snap.TotalRemain != 6300000 {
+		t.Fatalf("expected total remaining 6300000, got %d", snap.TotalRemain)
+	}
+	// 逐 entitlement 用量必须并入对应项。
+	if snap.Entitlements[0].UsedUnits != 1200000 || snap.Entitlements[0].RemainingUnits != 1800000 || !snap.Entitlements[0].HasUsage {
+		t.Fatalf("unexpected entitlement[0] usage: %+v", snap.Entitlements[0])
+	}
+	if snap.Entitlements[1].UsedUnits != 500000 || snap.Entitlements[1].RemainingUnits != 4500000 {
+		t.Fatalf("unexpected entitlement[1] usage: %+v", snap.Entitlements[1])
 	}
 }
 
@@ -64,6 +124,10 @@ func TestQuotaForAccount_Caches(t *testing.T) {
 	oldURL := quotaURLForTest
 	quotaURLForTest = srv.URL
 	defer func() { quotaURLForTest = oldURL }()
+	// balance 主通道同样指向该 mock，保证主通道成功、不触发回退。
+	oldBal := balanceURLForTest
+	balanceURLForTest = srv.URL
+	defer func() { balanceURLForTest = oldBal }()
 
 	sa := &StoredAuth{AuthID: "zcode-cache", Token: "jwt"}
 	if _, err := quotaForAccount(sa, false); err != nil {
@@ -147,6 +211,13 @@ func TestHandleQuotaQuery_AllAccounts(t *testing.T) {
 		APIKey: "jwt-a", Token: "jwt-a", Label: "A",
 	})
 
+	// 把两个通道都指向本机不可达端口，模拟上游不可达。
+	oldURL := quotaURLForTest
+	oldBal := balanceURLForTest
+	quotaURLForTest = "http://127.0.0.1:1/current"
+	balanceURLForTest = "http://127.0.0.1:1/balance"
+	defer func() { quotaURLForTest = oldURL; balanceURLForTest = oldBal }()
+
 	raw, err := handleQuotaQuery("", false)
 	if err != nil {
 		t.Fatalf("handleQuotaQuery failed: %v", err)
@@ -223,6 +294,12 @@ func TestClaimAccountStartPlan_MockSuccess(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":0,"data":{"plans":[{"plan_id":"zcode-v3-start-plan","name":"ZCode Start Plan","status":"active","entitlements":[{"entitlement_id":"e1","show_name":"GLM-5.3","grant_units":3000000}]}]}}`))
 			return
 		}
+		if r.URL.Path == "/balance" {
+			// 模拟 balance 主通道不可用，验证自动回退 current。
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"code":3001,"msg":"parameter error"}`))
+			return
+		}
 		http.NotFound(w, r)
 	}))
 	defer ts.Close()
@@ -230,10 +307,12 @@ func TestClaimAccountStartPlan_MockSuccess(t *testing.T) {
 	claimURLForTest = ts.URL + "/claim"
 	claimPreviewURLForTest = ts.URL + "/preview"
 	quotaURLForTest = ts.URL + "/current"
+	balanceURLForTest = ts.URL + "/balance"
 	defer func() {
 		claimURLForTest = ""
 		claimPreviewURLForTest = ""
 		quotaURLForTest = ""
+		balanceURLForTest = ""
 	}()
 
 	sa := &StoredAuth{
@@ -275,6 +354,10 @@ func TestClaimAccountStartPlan_FallbackPlanID(t *testing.T) {
 		case "/current":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"code":0,"data":{"plans":[{"plan_id":"zcode-v3-start-plan-0817","name":"ZCode Start Plan","status":"active","entitlements":[{"entitlement_id":"e1","show_name":"GLM-5.3","grant_units":3000000}]}]}}`))
+		case "/balance":
+			// 模拟 balance 主通道不可用，验证自动回退 current。
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"code":3001,"msg":"parameter error"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -284,10 +367,12 @@ func TestClaimAccountStartPlan_FallbackPlanID(t *testing.T) {
 	claimURLForTest = ts.URL + "/claim"
 	claimPreviewURLForTest = ts.URL + "/preview"
 	quotaURLForTest = ts.URL + "/current"
+	balanceURLForTest = ts.URL + "/balance"
 	defer func() {
 		claimURLForTest = ""
 		claimPreviewURLForTest = ""
 		quotaURLForTest = ""
+		balanceURLForTest = ""
 	}()
 
 	sa := &StoredAuth{AuthID: "zcode-test-fallback", Token: "jwt-test-fallback", APIKey: "jwt-test-fallback"}
@@ -310,6 +395,24 @@ func TestZcodeDeviceMid_StableUUID(t *testing.T) {
 	uuidPattern := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	if !uuidPattern.MatchString(first) {
 		t.Fatalf("device mid %q is not a valid UUID v4", first)
+	}
+}
+
+// TestFriendlyClaimError 验证上游业务层英文错误被翻译为可读中文提示。
+func TestFriendlyClaimError(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{"claim failed: no permission", "当前上游未开放 Start Plan 领取（活动暂不可领取），请稍后重试或在 ZCode 客户端内领取"},
+		{"claim failed: target already exists", "该账号已领取 Start Plan，无需重复领取"},
+		{"claim failed: target not found", "上游未找到可领取的 Start Plan（批次可能已变更），请稍后重试"},
+		{"claim error 500: boom", "claim error 500: boom"},
+	}
+	for _, c := range cases {
+		if got := friendlyClaimError(c.raw); got != c.want {
+			t.Fatalf("friendlyClaimError(%q) = %q, want %q", c.raw, got, c.want)
+		}
 	}
 }
 

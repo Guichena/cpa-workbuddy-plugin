@@ -12,13 +12,19 @@ import (
 	"time"
 )
 
-// zcode-plan 额度（billing/current）查询与缓存。
+// zcode-plan 额度（billing/balance）查询与缓存。
 //
-// 数据源（2026-10-12 线上实测）：GET https://zcode.z.ai/api/v1/zcode-plan/billing/current
-// 以账号 JWT 作 `Authorization: Bearer`，返回当前生效计划及其 entitlements：
-// 每个 entitlement 描述一个模型在某个周期内的授予额度（grant_units，如每日 300 万 token）。
-// 该端点是 zcode 面板额度可视化的唯一可靠来源——billing/balance（余额/已用）在免费
-// start-plan 账号上固定返回 `400 code 3001 parameter error`，故不采用。
+// 数据源（2026-10-15 线上实测 + app.asar 3.15.1 逆向）：
+// 主通道 GET https://zcode.z.ai/api/v1/zcode-plan/billing/balance?app_version=<v>
+// 以账号 JWT 作 `Authorization: Bearer`，**必须同时携带设备三头**
+// `X-Platform` / `X-Device-Mid` / `X-ZCode-App-Version`（缺任一上游返回 `400 code 3001
+// parameter error`），返回 `data.plans`（生效计划，含各 entitlement 的 `grant_units` 授予量）
+// 与 `data.balances`（各 entitlement 的真实用量：`total_units` / `used_units` /
+// `remaining_units` / `available_units`）。桌面端 `fetchZaiStartPlanBalanceEnvelope` 即以此
+// 端点驱动额度条（`normalizeZaiStartPlanBalanceLimits` → `buildZaiStartPlanRemaining`）。
+//
+// 回退通道 GET /billing/current：只含 `plans`（授予量），**没有任何已用/剩余字段**，
+// 故无法体现真实消耗；仅在 balance 不可用时作为「仅展示授予量」的降级来源。
 //
 // 领取链路（2026-10-14 逆向 app.asar 3.15.1 + 生产实测）：
 // 免费 Start Plan 需经 `POST /billing/claim` 领取，请求体 `{"plan_id":"<planId>"}`，
@@ -28,6 +34,7 @@ import (
 // `code 1001 target not found`。
 const (
 	zcodeQuotaURL        = "https://zcode.z.ai/api/v1/zcode-plan/billing/current"
+	zcodeBalanceURL      = "https://zcode.z.ai/api/v1/zcode-plan/billing/balance"
 	zcodeClaimURL        = "https://zcode.z.ai/api/v1/zcode-plan/billing/claim"
 	zcodeClaimPreviewURL = "https://zcode.z.ai/api/v1/zcode-plan/billing/preview"
 	// defaultStartPlanID 是 preview 未返回可领取套餐时的回退 planId（实测有效值）。
@@ -133,6 +140,7 @@ func fetchClaimablePlanID(jwt string) string {
 // quotaURLForTest 供单元测试注入 mock 端点；为空时使用 zcodeQuotaURL。
 var (
 	quotaURLForTest        string
+	balanceURLForTest      string
 	claimURLForTest        string
 	claimPreviewURLForTest string
 )
@@ -150,6 +158,13 @@ type zcodeQuotaEntitlement struct {
 	GrantUnits    int64  `json:"grant_units"` // 该周期授予额度
 	Period        string `json:"period"`      // 周期，如 daily
 	Priority      int64  `json:"priority"`
+	// UsedUnits / RemainingUnits / AvailableUnits 来自 billing/balance 的真实用量；
+	// billing/current 回退通道不含这些字段，缺省为 0（此时 HasUsage=false）。
+	UsedUnits      int64 `json:"used_units"`
+	RemainingUnits int64 `json:"remaining_units"`
+	AvailableUnits int64 `json:"available_units"`
+	// HasUsage 标记该 entitlement 是否带真实用量（balance 通道为 true）。
+	HasUsage bool `json:"has_usage"`
 }
 
 // zcodeQuotaSnapshot 是单个账号的额度快照。
@@ -161,7 +176,11 @@ type zcodeQuotaSnapshot struct {
 	StartsAt     int64                   `json:"starts_at,omitempty"`
 	EndsAt       int64                   `json:"ends_at,omitempty"`
 	Entitlements []zcodeQuotaEntitlement `json:"entitlements"`
-	TotalGrant   int64                   `json:"total_grant"` // 全部 entitlement 授予额度合计
+	TotalGrant   int64                   `json:"total_grant"`  // 全部 entitlement 授予额度合计
+	TotalUsed    int64                   `json:"total_used"`   // 全部 entitlement 已用额度合计
+	TotalRemain  int64                   `json:"total_remain"` // 全部 entitlement 剩余额度合计
+	HasUsage     bool                    `json:"has_usage"`    // 是否含真实用量（balance 通道）
+	Source       string                  `json:"source"`       // 数据来源：balance / current
 	FetchedAt    string                  `json:"fetched_at"`
 }
 
@@ -176,7 +195,10 @@ var (
 	zcodeQuotaCache = make(map[string]zcodeQuotaCacheEntry)
 )
 
-// zcodeQuotaResponse 是 billing/current 的响应体。
+// zcodeQuotaResponse 是 billing/current 与 billing/balance 的共同响应体。
+//
+// 两个端点共用 `data.plans[].entitlements[]` 结构（授予量）；balance 额外返回
+// `data.balances[]`（真实用量）。解析时按 entitlement_id 关联两侧。
 type zcodeQuotaResponse struct {
 	Code int    `json:"code"`
 	Msg  string `json:"msg"`
@@ -202,13 +224,31 @@ type zcodeQuotaResponse struct {
 				Priority      int64    `json:"priority"`
 			} `json:"entitlements"`
 		} `json:"plans"`
+		Balances []struct {
+			EntitlementID  string   `json:"entitlement_id"`
+			ShowName       string   `json:"show_name"`
+			Meter          string   `json:"meter"`
+			UnitType       string   `json:"unit_type"`
+			Capabilities   []string `json:"capabilities"`
+			TotalUnits     int64    `json:"total_units"`
+			UsedUnits      int64    `json:"used_units"`
+			RemainingUnits int64    `json:"remaining_units"`
+			AvailableUnits int64    `json:"available_units"`
+			Period         string   `json:"period"`
+			PeriodStart    int64    `json:"period_start"`
+			PeriodEnd      int64    `json:"period_end"`
+			ExpiresAt      int64    `json:"expires_at"`
+		} `json:"balances"`
 	} `json:"data"`
 }
 
 // fetchAccountQuota 查询单个账号的额度快照（不走缓存）。
 //
+// 主通道 billing/balance（含真实已用/剩余用量），失败时回退 billing/current
+// （仅授予量），保证面板至少能展示授予额度。
 // [参数] sa: 账号凭据（需含 JWT）。
 // [返回] 额度快照；账号无 JWT 或上游异常时返回错误。
+// 最近修改时间：2026-10-15；改动原因：改用 billing/balance 取真实用量，修复面板永远显示满额。
 func fetchAccountQuota(sa *StoredAuth) (*zcodeQuotaSnapshot, error) {
 	if sa == nil {
 		return nil, fmt.Errorf("nil account")
@@ -221,7 +261,30 @@ func fetchAccountQuota(sa *StoredAuth) (*zcodeQuotaSnapshot, error) {
 		return nil, fmt.Errorf("账号缺少 JWT，无法查询额度")
 	}
 
-	req, errNew := http.NewRequest(http.MethodGet, quotaEndpoint(), nil)
+	// 主通道：balance 端点，携带设备三头（缺任一上游返回 3001）。
+	if snap, errBalance := fetchQuotaFromEndpoint(jwt, balanceEndpoint(), true); errBalance == nil {
+		return snap, nil
+	}
+	// 回退通道：current 端点（仅授予量，无已用/剩余）。
+	snap, errCurrent := fetchQuotaFromEndpoint(jwt, quotaEndpoint(), false)
+	if errCurrent != nil {
+		return nil, errCurrent
+	}
+	return snap, nil
+}
+
+// fetchQuotaFromEndpoint 请求指定额度端点并解析为快照。
+//
+// [参数] jwt: 账号 JWT；endpoint: 目标端点；withUsage: 是否按 balance 形态解析真实用量。
+// [返回] 额度快照与错误。
+// 最近修改时间：2026-10-15；改动原因：抽出端点请求逻辑，供 balance / current 双通道复用。
+func fetchQuotaFromEndpoint(jwt, endpoint string, withUsage bool) (*zcodeQuotaSnapshot, error) {
+	reqURL := endpoint
+	if withUsage {
+		// balance 端点要求 app_version 查询参数，缺失返回 3001。
+		reqURL = endpoint + "?app_version=" + mimicAppVersion()
+	}
+	req, errNew := http.NewRequest(http.MethodGet, reqURL, nil)
 	if errNew != nil {
 		return nil, fmt.Errorf("create quota request: %w", errNew)
 	}
@@ -231,6 +294,9 @@ func fetchAccountQuota(sa *StoredAuth) (*zcodeQuotaSnapshot, error) {
 	req.Header.Set("X-ZCode-App-Version", mimicAppVersion())
 	req.Header.Set("HTTP-Referer", "https://zcode.z.ai")
 	req.Header.Set("X-Title", "Z Code@electron")
+	// balance 端点强制校验设备三头；current 端点忽略之，统一携带无害。
+	req.Header.Set("X-Platform", "win32-x64")
+	req.Header.Set("X-Device-Mid", zcodeDeviceMid())
 
 	resp, errDo := modelHTTPClient.Do(req)
 	if errDo != nil {
@@ -270,13 +336,28 @@ func fetchAccountQuota(sa *StoredAuth) (*zcodeQuotaSnapshot, error) {
 		StartsAt:    plan.StartsAt,
 		EndsAt:      plan.EndsAt,
 		FetchedAt:   time.Now().UTC().Format(time.RFC3339),
+		Source:      "current",
 	}
+	if withUsage {
+		snap.Source = "balance"
+	}
+
+	// 按 entitlement_id 建索引，便于把 balance 的真实用量并入对应 entitlement。
+	usageByEnt := make(map[string]int)
+	if withUsage {
+		for i, bal := range parsed.Data.Balances {
+			if id := strings.TrimSpace(bal.EntitlementID); id != "" {
+				usageByEnt[id] = i
+			}
+		}
+	}
+
 	for _, ent := range plan.Entitlements {
 		capability := ""
 		if len(ent.Capabilities) > 0 {
 			capability = strings.TrimSpace(ent.Capabilities[0])
 		}
-		snap.Entitlements = append(snap.Entitlements, zcodeQuotaEntitlement{
+		item := zcodeQuotaEntitlement{
 			EntitlementID: strings.TrimSpace(ent.EntitlementID),
 			ShowName:      strings.TrimSpace(ent.ShowName),
 			Meter:         strings.TrimSpace(ent.Meter),
@@ -285,10 +366,41 @@ func fetchAccountQuota(sa *StoredAuth) (*zcodeQuotaSnapshot, error) {
 			GrantUnits:    ent.GrantUnits,
 			Period:        strings.TrimSpace(ent.Period),
 			Priority:      ent.Priority,
-		})
-		snap.TotalGrant += ent.GrantUnits
+		}
+		if idx, ok := usageByEnt[item.EntitlementID]; ok {
+			bal := parsed.Data.Balances[idx]
+			item.UsedUnits = bal.UsedUnits
+			item.RemainingUnits = bal.RemainingUnits
+			item.AvailableUnits = bal.AvailableUnits
+			item.HasUsage = true
+			// balance 的 total_units 是权威授予量，覆盖 current 侧（两者通常一致）。
+			if bal.TotalUnits > 0 {
+				item.GrantUnits = bal.TotalUnits
+			}
+			snap.HasUsage = true
+			snap.TotalUsed += bal.UsedUnits
+			snap.TotalRemain += bal.RemainingUnits
+		}
+		snap.Entitlements = append(snap.Entitlements, item)
+		snap.TotalGrant += item.GrantUnits
+	}
+	if !snap.HasUsage {
+		// 无用量通道（current）：剩余量口径回退为授予量，避免面板显示 0 剩余。
+		snap.TotalRemain = snap.TotalGrant
 	}
 	return snap, nil
+}
+
+// balanceEndpoint 返回当前生效的用量查询端点（测试可注入覆盖）。
+//
+// [参数] 无。
+// [返回] 端点 URL。
+// 最近修改时间：2026-10-15；改动原因：新增，供 billing/balance 主通道使用。
+func balanceEndpoint() string {
+	if strings.TrimSpace(balanceURLForTest) != "" {
+		return strings.TrimSpace(balanceURLForTest)
+	}
+	return zcodeBalanceURL
 }
 
 // quotaForAccount 返回账号额度，优先命中进程内缓存。
