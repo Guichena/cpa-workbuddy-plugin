@@ -74,7 +74,7 @@ func mockZaiCLIServer(t *testing.T, pollReady *bool) *httptest.Server {
 			}
 			var req zaiCLIInitRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			if req.Provider != "zai" {
+			if req.Provider != "zai" && req.Provider != "bigmodel" {
 				http.Error(w, "invalid provider", http.StatusBadRequest)
 				return
 			}

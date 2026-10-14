@@ -113,17 +113,20 @@ func TestStartAccountOAuth_BigmodelProviderInjected(t *testing.T) {
 	oauthSessions.Delete(state)
 }
 
-// TestResolveOAuthProvider 验证入口层解析：空值按默认 zai，合法值归一化，
-// 非法值返回明确错误而**不静默回退 zai**。
+// TestResolveOAuthProvider 验证入口层解析：空值按默认 bigmodel，合法值归一化，
+// 非法值返回明确错误而**不静默回退**。
 func TestResolveOAuthProvider(t *testing.T) {
-	if got, err := resolveOAuthProvider(""); err != nil || got != providerFamilyZai {
-		t.Errorf("empty provider = (%q, %v), want (%q, nil)", got, err, providerFamilyZai)
+	if got, err := resolveOAuthProvider(""); err != nil || got != providerFamilyBigmodel {
+		t.Errorf("empty provider = (%q, %v), want (%q, nil)", got, err, providerFamilyBigmodel)
 	}
-	if got, err := resolveOAuthProvider("  "); err != nil || got != providerFamilyZai {
-		t.Errorf("blank provider = (%q, %v), want (%q, nil)", got, err, providerFamilyZai)
+	if got, err := resolveOAuthProvider("  "); err != nil || got != providerFamilyBigmodel {
+		t.Errorf("blank provider = (%q, %v), want (%q, nil)", got, err, providerFamilyBigmodel)
 	}
 	if got, err := resolveOAuthProvider(" BigModel "); err != nil || got != providerFamilyBigmodel {
 		t.Errorf("bigmodel provider = (%q, %v), want (%q, nil)", got, err, providerFamilyBigmodel)
+	}
+	if got, err := resolveOAuthProvider(" zai "); err != nil || got != providerFamilyZai {
+		t.Errorf("zai provider = (%q, %v), want (%q, nil)", got, err, providerFamilyZai)
 	}
 	for _, bad := range []string{"zhipu", "zai-cn", "cn", "bigmodel-cn"} {
 		got, err := resolveOAuthProvider(bad)
@@ -216,14 +219,17 @@ func TestHandleActivateStart_AcceptsBigmodelProvider(t *testing.T) {
 
 // TestProviderFromMetadata 验证宿主登录请求的 Metadata 是 provider 的传递通道。
 func TestProviderFromMetadata(t *testing.T) {
-	if got := providerFromMetadata(nil); got != providerFamilyZai {
-		t.Errorf("nil metadata = %q, want %q", got, providerFamilyZai)
+	if got := providerFromMetadata(nil); got != providerFamilyBigmodel {
+		t.Errorf("nil metadata = %q, want %q", got, providerFamilyBigmodel)
 	}
 	if got := providerFromMetadata(map[string]any{"provider": "bigmodel"}); got != providerFamilyBigmodel {
 		t.Errorf("bigmodel metadata = %q, want %q", got, providerFamilyBigmodel)
 	}
-	if got := providerFromMetadata(map[string]any{"provider": 123}); got != providerFamilyZai {
-		t.Errorf("non-string metadata = %q, want %q", got, providerFamilyZai)
+	if got := providerFromMetadata(map[string]any{"provider": "zai"}); got != "zai" {
+		t.Errorf("zai metadata = %q, want %q", got, "zai")
+	}
+	if got := providerFromMetadata(map[string]any{"provider": 123}); got != providerFamilyBigmodel {
+		t.Errorf("non-string metadata = %q, want %q", got, providerFamilyBigmodel)
 	}
 	// 非法值必须原样透传（不在本层归一化），由 startAccountOAuth 校验后报错。
 	if got := providerFromMetadata(map[string]any{"provider": "zhipu"}); got != "zhipu" {

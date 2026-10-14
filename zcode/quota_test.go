@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -186,6 +187,7 @@ func TestHandleQuotaQuery_AllAccounts(t *testing.T) {
 
 // TestClaimAccountStartPlan_MockSuccess 验证套餐激活开通接口与请求头构造。
 func TestClaimAccountStartPlan_MockSuccess(t *testing.T) {
+	var claimedPlanID string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/claim" {
 			if r.Method != http.MethodPost {
@@ -197,8 +199,23 @@ func TestClaimAccountStartPlan_MockSuccess(t *testing.T) {
 			if r.Header.Get("X-Aliyun-Captcha-Verify-Region") != "sgp" {
 				t.Fatalf("missing or wrong verify region header")
 			}
+			// 设备指纹头是上游强制项，缺失会返回 3001 parameter error。
+			if strings.TrimSpace(r.Header.Get("X-Device-Mid")) == "" {
+				t.Fatalf("missing X-Device-Mid header")
+			}
+			var payload struct {
+				PlanID string `json:"plan_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			claimedPlanID = payload.PlanID
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"code":0,"msg":"success","data":{"plan":{"plan_id":"zcode-v3-start-plan","status":"active"}}}`))
+			return
+		}
+		if r.URL.Path == "/preview" {
+			// 官方 preview 端点下发带批次后缀的真实 planId。
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"code":0,"data":{"plans":[{"plan_id":"zcode-v3-start-plan-0817","name":"ZCode Start Plan"}]}}`))
 			return
 		}
 		if r.URL.Path == "/current" {
@@ -211,9 +228,11 @@ func TestClaimAccountStartPlan_MockSuccess(t *testing.T) {
 	defer ts.Close()
 
 	claimURLForTest = ts.URL + "/claim"
+	claimPreviewURLForTest = ts.URL + "/preview"
 	quotaURLForTest = ts.URL + "/current"
 	defer func() {
 		claimURLForTest = ""
+		claimPreviewURLForTest = ""
 		quotaURLForTest = ""
 	}()
 
@@ -229,6 +248,68 @@ func TestClaimAccountStartPlan_MockSuccess(t *testing.T) {
 	}
 	if snap == nil || snap.PlanID != "zcode-v3-start-plan" || snap.TotalGrant != 3000000 {
 		t.Fatalf("unexpected snapshot: %+v", snap)
+	}
+	// 领取必须使用 preview 下发的带后缀 planId，而非硬编码无后缀值。
+	if claimedPlanID != "zcode-v3-start-plan-0817" {
+		t.Fatalf("claimed plan_id = %q, want %q", claimedPlanID, "zcode-v3-start-plan-0817")
+	}
+}
+
+// TestClaimAccountStartPlan_FallbackPlanID 验证 preview 不可用时回退默认 planId。
+func TestClaimAccountStartPlan_FallbackPlanID(t *testing.T) {
+	var claimedPlanID string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/preview":
+			// 模拟 preview 异常：上游返回非 0 code，解析失败应回退默认值。
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"code":3001,"msg":"parameter error"}`))
+		case "/claim":
+			var payload struct {
+				PlanID string `json:"plan_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			claimedPlanID = payload.PlanID
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"code":0,"msg":"success","data":{"plan":{"plan_id":"zcode-v3-start-plan-0817","status":"active"}}}`))
+		case "/current":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"code":0,"data":{"plans":[{"plan_id":"zcode-v3-start-plan-0817","name":"ZCode Start Plan","status":"active","entitlements":[{"entitlement_id":"e1","show_name":"GLM-5.3","grant_units":3000000}]}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	claimURLForTest = ts.URL + "/claim"
+	claimPreviewURLForTest = ts.URL + "/preview"
+	quotaURLForTest = ts.URL + "/current"
+	defer func() {
+		claimURLForTest = ""
+		claimPreviewURLForTest = ""
+		quotaURLForTest = ""
+	}()
+
+	sa := &StoredAuth{AuthID: "zcode-test-fallback", Token: "jwt-test-fallback", APIKey: "jwt-test-fallback"}
+	if _, err := claimAccountStartPlan(sa, "mock_param", "sgp"); err != nil {
+		t.Fatalf("claim failed: %v", err)
+	}
+	// 用字面量断言回退值本身正确（不可用 defaultStartPlanID 自比较，否则常量写错也测不出）。
+	if claimedPlanID != "zcode-v3-start-plan-0817" {
+		t.Fatalf("fallback plan_id = %q, want %q", claimedPlanID, "zcode-v3-start-plan-0817")
+	}
+}
+
+// TestZcodeDeviceMid_StableUUID 验证设备指纹为进程内稳定的 UUID v4。
+func TestZcodeDeviceMid_StableUUID(t *testing.T) {
+	first := zcodeDeviceMid()
+	second := zcodeDeviceMid()
+	if first != second {
+		t.Fatalf("device mid not stable: %q vs %q", first, second)
+	}
+	uuidPattern := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	if !uuidPattern.MatchString(first) {
+		t.Fatalf("device mid %q is not a valid UUID v4", first)
 	}
 }
 

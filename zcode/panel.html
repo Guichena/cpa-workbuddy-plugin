@@ -235,9 +235,9 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     </div>
   </div>
   <div class="bar">
-    <select id="oauthProvider" class="provider-select" title="选择 OAuth 授权站点：国际站 chat.z.ai / 中国区 bigmodel.cn">
+    <select id="oauthProvider" class="provider-select" title="选择 OAuth 授权站点：中国区 bigmodel.cn / 国际站 chat.z.ai">
+      <option value="bigmodel" selected>中国区（bigmodel.cn）</option>
       <option value="zai">国际站（chat.z.ai）</option>
-      <option value="bigmodel">中国区（bigmodel.cn）</option>
     </select>
     <button id="oauthBtn" onclick="openOAuthBridge()" style="background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border);font-weight:600">OAuth 授权登录</button>
     <button class="sec" id="importBtn" onclick="openImportModal()">导入凭据</button>
@@ -599,10 +599,10 @@ function card(a){
   const titleName = displayName(a);
   const isUnactivated=!a.quota||!Array.isArray(a.quota.entitlements)||!a.quota.entitlements.length;
   const planBadge=isUnactivated
-    ? `<span class="badge warning" title="该账号已授权登录，但尚未领取 Start Plan 每日额度；请在 ZCode 桌面客户端内领取">未领取</span>`
+    ? `<span class="badge warning" title="该账号已授权登录，但尚未领取 Start Plan 每日额度；可点击「领取额度」自动完成">未领取</span>`
     : (a.quota&&a.quota.plan_name?`<span class="badge plan" title="${esc(a.quota.plan_name)}">${esc(a.quota.plan_name)}</span>`:"");
   const guideBtn=isUnactivated
-    ? `<button class="sec btn-act" data-action="guide" data-auth-index="${esc(a.auth_id)}" title="查看 Start Plan 每日额度的官方领取步骤">📖 领取指引</button>`
+    ? `<button class="sec btn-act" data-action="claim" data-auth-index="${esc(a.auth_id)}" title="通过官方无感验证自动领取 Start Plan 每日额度">🎁 领取额度</button>`
     : "";
   return `<div class="card" data-state="${st}" data-auth="${esc(a.auth_id)}" data-name="${esc(titleName)}" data-quota="${quotaTotal(a)}" data-search="${esc(((a.label||"")+" "+(a.username||"")+" "+(a.email||"")+" "+(a.user_id||"")+" "+(a.api_key_masked||"")+" "+(a.auth_id||"")+" "+(a.provider_family||"zai")).toLowerCase())}">
   <h2><span class="name" title="${esc(titleName)}">${esc(titleName)}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${providerBadge(a)}${stateBadge(a)}${planBadge}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_id)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
@@ -638,6 +638,7 @@ function bindCardActions(root){
       const act=ev.currentTarget.dataset.action;
       const id=ev.currentTarget.dataset.authIndex;
       if(act==="test") openTestModal(id);
+      else if(act==="claim") claimQuota(id, ev.currentTarget);
       else if(act==="guide") openGuideModal(id);
       else if(act==="enable") setStatus(id,false,ev.currentTarget);
       else if(act==="disable") setStatus(id,true,ev.currentTarget);
@@ -996,16 +997,172 @@ function onActivateMaskClick(ev){
   if(ev.target && ev.target.id === "activateModal") closeActivateModal();
 }
 
-/* ---------- Start Plan 领取指引 ----------
-   账号已完成 Z.ai 授权登录后，每日 800 万额度的 Start Plan 并不会随登录自动下发：
-   官方仅在 ZCode 桌面客户端内通过服务端活动弹窗引导用户手动领取，且领取接口
-   （/api/v1/zcode-plan/billing/claim）强制校验阿里云人机验证头，网页端与插件端
-   均无领取入口。因此这里只提供如实说明与官方领取路径引导。
+/* ---------- Start Plan 额度领取（阿里云无感验证） ----------
+   账号完成 Z.ai 授权登录后，每日 800 万额度的 Start Plan 需经官方
+   `POST /api/v1/zcode-plan/billing/claim` 领取，该接口强制校验阿里云人机验证头
+   `X-Aliyun-Captcha-Verify-Param`。官方客户端在 ZCode 桌面端内用「无感验证」产出该参数：
+   加载 AliyunCaptcha SDK → initAliyunCaptcha（必须同时传 element 与 button）→
+   inst.startTracelessVerification() → success(param)。
+
+   本面板复刻同一链路：先用无参数请求探明是否需要验证码（后端回传 captcha_required 与
+   scene_id/prefix/region），再在浏览器内跑无感验证产出参数，最后带参数重调 /claim 完成领取。
+   验证参数为一次性凭证，每次领取都需重新执行无感验证。
+*/
+const ALIYUN_CAPTCHA_SDK = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
+let aliyunSdkPromise = null;
+
+// loadAliyunCaptchaSDK 按需加载阿里云验证码 SDK（幂等，重复调用复用同一 Promise）。
+// [参数] 无。
+// [返回] SDK 就绪后 resolve 的 Promise；加载失败时 reject。
+// 最近修改时间：2026-10-14；改动原因：新增，为面板内无感验证提供 SDK 加载能力。
+function loadAliyunCaptchaSDK(){
+  if(window.initAliyunCaptcha && typeof window.initAliyunCaptcha === "function"){
+    return Promise.resolve();
+  }
+  if(aliyunSdkPromise) return aliyunSdkPromise;
+  aliyunSdkPromise = new Promise((resolve, reject)=>{
+    const existing = document.querySelector(`script[src="${ALIYUN_CAPTCHA_SDK}"]`);
+    const onReady = ()=>{
+      if(typeof window.initAliyunCaptcha === "function") resolve();
+      else reject(new Error("验证码 SDK 未正确初始化"));
+    };
+    if(existing){
+      existing.addEventListener("load", onReady, {once:true});
+      existing.addEventListener("error", ()=>reject(new Error("验证码 SDK 加载失败")), {once:true});
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = ALIYUN_CAPTCHA_SDK;
+    s.async = true;
+    s.onload = onReady;
+    s.onerror = ()=>reject(new Error("验证码 SDK 加载失败，请检查网络"));
+    document.head.appendChild(s);
+  }).catch(err=>{ aliyunSdkPromise = null; throw err; });
+  return aliyunSdkPromise;
+}
+
+// runTracelessVerification 执行一次阿里云无感验证并返回 captchaVerifyParam。
+// [参数] cfg: 含 sceneId / prefix / region 的验证码配置（由后端 captcha_required 回传）。
+// [返回] 成功时 resolve 验证参数字符串；失败或超时 reject。
+// 最近修改时间：2026-10-14；改动原因：新增，复刻官方客户端无感验证链路（必须传 button 元素）。
+function runTracelessVerification(cfg){
+  return loadAliyunCaptchaSDK().then(()=>new Promise((resolve, reject)=>{
+    const tag = Math.random().toString(36).slice(2);
+    const holderId = "__zcode_cap_" + tag;
+    const btnId = "__zcode_cap_btn_" + tag;
+    const holder = document.createElement("div");
+    holder.id = holderId;
+    holder.style.cssText = "position:fixed;left:-9999px;top:-9999px;";
+    const btn = document.createElement("button");
+    btn.id = btnId;
+    btn.type = "button";
+    btn.textContent = "verify";
+    btn.style.cssText = "position:fixed;left:-9999px;top:-9999px;";
+    document.body.appendChild(holder);
+    document.body.appendChild(btn);
+
+    let settled = false;
+    const cleanup = ()=>{
+      try{ holder.remove(); }catch(_){}
+      try{ btn.remove(); }catch(_){}
+      if(typeof window.__CloseAliyunCaptcha === "function"){
+        try{ window.__CloseAliyunCaptcha(); }catch(_){}
+      }
+    };
+    const finish = (fn, arg)=>{
+      if(settled) return;
+      settled = true;
+      cleanup();
+      fn(arg);
+    };
+
+    window.AliyunRequestVerificationConfig = {region: cfg.region || "sgp", prefix: cfg.prefix || "no8xfe"};
+    try{
+      window.initAliyunCaptcha({
+        SceneId: cfg.sceneId || "11xygtvd",
+        mode: "popup",
+        language: "cn",
+        showErrorTip: false,
+        element: "#" + holderId,
+        button: "#" + btnId,
+        getInstance: (inst)=>{
+          try{
+            if(inst && typeof inst.startTracelessVerification === "function"){
+              inst.startTracelessVerification();
+            }else{
+              finish(reject, new Error("当前环境不支持无感验证"));
+            }
+          }catch(e){ finish(reject, e); }
+        },
+        success: (param)=>{
+          const v = String(param || "").trim();
+          if(v) finish(resolve, v);
+          else finish(reject, new Error("验证参数为空"));
+        },
+        fail: (e)=>finish(reject, new Error("安全验证未通过：" + ((e&&(e.msg||e.code))||"未知原因"))),
+        onError: (e)=>finish(reject, new Error("安全验证异常：" + ((e&&(e.msg||e.code))||"未知原因")))
+      });
+    }catch(e){ finish(reject, e); return; }
+    setTimeout(()=>finish(reject, new Error("安全验证超时，请重试")), 20000);
+  }));
+}
+
+// claimQuota 领取账号 Start Plan 每日额度（探明验证码 → 无感验证 → 带参数重调 claim）。
+// [参数] authID: 目标账号 auth_id；btn: 触发按钮，用于忙碌态。
+// [返回] 无。
+// 最近修改时间：2026-10-14；改动原因：新增，替代原「领取指引」——插件端可直接完成领取。
+async function claimQuota(authID, btn){
+  busy(btn, true);
+  try{
+    let res = await api("/claim", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({auth_id: authID})
+    });
+    if(res && res.ok){
+      toast("领取成功","ok", (res.quota && res.quota.plan_name) ? res.quota.plan_name : "Start Plan 已激活");
+      await load();
+      return;
+    }
+    if(!res || !res.captcha_required){
+      toast("领取失败","err",(res&&res.error)||"上游未接受领取请求");
+      return;
+    }
+    const param = await runTracelessVerification({
+      sceneId: res.scene_id,
+      prefix: res.prefix,
+      region: res.region
+    });
+    res = await api("/claim", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({auth_id: authID, captcha_verify_param: param, captcha_region: res.region || ""})
+    });
+    if(res && res.ok){
+      toast("领取成功","ok", (res.quota && res.quota.plan_name) ? res.quota.plan_name : "Start Plan 已激活");
+      await load();
+      return;
+    }
+    const msg = (res && res.error) || "领取未完成";
+    toast("领取失败","err", msg);
+    if(String(msg).includes("已领取") || String(msg).includes("1003")){
+      await load();
+    }
+  }catch(e){
+    toast("领取失败","err",e.message);
+  }finally{
+    busy(btn,false);
+  }
+}
+
+/* ---------- Start Plan 领取指引（兜底） ----------
+   无感验证依赖浏览器环境与官方 SDK 可达性；两者任一不可用时（如离线、上游活动下线），
+   仍保留官方客户端领取路径说明作为兜底。
 */
 // openGuideModal 打开 Start Plan 领取指引弹窗，展示官方领取步骤并绑定「刷新额度」复查。
 // [参数] authID: 目标账号的 auth_id，用于回填账号名与刷新额度。
 // [返回] 无。
-// 最近修改时间：2026-10-14；改动原因：新增领取指引，替代失效的「一键激活」交互。
+// 最近修改时间：2026-10-14；改动原因：降级为兜底指引，主路径改为面板内无感验证领取。
 function openGuideModal(authID){
   const target = (lastAccounts||[]).find(x=>x.auth_id===authID);
   const label = target ? (target.label || target.username || authID) : (authID||"");
@@ -1051,12 +1208,12 @@ function closeImportModal(){document.getElementById("importModal").classList.rem
 function onImportMaskClick(ev){if(ev.target&&ev.target.id==="importModal")closeImportModal()}
 
 // 顶部「OAuth 授权登录」按钮：按工具栏选中的授权站点发起 OAuth 登录。
-// [参数] 无（provider 取自 #oauthProvider 下拉框，缺省 zai 国际站）。
+// [参数] 无（provider 取自 #oauthProvider 下拉框，缺省 bigmodel 中国区）。
 // [返回] 无。
-// 最近修改时间：2026-10-14；改动原因：provider 参数化，支持中国区 bigmodel 授权。
+// 最近修改时间：2026-10-14；改动原因：默认站点改为中国区 bigmodel，回退分支同步调整。
 async function openOAuthBridge(){
   const sel = document.getElementById("oauthProvider");
-  const provider = (sel && sel.value) === "bigmodel" ? "bigmodel" : "zai";
+  const provider = (sel && sel.value) === "zai" ? "zai" : "bigmodel";
   const isBigmodel = provider === "bigmodel";
   const siteLabel = isBigmodel ? "bigmodel.cn（中国区）" : "chat.z.ai（国际站）";
   try{

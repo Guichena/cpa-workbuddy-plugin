@@ -61,14 +61,14 @@ func isValidOAuthProvider(provider string) bool {
 //
 // 入口层必须对**原始值**调用本函数：先校验再归一化，非法值返回明确错误而不静默回退。
 // 若先归一化再校验，`zhipu`/`zai-cn` 等非法值会被提前改写成 `zai`，导致校验形同虚设。
-// 空值（请求未带 provider）按默认 `zai` 处理，保持向后兼容。
+// 空值（请求未带 provider）按默认 `bigmodel` 处理，与面板默认中国区保持一致。
 // [参数] raw: 入口收到的原始 provider 取值。
 // [返回] 归一化后的 family 标识；非法值返回错误。
-// 最近修改时间：2026-10-14；改动原因：新增，修复非法 provider 被归一化后静默回退为 zai 的缺陷。
+// 最近修改时间：2026-10-14；改动原因：默认站点由 zai 改为 bigmodel，空值回退同步调整。
 func resolveOAuthProvider(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return providerFamilyZai, nil
+		return providerFamilyBigmodel, nil
 	}
 	if !isValidOAuthProvider(trimmed) {
 		return "", fmt.Errorf("不支持的 OAuth provider: %q（仅支持 zai / bigmodel）", raw)
@@ -80,21 +80,21 @@ func resolveOAuthProvider(raw string) (string, error) {
 //
 // 宿主 `AuthLoginStartRequest.Metadata` 是插件自定义登录上下文的载体；面板通过
 // 该字段指定 `zai` / `bigmodel`。本函数只负责取出原始取值（nil / 非字符串按默认
-// `zai` 处理），校验与归一化交由 startAccountOAuth 的 resolveOAuthProvider 完成，
+// `bigmodel` 处理），校验与归一化交由 startAccountOAuth 的 resolveOAuthProvider 完成，
 // 避免在此提前归一化导致非法值被静默改写成 `zai`。
 // [参数] metadata: 宿主请求携带的自定义上下文。
-// [返回] 原始 provider 取值；缺失或非字符串时返回默认 `zai`。
-// 最近修改时间：2026-10-14；改动原因：不再提前归一化，改为透传原始值以便入口层校验。
+// [返回] 原始 provider 取值；缺失或非字符串时返回默认 `bigmodel`。
+// 最近修改时间：2026-10-14；改动原因：缺省站点由 zai 改为 bigmodel，与面板默认一致。
 func providerFromMetadata(metadata map[string]any) string {
 	if metadata == nil {
-		return providerFamilyZai
+		return providerFamilyBigmodel
 	}
 	if raw, ok := metadata["provider"].(string); ok {
 		if trimmed := strings.TrimSpace(raw); trimmed != "" {
 			return trimmed
 		}
 	}
-	return providerFamilyZai
+	return providerFamilyBigmodel
 }
 
 var (
@@ -427,10 +427,10 @@ func startAccountOAuth(targetAuthID, label, provider string) (*zaiCLIInitRespons
 }
 
 // handleStartLogin 处理宿主发起 OAuth 登录请求：发起官方 CLI 轮询流程并返回真实授权地址。
-// provider 从宿主请求的 Metadata 读取（缺省 `zai` 国际站），非法值返回明确错误。
+// provider 从宿主请求的 Metadata 读取（缺省 `bigmodel` 中国区），非法值返回明确错误。
 // [参数] raw: 宿主登录启动请求载荷，Metadata 可携带 provider 站点归属。
 // [返回] 授权启动响应与错误。
-// 最近修改时间：2026-10-14；改动原因：支持宿主按 provider 发起中国站 bigmodel 授权。
+// 最近修改时间：2026-10-14；改动原因：默认站点改为中国区 bigmodel，注释同步。
 func handleStartLogin(raw []byte) ([]byte, error) {
 	var req pluginapi.AuthLoginStartRequest
 	if len(raw) > 0 {

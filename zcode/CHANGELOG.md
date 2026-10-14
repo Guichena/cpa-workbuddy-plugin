@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.28] - 2026-10-14
+
+### Added
+- **面板内直接领取 Start Plan 每日额度（阿里云无感验证），无需再打开 ZCode 桌面客户端**：
+  - 背景：免费 Start Plan 的每日 800 万额度需经官方 `POST /api/v1/zcode-plan/billing/claim` 领取，该接口强制校验阿里云人机验证头；此前插件端只能显示「未领取」并引导用户去桌面客户端手动领取。
+  - 逆向依据（`app.asar` 3.15.1）：官方客户端用阿里云**无感验证**（`AliyunCaptcha.js` → `initAliyunCaptcha`（必须同时传 `element` 与 `button`）→ `inst.startTracelessVerification()`）产出 `captchaVerifyParam`，随请求头 `X-Aliyun-Captcha-Verify-Param` 提交；`planId` 由 `getManualClaimPlanPreviews()` 从 `/billing/preview` **动态解析**（带批次后缀，实测 `zcode-v3-start-plan-0817`）。
+  - 面板新增「🎁 领取额度」：先无参数调 `/claim` 探明验证码需求 → 浏览器内跑无感验证产出参数 → 带参数重调 `/claim` 完成领取；验证参数为一次性凭证，每次领取重新执行无感验证。
+  - 兜底保留原「📖 领取指引」弹窗（SDK 不可达或上游活动下线时仍可走官方客户端路径）。
+
+### Fixed
+- **claim 请求 `plan_id` 硬编码无后缀值导致上游返回 `code 1001 target not found`**：
+  - 根因：`defaultStartPlanID` 原为 `zcode-v3-start-plan`，而官方 preview 下发的是带批次后缀的 `zcode-v3-start-plan-0817`。
+  - 修复：新增 `fetchClaimablePlanID()` 从官方 `/billing/preview` 动态解析 planId，解析失败时回退修正后的默认值 `zcode-v3-start-plan-0817`。
+- **claim / preview 请求缺失 `X-Device-Mid` 设备指纹头导致上游返回 `code 3001 parameter error`**：
+  - 修复：新增 `zcodeDeviceMid()`（进程内稳定 UUID v4）并注入两个端点的请求头。
+
+### Changed
+- **OAuth 授权站点默认改为中国区（bigmodel）**：
+  - 面板下拉框默认选中「中国区（bigmodel.cn）」并置于首位，回退分支同步调整。
+  - 宿主入口 `resolveOAuthProvider` / `providerFromMetadata` 的空值/缺失默认值由 `zai` 改为 `bigmodel`；显式传 `zai` 仍按国际站处理。
+  - 测试 `TestResolveOAuthProvider` / `TestProviderFromMetadata` 断言同步更新，新增 `zai` 显式传参用例；哨兵变异精确 FAIL。
+
 ## [0.1.27] - 2026-10-14
 
 ### Fixed
