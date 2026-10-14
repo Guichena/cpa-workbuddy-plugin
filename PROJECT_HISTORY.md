@@ -5,6 +5,8 @@
 ## 事件
 
 
+- 2026-10-15：**zcode-provider 0.1.31 面板额度改为逐模型独立进度条并移除冗余信息，全链路发布生产**——用户反馈截图显示一个账号的 GLM-5.3 / GLM-5.3-Flash 仍共用**一条**汇总进度条，看不出各模型各自消耗；并要求移除「过期」等与额度判断无关的信息。改造（纯前端 `zcode/panel.html`）：`quotaHTML` 由「单条汇总条」改为按 `entitlements[]` **逐模型渲染独立进度条**——每个模型一条 `.pb-item`，标签「剩 X / Y」并按「剩余/授予」着色（≤30% 黄、≤10% 红）；回退通道（无真实用量）模型单独展示「授予 X」+ 半透明满格条；`card()` 移除「过期」行。CSS 新增 `.pb-item`/`.pb-name`/`.pb-used.warn|err`，移除失效的 `.pb-primary`/`.pb-segment`。回归脚本 `test/zcode/panel_quota_render_repro.mjs` 同步新增逐模型进度条数量/文案、耗尽转红、不展示过期行等断言，并修正两处**既有失配**（0.1.28 默认授权站点已改中国区、0.1.30 汇总文案已改「今日授予合计」，脚本此前仍断言旧值、长期失去判别力）。发布链 `0702b84`(feat 7 文件) → CI `38615248982` success → `b7b754a`(assets 7/7 sha256 OK) → `0d6c46a`(registry) → `7df26e2`(prune 0.1.29/0.1.30)；远端 raw URL 7/7 全部 200；生产热重载 `active_version=0.1.31 retired_version=0.1.30`（02:40:58），**零容器重启**，落盘 `.so` sha256 `5938fcc1…b0dd58` 与本地 zip 逐字节一致；**生产面板验收**：面板 73,742 字节，`pb-item`/`pb-name` 各 4 处，旧结构 `pb-primary`/`pb-segment` 与「过期」行残留均为 0。门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；哨兵变异精确 FAIL 2 项后恢复全绿；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。
+
 - 2026-10-15：**zcode-provider 0.1.28/0.1.29/0.1.30 三连发：默认中国区 + 面板内无感验证领取 Start Plan + 面板额度改用 `billing/balance` 取真实用量，全部全链路发布生产**——用户诉求递进：① 「改成默认中国区，OAuth 登录页也默认中国区授权，并通过逆向工程激活额度，不用手动去 zcode 客户端登录激活」；② 生产两问题：「领取失败 `no permission`」+「部分账号额度已使用，但面板额度从不刷新、恒显示最满」。
   - **0.1.28（新增能力）**：① 默认中国区——面板 `#oauthProvider` 下拉 `bigmodel` 置首位，`resolveOAuthProvider`/`providerFromMetadata` 空值默认 `bigmodel`（显式 `zai` 仍可用）；② claim 契约补三项此前遗漏必需项——`fetchClaimablePlanID()` 从 `/billing/preview` 动态解析 `plan_id`（带批次后缀 `zcode-v3-start-plan-0817`）、`zcodeDeviceMid()` 稳定 UUID v4、claim 请求补 `X-Device-Mid`；③ 面板新增 `runTracelessVerification` + `claimQuota`，未领取卡片按钮改「🎁 领取额度」，原「📖 领取指引」降级兜底。逆向依据 `app.asar` 3.15.1：官方用标准阿里云无感验证 SDK，插件端可完整复刻。
   - **0.1.29（修复 0.1.28 缺陷）**：0.1.28 面板产出的 `captchaVerifyParam` 仅 76 字符、不含 `securityToken`，`/claim` 始终 `captcha_required`。根因（真实浏览器 A/B/C/D/E 五组受控实验锁定）：`initAliyunCaptcha` 未传 `prefix`/`region`，且只设了 SDK **不读**的全局名 `AliyunRequestVerificationConfig`（SDK 实读 `window.AliyunCaptchaConfig` 且**仅脚本加载期读取一次**）→ 请求打到 `undefined.captcha-open.aliyuncs.com`。修复：init 入参显式传 `prefix`/`region`（与时机无关的权威通道）+ 加载前预设 `window.AliyunCaptchaConfig`。修复后参数 **76→280 字符且含 `securityToken`**，生产 `/claim` 由 **captcha 层 `captcha_required` → 业务层 `no permission`**，证明 captcha 校验已通过。Bug 文档 `doc/4-bugs/2026-10-15_001240_*`。
@@ -49,8 +51,6 @@
 
 - 2026-10-10：qoderwork-provider **0.9.23** 发布部署（面板「测试」按钮改为弹出模型选择窗口按指定模型测试）——用户诉求：qoderwork 与三插件对齐，卡片「测试」不再随机挑模型，改为点击后弹出该账号支持的模型小窗口、点选指定模型再测。后端：qoderwork/models.go 新增 authModelsForIndex + handleModelsQuery（cachedDynamicModels → callModelsAPI，AccessToken 非空前置判断），management.go 新增只读 GET /models?auth_index= 路由（未进 mutatingManagementPath），active_ping.go 的 handleTestActiveWithAuth(sa, authIndex, model) 支持指定模型（model 空保持随机兼容旧面板），兜底模型 auto；前端 panel.html 新增测试弹窗（openTestModal / closeTestModal / onTestMaskClick / loadTestModels / runTestModel）并补 .model-list/.model-item 等 7 条 CSS。本地：cgo-shim build/vet/test 全绿 + 必失败哨兵确证真实进编译；Node vm 回归 17 项 PASS + 旧版反证 FAIL（TypeError openTestModal is not a function）；6-review STYLE: PASS。发布链 7df7f9a（13 文件）→ CI run 37964833825 success（head=7df7f9a）→ 7f18e2a（8 资产，7/7 sha256 OK）→ registry 0.9.23 回填（随 30dfe9b 一并推送，7 artifacts sha256+size 与 checksums 全等）；远端 raw 7/7 200 且 size 一致。生产：plugin-store install 0.9.23 installed，落盘 .so sha256 bb55d2df…3977 与本地 zip 内 .so 完全一致；热重载 active_version=0.9.23 retired_version=0.9.22；行为验收 GET /models?auth_index= 返回 {"models":["auto"]}、POST /test-active 指定 model=auto 成功（421ms，回显该 model）、无 model 走兼容随机路径同样成功（622ms）、panel/accounts 均 200、面板资源含 testModal/openTestModal/loadTestModels/runTestModel/data-action="test" 全部命中。**重要踩坑**：期间遇到生产自定义源被别的会话半成品条目（qoder-ai-provider `direct` + 空 artifacts）整体校验失败，导致该源全部插件 install 报 plugin_not_found；根因是宿主 ParseRegistry 对单源 registry 原子校验、任一条目非法即整源不入列，待对端补齐 artifacts 后源自动恢复，无需重启宿主。发布后清理：prune dry-run 确认 8 插件保留集完整、待删 0。
 
-- 2026-10-09：workbuddy-provider **0.15.4** / workbuddy-ai-provider **0.1.9** / traework-provider **0.2.3** 发布部署（三插件测试按钮改为弹出模型选择窗口按指定模型测试）——用户诉求：面板卡片「测试」按钮原为随机挑模型直接测，改为点击后弹出该账号支持的模型小窗口、点选指定模型再测。后端：三插件 models.go 新增 authModelsForIndex + handleModelsQuery，management.go 新增只读 GET /models?auth_index= 路由，active_ping.go 的 handleTestActiveWithAuth(sa, authIndex, model) 支持指定模型（model 空则保持随机，兼容旧面板）；前端：三插件 panel.html 新增测试弹窗（openTestModal / loadTestModels / runTestModel），无模型时提示「暂无可用模型」并允许关闭。本地：cgo-shim 三插件 build/vet/test 全绿 + 必失败哨兵确证真实进编译；三面板 Node vm 回归各 17 项 PASS + 旧版反证 FAIL；6-review STYLE: PASS。发布链 ce6b4e2（32 文件）→ CI 三 run success（37940758486 / 37940778484 / 37940786472，head=ce6b4e2）→ fe5742d（24 资产，三目录 7/7 sha256 OK）→ 207e22c（registry 回填）→ ada831f（prune 旧版 0.15.3 / 0.1.8 / 0.2.2）；远端 49/49 当前资产 200、被删旧版 404。生产：三插件 plugin-store install 全部 installed，落盘 .so sha256 与本地 zip 完全一致（workbuddy 0.15.4 9c3b85b6… / workbuddy-ai 0.1.9 dd77aab4… / traework 0.2.3 2d671e16…），热重载 active_version 命中目标版本，panel / accounts 三插件全 200；行为验收 /models 三插件返回真实模型（17 / 27 / 大量）、缺 auth_index 返回 auth_index is required、/test-active 指定 deepseek-v4.1-flash 在 traework 成功（1.625s，回显该 model），workbuddy 因额度 429 但错误文案确认使用指定模型。
-
 ## 计数锚点区
 
 > 本区由 `memory-usage-tracking-rules` 收口闸门维护：HISTORY 仅窄读计入，会话启动不读不计；被裁剪事件的锚点随事件一起删除（不保留 retired）；本区计数仅作主题热度弱信号。锚点 key 用事件 `- YYYY-MM-DD：` 后的核心主题短语（约前 12 字符，可前缀匹配）。
@@ -58,10 +58,15 @@
 ```yaml
 version: 1
 anchors:
-- title: '**zcode-provider 0.1.28/0.1.29/0.1.30 三连发'
+- title: '**zcode-provider 0.1.31 面板额度改为逐模型独立进度条'
   usage_count: 0
   usage_days: 0
   last_used_at: null
+  absorbed_to: null
+- title: '**zcode-provider 0.1.28/0.1.29/0.1.30 三连发'
+  usage_count: 1
+  usage_days: 1
+  last_used_at: 2026-10-15
   absorbed_to: null
 - title: '**zcode-provider 0.1.27 修复 bigmodel'
   usage_count: 1
@@ -152,10 +157,5 @@ anchors:
   usage_count: 0
   usage_days: 0
   last_used_at: null
-  absorbed_to: null
-- title: 'workbuddy-provider **0.15.4** / workbuddy-ai-provider'
-  usage_count: 1
-  usage_days: 1
-  last_used_at: 2026-10-10
   absorbed_to: null
 ```
