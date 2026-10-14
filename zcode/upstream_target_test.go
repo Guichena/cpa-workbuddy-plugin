@@ -8,8 +8,12 @@ import (
 	"time"
 )
 
-// TestResolveUpstreamTargets_ByProviderFamily 验证上游模型端点按站点归属分支：
-// 中国站走 open.bigmodel.cn，国际站走 zcode.z.ai，且凭据与鉴权方式保持 start-plan 语义。
+// TestResolveUpstreamTargets_ByProviderFamily 验证上游模型端点归属：
+// start-plan 形态下中国站（bigmodel）与国际站（zai）**共用** `zcode.z.ai`，
+// 且凭据与鉴权方式保持 start-plan 语义（Bearer JWT）。
+//
+// 2026-10-14 CYCLE-3 修正：bigmodel 曾误用 `open.bigmodel.cn`，实测该端点对两类账号的
+// ZCode JWT 一律 401；同一 JWT 打 `zcode.z.ai` 鉴权通过（无效 JWT 401 / 有效 JWT 405/429）。
 func TestResolveUpstreamTargets_ByProviderFamily(t *testing.T) {
 	cfg := defaultConfig()
 
@@ -32,9 +36,12 @@ func TestResolveUpstreamTargets_ByProviderFamily(t *testing.T) {
 		ProviderFamily: providerFamilyBigmodel,
 	}
 	bmTargets := resolveUpstreamTargets(bmAccount, cfg)
-	// 断言字面量主机，避免两个常量被改成同值时断言退化为恒真。
-	if len(bmTargets) == 0 || !strings.Contains(bmTargets[0].URL, "open.bigmodel.cn") {
-		t.Fatalf("expected bigmodel coding-plan base (open.bigmodel.cn), got %+v", bmTargets)
+	// 断言字面量主机：bigmodel start-plan 与国际站共用 zcode.z.ai，不得走 open.bigmodel.cn。
+	if len(bmTargets) == 0 || !strings.Contains(bmTargets[0].URL, "zcode.z.ai") {
+		t.Fatalf("expected bigmodel start-plan base (zcode.z.ai), got %+v", bmTargets)
+	}
+	if strings.Contains(bmTargets[0].URL, "open.bigmodel.cn") {
+		t.Fatalf("bigmodel must not use open.bigmodel.cn (401 for ZCode JWT), got %+v", bmTargets)
 	}
 	if !bmTargets[0].Bearer || bmTargets[0].Credential != "jwt-bm" {
 		t.Fatalf("unexpected bigmodel target auth: %+v", bmTargets[0])

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.27] - 2026-10-14
+
+### Fixed
+- **bigmodel（中国区）账号推理稳定 401「令牌已过期或验证不正确」，根因是推理端点误用 `open.bigmodel.cn`**：
+  - 现象：CYCLE-3 真实 bigmodel 账号授权成功、额度可查（800 万/日）、模型清单可拉，但推理 3/3 稳定 401。
+  - 根因：0.1.25 为 bigmodel 选择的 `open.bigmodel.cn/api/anthropic` **不接受 ZCode OAuth JWT**——实测该端点对 bigmodel 与 zai **两类账号的 JWT 都返回 401**；同一 bigmodel JWT 打 `zcode.z.ai/api/v1/zcode-plan/anthropic` 则**鉴权通过**（同一 IP 对照：无效 JWT → 401、有效 JWT → 405/3012 或 429/3009，证明鉴权先于风控生效）。
+  - 客户端逆向佐证（`app.asar` 3.15.1）：`open.bigmodel.cn` 仅服务 `bigmodelIndividualCodingPlan`（**付费个人版**）；`bigmodelStartPlan`（**免费版**，即 OAuth 授权得到的形态）走默认端点解析，且 `resolveCurrent` 中 start-plan **不分 family**，统一使用 `zcodeJwtToken`。
+  - 修复：`resolveUpstreamTargets` 移除 bigmodel 专用端点分支（删除 `bigmodelCodingPlanBaseURL` 常量），start-plan 形态下中国站与国际站**共用** `zcode.z.ai/api/v1/zcode-plan/anthropic`。
+  - `provider_family` 字段保留（面板归属展示用），不再影响 start-plan 端点选择。
+  - 测试：`TestResolveUpstreamTargets_ByProviderFamily` 断言改为「bigmodel 走 zcode.z.ai 且不得含 open.bigmodel.cn」；哨兵变异（改回 open.bigmodel.cn）精确 FAIL。
+
 ## [0.1.26] - 2026-10-14
 
 ### Fixed
