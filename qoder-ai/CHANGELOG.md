@@ -1,5 +1,17 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.16
+
+### Fix - 模板硬编码工具集致普通问答被劫持为 agent 工具调用（推理「一小段就停」）
+
+- 缺陷: `baseprompt.json` 模板自带 Qoder CLI 的 14 个 agent 工具（Bash/BashOutput/Edit/Glob/Grep/ImageGen/KillBash/Read/Skill/Task/TodoWrite/WebFetch/WebSearch/Write）与 agent 会话上下文，而 `buildQoderBody` 对 `tools` 零处理、`openAIRequest` 也没有 `Tools` 字段，导致模板工具集**无条件、每请求**上行。上游因此把普通问答当 agent 任务作答：模型先输出一句编排语（如「我先确认本机是否有 Go 源码」）→ 发出 `Bash`/`Glob` 工具调用 → 以 `finish_reason=tool_calls` 结束本轮等工具结果；下游无工具回路，表现为「推理一小段就停、等用户继续」。`qwen-3.8-max` 的 agentic 倾向最强，流式 4/4 稳定复现。
+- 修复要点:
+  1. `openAIRequest` 新增 `Tools` / `ToolChoice` 字段，客户端工具声明不再被静默丢弃。
+  2. 新增 `alignToolsWithClient(base, req)`：客户端未声明工具时剥离模板 `tools` 与 `tool_choice`；声明了则用客户端工具整体覆盖并透传 `tool_choice`，使真正的 agent 客户端仍获得完整工具回环。
+  3. 模板 system prompt 保持不变（上游服务器行为依赖它），`agent_id` / `session_type` 亦不动——直连上游隔离实验证明**仅删 `tools` 即足够**。
+- 验证: 直连上游隔离实验（复刻 COSY 签名 + QoderEncoding）——原样 20~30 帧 tool_calls、正文仅 33~44 字符；仅删 tools 后 4/4 采样 `toolcall=0`、`finish=stop`、正文 3300~4500 字符。
+- 涉及文件: qoder-ai/body.go、qoder-ai/tools_alignment_test.go（新增）、qoder-ai/main.go、qoder-ai/VERSION
+
 ## 0.1.15
 
 ### Feat - max_tokens 统一 32768 最低输出底线

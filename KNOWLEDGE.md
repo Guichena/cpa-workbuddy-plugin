@@ -255,6 +255,21 @@ base["business"]["name"] = prompt[:30]
 
 **模板自带：** 10657 tokens 的 system prompt（Qoder CLI 的提示词）。保留它服务器行为才正常。
 
+**模板同时自带 14 个 agent 工具（`tools` 数组）与 agent 会话标识**（`agent_id=agent_common`、`session_type=qodercli`、`chat_task=FREE_INPUT`）：
+
+```
+Bash, BashOutput, Edit, Glob, Grep, ImageGen, KillBash, Read,
+Skill, Task, TodoWrite, WebFetch, WebSearch, Write
+```
+
+system prompt 内含 `# Tool usage policy`（「主动用工具」）与 `# Code References`（「引用必须给 `file_path:line_number`」）两段，会引导模型走 agent 流程。
+
+**⚠️ 缺陷点（2026-10-14 实测确认，同日已修复）**：`buildQoderBody` 原对 `tools` **不做任何处理**，`openAIRequest` 也**没有 `Tools` 字段**（客户端工具被静默丢弃）。因此模板的 14 个工具**无条件、每请求**上行——即使用户只是普通问答、一个工具都没传。后果：上游按 agent 任务作答，模型输出一句编排语（如「我先确认本机是否有 Go 源码」）→ 调 `Bash`/`Glob` 探测环境 → 以 `finish_reason=tool_calls` 结束本轮，等工具结果。下游无工具回路，表现为「推理一小段就停、等用户继续」。`qwen-3.8-max` 的 agentic 倾向最强故症状最稳定（流式 4/4 复现；同 prompt 非流式返回完整 20908 字节正文 `finish=stop`；追加「禁止调用工具」约束后流式 `tool_calls` 归零、输出 7485 字符完整正文）。`glm-5.3` 等「其他模型不会这样」是因为它们由 traework 插件承载，不经过本模板。
+
+**修复**：`buildQoderBody` 新增 `alignToolsWithClient(base, req)` —— 客户端未声明工具时 `delete(base, "tools")` 并删 `tool_choice`；声明了则用客户端工具覆盖并透传 `tool_choice`。`openAIRequest` 补 `Tools` / `ToolChoice` 字段。**只删 `tools` 即足够，无需改 system prompt 或 `agent_id`/`session_type`**（直连上游隔离实验：仅删 tools 后 4/4 采样 `toolcall=0`、`finish=stop`、正文 3300~4500 字符；原样则 20~30 帧 tool_calls、正文仅 33~44 字符）。两插件（`qoderwork` / `qoder-ai`）逐行同构同步。
+
+完整诊断见 `doc/4-bugs/2026-10-14_084611_qwen3.8-max流式请求被模板硬编码工具集劫持为agent工具调用致推理提前结束根因诊断.md`。
+
 ---
 
 ## 6. 模型清单

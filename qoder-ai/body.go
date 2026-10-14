@@ -123,6 +123,30 @@ func decodeOpenAIContent(raw json.RawMessage) (string, error) {
 	return strings.Join(texts, "\n"), nil
 }
 
+// alignToolsWithClient 按客户端真实声明对齐上游 body 的 tools 字段。
+// 模板 baseprompt.json 硬编码了 Qoder CLI 的 14 个 agent 工具（Bash/Glob/Read…）
+// 与 agent 会话上下文，而客户端普通问答并不具备这些工具的执行回路；若不剥离，
+// 上游会把每次问答都当 agent 任务作答：先输出一句编排语，再发出工具调用并以
+// finish_reason=tool_calls 结束本轮，下游表现为「推理一小段就停、等用户继续」。
+// 因此：客户端未声明工具时剥离模板工具集，声明了则用客户端工具覆盖并透传
+// tool_choice，使真正的 agent 客户端仍获得完整工具回环。
+// [参数] base: 模板解析后的 body 根对象（就地修改）；req: 客户端请求。
+// [返回] 无。
+// 最近修改时间 2026-10-14；改动原因：修复模板硬编码工具集致普通问答被劫持为 agent 工具调用
+func alignToolsWithClient(base map[string]any, req *openAIRequest) {
+	if req != nil && len(req.Tools) > 0 {
+		base["tools"] = req.Tools
+		if req.ToolChoice != nil {
+			base["tool_choice"] = req.ToolChoice
+		} else {
+			delete(base, "tool_choice")
+		}
+		return
+	}
+	delete(base, "tools")
+	delete(base, "tool_choice")
+}
+
 // openAIRequest is the CPA-facing chat completion request.
 type openAIRequest struct {
 	Model           string          `json:"model"`
@@ -130,6 +154,11 @@ type openAIRequest struct {
 	Stream          bool            `json:"stream"`
 	MaxTokens       int64           `json:"max_tokens"`
 	ReasoningEffort string          `json:"reasoning_effort"`
+	// Tools / ToolChoice 承载客户端的工具声明。模板 baseprompt.json 硬编码了
+	// Qoder CLI 的 14 个 agent 工具，必须按客户端真实声明对齐，否则普通问答
+	// 会被上游当作 agent 任务作答并以 finish_reason=tool_calls 提前结束。
+	Tools      []any `json:"tools"`
+	ToolChoice any   `json:"tool_choice"`
 }
 
 // extractLatestUserPrompt returns the content of the last user message,
@@ -185,6 +214,9 @@ func buildQoderBody(req *openAIRequest, modelKey, userType string) ([]byte, erro
 		}
 		params["max_tokens"] = computeAdaptiveMaxTokens(modelKey, val, isReasoning)
 	}
+
+	// tools: 把工具声明权归还请求方，消除模板硬编码工具集导致的 agent 劫持。
+	alignToolsWithClient(base, req)
 
 	// chat_context.text.text + chat_context.extra.originalContent.text
 	if cc, ok := base["chat_context"].(map[string]any); ok {
