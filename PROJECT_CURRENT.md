@@ -2,8 +2,8 @@
 
 ## 目标与范围
 
-- 目标：维护 CLIProxyAPI (CPA) 的 Go 原生插件套件 `cpa-workbuddy-plugin`（涵盖 7 大 AI 服务商 Provider + 1 统一用量统计插件），提供多账号管理、动态模型发现、流式转发、专属现代管理控制台、扫码/Token 登录、保号巡检与统一 token 用量统计分析服务。
-- 范围：仓库内 8 大插件体系的代码实现、单元测试、资产构建、发布流水线、registry 元数据同步等：
+- 目标：维护 CLIProxyAPI (CPA) 的 Go 原生插件套件 `cpa-workbuddy-plugin`（涵盖 8 大 AI 服务商 Provider + 1 统一用量统计插件），提供多账号管理、动态模型发现、流式转发、专属现代管理控制台、扫码/Token 登录、保号巡检与统一 token 用量统计分析服务。
+- 范围：仓库内 9 大插件体系的代码实现、单元测试、资产构建、发布流水线、registry 元数据同步等：
   1. `workbuddy-provider`：腾讯 CodeBuddy（国内版与 Global 版）；
   2. `workbuddy-ai-provider`：WorkBuddy AI（独立国际版）；
   3. `traework-provider`：Trae SOLO（字节跳动海外/国内 AI IDE 客户端）；
@@ -11,12 +11,13 @@
   5. `qoder-ai-provider`：Qoder AI（国际版 qoder.com，含 UMID 协议支持）；
   6. `cursor-provider`：Cursor（cursor.sh，Connect-RPC 协议与会话连续性）；
   7. `zcode-provider`：ZCode（BigModel Coding Plan，Anthropic 兼容与客户端真实指纹 mimic）；
-  8. `workbuddy-token-usage`：统一 Token 用量统计与实时看板服务。
+  8. `copilot-provider`：GitHub Copilot（设备码 OAuth / 内部令牌保活 / VS Code Copilot Chat 指纹模拟）；
+  9. `workbuddy-token-usage`：统一 Token 用量统计与实时看板服务。
 - 非范围：CLIProxyAPI 核心服务本体；跨项目文件修改。
 
 ## 项目概况
 
-- 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
+- 状态：活跃维护中。9 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
   - `zcode-provider`: **0.1.31**（面板额度改为逐模型独立进度条（GLM-5.3 / GLM-5.3-Flash 各一条）并移除「过期」等冗余信息；0.1.30 面板额度改用 `billing/balance` 取真实已用/剩余 + 领取失败文案友好化；0.1.29 修复面板无感验证 captcha 配置缺陷；0.1.28 面板内无感验证领取 Start Plan + OAuth 默认中国区）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoderwork-provider`: **0.9.38**（签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.9.37 tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷）
@@ -24,6 +25,7 @@
   - `traework-provider`: **0.2.13**（面板签到时刻文案漂移修正为 00/04/08/12/16/20；0.2.12 定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.2.11 max_tokens 32768 底线 + payload 层同步，探活改全量模型按序测试）
   - `workbuddy-provider`: **0.15.10**（面板签到时刻文案漂移修正为 00/04/08/12/16/20；0.15.9 定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.15.8 max_tokens 32768 底线，探活改全量模型按序测试）
   - `workbuddy-ai-provider`: **0.1.15**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.1.14 max_tokens 32768 底线，探活改全量模型按序测试）
+  - `copilot-provider`: **0.1.0**（首发：GitHub OAuth Device Flow 登录 + Copilot 内部令牌 80% 提前保活 + VS Code Copilot Chat 客户端指纹模拟 + 动态模型发现 + 多账号池 429/5xx 换号重试 + 流式/非流式转发 + 额度查询与专属面板）
   - `workbuddy-token-usage`: **0.2.8**（0.2.8 让退役实例的 feed 导入协程在连续 3 轮关闭句柄后自行退出；0.2.7 修复宿主配置重载换句柄窗口导致的用量记录丢失；0.2.6 移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细与维度汇总展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-15 (GMT+8)
@@ -110,70 +112,27 @@
     4. **生产验收**：`/v0/resource/plugins/zcode-provider/panel` 200（70,280 字节）且新文案生效（`领取指引`×7、`guideModal`×7、旧文案 `激活开通`/`activateAccount` 均为 0）；accounts 200（3 账号）。
   - 说明：上一轮 0.1.21 已由并行会话发布完毕（registry/GitHub release/release-assets 三处一致），故本轮直接发 0.1.22，无版本冲突。
 
-- 上一会话（2026-10-13）：**六插件 max_tokens 统一 32768 最低输出底线 + zcode 规格矩阵全扩 + 四插件定时探活改全量按序并全链路发布生产**：
-  - 需求背景：① 用户要求收口「六插件兜底 ReasoningMax 8192 与 traework 20000 口径不一」并对齐；② 进一步明确「所有模型最小 max_tokens 都应是 32768，这是底线」；③ 定时探活由「随机取 ≤5 个模型」改为「全量模型按序测试，任一成功即健康、不再打 test_failed，仅全败才打标」，且 qoder 两插件不需要探活、zcode 需新增探活。
-  - 架构设计与实现：
-    1. **统一最低输出底线**：六插件 `model_specs.go` 新增 `minMaxTokensFloor=32768` 常量与 `applyMaxTokensFloor` 纯函数；兜底 `ReasoningMax` 8192→32768；`computeAdaptiveMaxTokens` 四个出口（未传补足 / 保守放宽 / 超限 clamp / 区间保留）全部经 floor 收敛；广播层 `models.go` 的 `MaxCompletionTokens` 与 traework `upstream.go` payload 层同步保底；
-    2. **zcode 规格矩阵全扩**：规格表由 14 条扩至 64 条（覆盖 GLM 4.5/4.6/4.7 全系 + Claude/GPT/Gemini/DeepSeek/Qwen 通用家族），匹配逻辑改为最长前缀优先并支持 `vendor/` 前缀剥离；
-    3. **定时探活全量按序**：workbuddy / workbuddy-ai / traework 废除「随机 ≤5 + 30s 整轮预算熔断」，`orderedAllWorkbuddyModels` / `orderedAllTraeModels` 返回全量候选按序测试，任一成功即终止并清 `test_failed`，全败才打标；zcode 新增定时探活（30 分钟节流 + 20s 单请求超时 + 全量按序 any-success），抽出 `pingUpstreamOnce` 纯传输内核供面板测试与定时探活复用，避免调度探活污染用量/冷却；
-    4. **测试**：新增 `TestDoActivePingAllModelsBeyondLegacyCap`（三插件）与 zcode `TestDoActivePingAllModelsInOrderAnySuccess` / `...FailTagsTestFailed`、`TestResolveOfficialModelSpec_Extended`；六插件 `cgo-shim` build/vet/test 全绿。
-  - 发布与生产闭环：
-    1. **一轮提交发布**：`7ec23c0`(feat 52 文件) → `0aaaa65`/`b2b82e7`(assets) → `02e7375`(registry) → `82e437f`(prune 6 个旧版本)；
-    2. **CI 处置**：六插件并发 dispatch，workbuddy-provider 首个 run 因 `token-usage-tracker` 既有 flaky 测试（`TestFeedImporterLoopSurvivesHandleSwapAndResumes`，本轮未改该目录、本地全绿）失败 → 单插件重跑成功；其余 5 个 run 一次通过；
-    3. **远端验证**：六插件各 7/7 artifacts sha256+size ALL PASS，无旧版本残留；
-    4. **生产热重载**：六插件 `plugin-store install` 均 `restart_required=false` 且日志确认 `plugin hot reloaded`（active_version 全为目标版本、retired 为上一版），零容器重启；落盘 `.so` sha256 与本地 release zip 逐字节一致；
-    5. **生产健康**：六插件 accounts/panel 全 200。
-  - 并行会话保护：`scheduler.go`（High-Credit-First 注释）等为其他会话在途改动，按「非本轮代理产生的改动默认保护」只提交本轮文件（路径限定 `git commit -- <路径>`）；`zcode/panel.html`/`management.go` 及 0.1.22 bump 当时属在途，已于 2026-10-14 由本插件会话完成并发布（见上）。
+- 当前会话（2026-10-15）：**新增 copilot-provider 插件（0.1.0 首发）并完成 Kiro 可行性评估（裁定不立项）**：
+  - **copilot-provider 立项与实现**：按 `doc/3-实施/2026-10-15_Copilot与Kiro插件立项实施总览.md` 的 CYCLE-1~4 推进。GitHub 免费档实测可用（`sku=free_limited_copilot` 可换内部令牌、发现 57 个模型、流式与非流式推理均通），关闭 `GAP-001`；`GAP-002` 关闭（持久化上游 `endpoints.api` 权威端点，解析优先级改为配置 `base_url` > 账号端点 > 账号类型推导，含 `*.githubcopilot.com` 域校验）。单测 27 例（main 17 + management 10）。
+  - **CYCLE-4 发布闭环**：`c546b57`(feat 37 文件) → `56ac86f`(8 assets) → `8966b0c`(registry)；CI push run `38719640800` + dispatch run `38719658415` 双 success（72 job 全绿）；远端 7/7 artifacts sha256+size ALL PASS；生产 `plugin-store install` 返回 `restart_required=false`，日志确认 `plugin loaded` + `plugin registered`，**零容器重启**，落盘 `.so` sha256 `65d428b8…` 与本地 zip 逐字节一致，accounts/status/credits/panel 四路由全 200。`AC-006`/`AC-007` 双 PASS。
+  - **发布链路接入点**：`.github/workflows/build.yml` 8 处（头部注释、tag 触发、dispatch options、test matrix、build matrix ×5、build-cross ×2、release if 条件、tag 解析分支、DISPLAY 映射）+ `assets/icons/Copilot.png`（640×640 RGBA，imagegen CLI 真实出图）+ README（计数 8→9 与各段落）+ CHANGELOG。
+  - **过程中的真实故障（已修复）**：侦察阶段提前写入的 registry 占位条目（`artifacts: []`）被并行会话的宽泛 `git add` 一并推送 → CPA 源级校验失败（`plugins[8]: direct install requires at least one artifact`）→ **所有插件** install 返回 `plugin_not_found`。由并行会话 `10a1f2f` 移除恢复；本轮随后严格按发布 skill Step 11 语义（条目与 artifacts 由 `publish-assets.py` 原子写入）重做。已沉淀知识库笔记与项目记忆。
+  - **Kiro 可行性评估（CYCLE-5，评估非实现）**：结论**不立项**。决定性依据为官方一手证据——① Kiro FAQ 明文「Use through third-party automation harnesses ... that route requests outside of Kiro's native interfaces **is not permitted**」，本插件形态直接命中；② 免费档仅 **50 credits/月**（计价单位为 credits，IDE/CLI/Web 共用同一池、无独立 API 额度）。另有社区实证终局封禁案例（一年冷却）与设备指纹/IP 绑定风险。技术事实备查（CodeWhisperer 后端 + Bearer + 专有 JSON 体 + AWS eventstream 二进制流，难度中高档）。报告 `doc/3-实施/2026-10-15_235000_Kiro可行性评估报告.md`。
+  - 门禁：`cgo-shim` 全绿；`STYLE: PASS`；`POLLUTION: PASS`；OCR 审查 PASS（Go/JS/Python/workflow 四类规则逐条核验）；提交全程路径限定，并行会话文件完好未混入。
+  - 文档：`doc/2-需求/2026-10-15_180000_*`、`doc/3-实施/2026-10-15_*`（总览 + Kiro 报告）、`doc/5-tests/2026-10-15_{190000,210000,220000,234500}_*`、`doc/6-review/2026-10-15_*`。
 
-- 上一会话（2026-10-13）：**Qoder 110 日调用上限 24 小时持久化冷却引擎实现、两插件镜像同步与全链路发布生产部署（qoder-ai-provider 0.1.14 / qoderwork-provider 0.9.34）**：
-  - 需求背景：Qoder 服务商特殊性——积分余额与每日请求调用次数相互独立，满积分账号仍会因突发/高频调用触发 `110: Billing daily count exceeded`（区别于本仓库其他 provider 的额度模型）。用户明确要求：账号触发 110 后进入 24 小时持久化冷却、排除出路由与换号、仅自然到期解除（成功推理不清除），面板展示剩余时间徽标并支持人工解冷。
-  - 架构设计与实现：
-    1. **110 精确识别**：`policy.go` 新增 `isDailyCountExceeded(status, body)`，覆盖全小写文本 / `"110"` / `code: 110` / `code:"110"` / `110:`，避免误伤正常业务帧；
-    2. **持久化冷却引擎**：新增 `daily_cooldown.go`——`daily_cooling_until`（RFC3339）经 `persistAuthDirect` 原子落盘物理 auth 文件，内存镜像 `dailyCoolingMap` + `normalizeFailoverKey` 双向归一化键检索，`refreshDailyCoolingSetFromDisk` 由 watchdog tick 定期重建；
-    3. **路由与换号绝对排除**：`isAccountCoolingDown` 首位接入 `isAccountDailyCooling`，联动 `scheduler.pick` / `pickNextAuth` / 会话粘性；`resetAccountFailover` **刻意保留**每日冷却，守「仅到期自然解除」不变量；
-    4. **全链路触发**：`stream.go`（HTTP 4xx、SSE 200 业务错误帧、Qoder SSE 收集）与 `main.go`（换号重试与终态错误）均触发 `triggerDailyCooldown`；
-    5. **面板与解冷接口**：新增 `POST /clear-cooldown`（`handleClearCooldown`），`buildDashboardEx` / `/credits` 输出 `daily_cooling` / `daily_cooling_until` / `daily_cooling_remain`；前端新增「冷却」筛选标签、`110冷却(HH:MM)` 徽标与带二次确认的「解冷」按钮；
-    6. **测试**：新增 `daily_cooldown_test.go` / `daily_cooling_routing_test.go`，两插件 `cgo-shim` build/vet/test 全绿。
-  - 发布与生产闭环：
-    1. **发布链**：`0c4511a`(feat) → CI `38409285358`/`38409280524` success → `ce1589f`(assets) → `5516422`(registry) → `af359f9`(0.1.14 fix) → CI `38413314321` success → `496c0c0`(assets) → `ca9439f`(registry) → `904ad5d`(prune 0.1.13)；远端 raw URL 两插件各 7/7 哈希 ALL PASS，无旧版本残留；
-    2. **发布中发现并前向修复 0.1.13 缺陷**：qoder-ai 的 `managementRegistration().Routes` 漏登记 `clear-cooldown`（qoderwork 已登记）→ 宿主按注册表分派，未声明路径被宿主层拦截返回**空 body 404**（与插件层 JSON 错误可区分）→ 补登路由发 **qoder-ai 0.1.14**；
-    3. **生产热重载**：两插件 `plugin-store install` 均 `restart_required=false` 且热重载生效（qoder-ai active=0.1.14 retired=0.1.13；qoderwork active=0.9.34 retired=0.9.33），零容器重启；落盘 .so sha256 与本地 zip 一致（`585de9f1…` / `ad1dcd06…`）；
-    4. **生产验收**：两插件 accounts/panel 均 200，`clear-cooldown` 返回插件层 JSON 200，`daily_cooling` 字段已现身生产 accounts；
-    5. **并行阻断处置**：验证期间发现并行会话未完成的 `model_specs.go`/`models.go` 改动致 `cgo-shim` 失败，按分离发布规则移走隔离验证（证明失败与本轮修复无关），发布完成后原样恢复。
-
-- 当前会话（2026-10-13）：**按模型官方规格自适应放宽与截断 max_tokens 彻底根除长思考链 8192 截断缺陷（workbuddy 双插件完成与回归）**：
-  - 故障现场：用户在 `deepseek-v4.1-flash 高` 思考强度下发生工具调用失败与 57s 长卡顿；底层用量排查发现 `output_tokens: 8192`、`reasoning_tokens: 8192`，正文 0 token 被上游 `finish_reason: length` 截断；new-api 记录 `上游没有返回计费信息，无法扣费`；
-  - 根因定位：Qoder 客户端在前端代码中将自定义模型 `max_output_tokens` 写死为 `8192`；CPA 宿主原样透传给上游；长思维链在超长上下文下产生上万字思考，吃光 8192 配额导致正文未输出即被掐断；
-  - 架构升级（拒绝一刀切，采用官方规格自适应模型表）：
-    1. 新增 `workbuddy/model_specs.go` 与 `workbuddy-ai/model_specs.go`，内置对齐宿主 `models.json` 及各厂商官方文档的权威规格表（覆盖 DeepSeek、GLM、Kimi、Qwen、Claude、GPT、Gemini、MiniMax、Hunyuan 等全主流家族）；
-    2. 针对思考/推理模式（`reasoning_effort != ""` 或推理模型），自动将客户端保守过小的 8192 提升到模型官方推理上限（DeepSeek 64k、GLM 128k、Claude 64k、Qwen 32k 等）；
-    3. 支持智能安全区间截断（clamp），当客户端请求超大值时自动收敛至官方上限避免上游网关返回 400；
-    4. 动态模型元数据保底对齐官方规格；双插件单测 100% PASS 并完成提交推送。
-
-- 会话（2026-10-12）：**ZCode 0.1.15 新增 `POST /claim` 端点与面板一键激活（后被 0.1.22 推翻为「领取指引」，0.1.28 再以无感验证实现）**：逆向确认 claim 链路需阿里云验证头 `X-Aliyun-Captcha-Verify-Param` + `sgp` 区域；后端新增 claim 端点、刷新遇无生效计划时静默试激活、面板未激活卡片「⚡ 激活开通」。CI `38286802545` 全绿，生产热重载生效。
-
-- 会话（2026-10-12）：**ZCode 0.1.14 全量修复用量管道、模型别名解析与额度刷新稳定性**：① 用量面板无记录——`usage_feed.go` 写孤立路径且 JSON 缺 `tokens` 嵌套与 `source`；② 小写 `glm-5.3` 400——`ExecutorModelScopeStatic` 误声明致别名未绑定 + 缺 `cacheModelAliases`/`resolveUpstreamModel`；③ 额度刷新频控卡顿。修复：重写用量流管道、改 `ExecutorModelScopeOAuth` + `normalizeOfficialGLMModelID`、流式换号 3 次重试、前端轮询改读缓存。CI `38271303121` 全绿，生产验收：面板探活出真实用量记录、`/v1/models` 注册小写模型、`/credits` 拉到 800 万额度。
-
-- 当前会话（2026-10-12）：**qoder-ai-provider 0.1.9 / qoderwork-provider 0.9.30 修复「上游 HTTP 200 顶层 code 排队帧未被识别致 new-api 调用 qwen3.8 系列 60s 挂死」**：
-  - 用户反馈与目标：用户报「还是不能从 new-api 请求 cpa 的 qwen-3.8-flash、qwen-3.8 模型，但 cpa 本身测试可以」；拍板「两个插件都改，行为都选立即报错」。
-  - 根因（数据面解析器侧，上一轮仅收敛到探活侧）：`parseQoderSSEChunk` 只认 `[DONE]`/嵌套 `body`/扁平 `choices`·`id`/`error` 四类形态，阿里 Qoder 对超上下文请求在 HTTP 200 下返回的顶层 `code:"403"` 帧（内嵌 `10605/isQueued:true/retryAfterSeconds:30`）落入兜底被 `continue` 跳过 → 读不到终止信号死等 Keep-Alive 约 60s 后对端 `INTERNAL_ERROR`；面板探活因 prompt 极小不触发排队 + 首字节盲判而显示成功，形成「测试通过、真实不可用」假象。
-  - 生产直测判据：同一模型名仅 prompt 长度不同行为相反（`hi` 1.47s / 67KB 3.49s 通过；112KB **3/3 稳定挂死 60.5s**）；挂死响应体首行即排队帧 + 3 条 `: keep-alive`；`strings <so>|grep isQueued` 无命中确认线上无识别逻辑。排队性质经 feed 259 条确认为**请求级 + 时段性**（同账号 ok/bad 混合、成功请求 input 达 289,424）。
-  - 实施：解析器增第 4 类顶层 `code` 形态；`sseErrorFrame` 增顶层 `code`+`message` + 新增 `unwrapNestedMessage` 逐层展开（保留首层业务码）；`pumpUpstreamStream`/`collectUpstreamStreamQoder`/`aggregateQoderSSE` 三路径循环内即刻收尾；`sendActivePingQoder` 首帧内容校验。行为统一「立即报错」（`shouldRotateOnUpstreamErr` 对排队帧天然 false，不换号）。
-  - 门禁：两插件 `cgo-shim-build.py` build/vet/test 全绿；新增 `stream_queue_frame_test.go`（`hangingReader` 模拟 Keep-Alive），**哨兵反证移除识别分支后该用例耗时 10.00s 精确复现挂死**；对抗验证（正文含 code 字样不误判）；6-review `STYLE: PASS`；`POLLUTION: PASS`；两插件四个关键函数逐字同构（md5 两两相同）。
-  - 文档与沉淀：Bug 主文档 `doc/4-bugs/2026-10-12_001641_*`、测试主文档 `doc/5-tests/2026-10-11_164802_*`、6-review `doc/6-review/2026-10-11_164802_*`；skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules` 规则一新增契约；知识库 `HTTP200不等于流式协议成功-有效终止契约.md` 追加 2026-10-12 补充。
-  - 提交：`62c16a5`（代码+文档）、`d433e9f`（skill）、`f20dbcc`（记忆）、`c1af36e`（测试基线）、`ec145de`（assets）、`b9863ff`（registry）、`a31e8b2`（prune）已推送 main。
-  - **发布与生产验收（已完成）**：CI run `38157167623`/`38157165743` 均 success，tag 与 Release 各 8 资产；registry 同步 0.1.9/0.9.30、远端 14/14 平台 size+sha256 ALL PASS；生产 `plugin hot reloaded active_version=0.1.9 retired_version=0.1.8` / `0.9.30 retired=0.9.29`、**零容器重启**、落盘 `.so` sha256 与本地 zip 一致（`8fd3aa13…` / `9758ca2e…`）、accounts 200；修复后 112KB prompt 由 **60.57s 挂死 → 3.90s 正常返回**，`qwen-3.8-flash`/`qwen-3.8` 经渠道 key 直测均 200（1.9s）；探活侧已实证能如实报 `upstream 200: 112:` 失败（旧版盲判成功）；prune 清理 0.1.8/0.9.29（约 40.6 MB）。
-  - 局限：验收期间上游未排队，排队帧路径的「快速报错」未在生产自然复现，由本地哨兵反证（10.00s 精确复现）+ 真实帧复刻覆盖；待排队窗口回看日志确认。
-
-- 会话（2026-10-11）：**彻底废弃并删除 Gemini 插件（gemini-provider），对齐 8 大插件体系**：因体积 14.4MB、强依赖 GCP 结算账号、无面板与容灾，`git rm` 源码/资产/图标，registry 与 workflow 同步移除（9→8 插件），文档全量更新，`validate-registry.py` 8 插件通过。
-
-- 会话（2026-10-11 至 10-12）：**ZCode 授权重构为官方 CLI 轮询 OAuth 链路（0.1.5 → 0.1.8）**：反编译 asar 锁定官方契约（`client_P8X5CMWmlaRO9gyO-KSqtg`），`StoredAuth` 扩展 token/access_token/user；0.1.8 改用 `POST /api/v1/oauth/cli/init` + `GET .../cli/poll/<flow_id>`，`handleStartLogin` 原样透传 `authorize_url`。**2026-10-14 更正**：redirect_uri 白名单结论经三臂实测推翻（`authorize` 层不校验），真因是 deep-link 唤起本地客户端致 CPA 拿不到授权码。
-
-- 会话（2026-10-11）：**Qoder 403 首包假成功与流式诊断**——上游 HTTP 200 下 `isQueued:true` 报错帧 + 连接僵死 60s、探活盲读 512 字节误判成功。运维闭环：生产 nginx `proxy_buffering off` 平滑重载，外网 1.35s 端到端流式；经验固化到 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`。
-
-- 会话（2026-10-11）：**deepseek-v4.1-flash 推理断开根因诊断 + traework 补齐 oauth-excluded-models 入口（现承载于 0.2.12）**——三层叠加：同名裸模型多服务商认领、会话亲和钉死故障服务商、两个 30s 超时串行致零字节长挂 60s。修复：traework 新增 `filterExcludedModels` 并在全出口应用，新增 5 例测试含语义变异反证。
-
-- 当前会话（2026-10-11）：**Token 用量面板移除四个图表与导出图片并下线图表专用接口与聚合（0.2.6/0.2.7/0.2.8 均已发布并生产热重载验收）**——移除 4 图表 + 相关统计与 `/stats/trends`、`series`/`bucket_seconds` 字段，`dashboard.go` −21%（269,709 → 212,658 字节）；0.2.7 修换句柄窗口导致的用量记录丢失（`ErrStoreClosed` 哨兵 + 配置指纹复用句柄），0.2.8 让退役实例 feed 导入协程连续 3 轮关闭句柄后自行退出。门禁：`cgo-shim` 全绿 + 38 项静态断言（旧版本反证 24 项 FAIL）。⚠️ 泄漏旧协程需一次容器重启才能回收，交用户裁定。
+- 会话（2026-10-13，更早历史已压缩，详见 git log 与 PROJECT_HISTORY.md）：
+  - **六插件 max_tokens 统一 32768 最低输出底线**：`model_specs.go` 新增 `minMaxTokensFloor=32768` + `applyMaxTokensFloor`，兜底 ReasoningMax 8192→32768，四个出口全部经 floor 收敛，广播层与 traework payload 层同步保底；zcode 规格矩阵由 14 扩至 64 条（最长前缀优先 + `vendor/` 剥离）；workbuddy/workbuddy-ai/traework 定时探活改「全量按序 any-success」，zcode 新增探活（30 分钟节流）；发布链 `7ec23c0`→`0aaaa65`/`b2b82e7`→`02e7375`→`82e437f`，六插件生产热重载零重启。
+  - **Qoder 110 日调用上限 24 小时持久化冷却引擎（qoder-ai 0.1.14 / qoderwork 0.9.34）**：`isDailyCountExceeded` 精确识别 110；`daily_cooldown.go` 落盘 `daily_cooling_until` + 内存镜像 + watchdog 重建；路由/换号/会话粘性绝对排除，`resetAccountFailover` 刻意保留冷却；新增 `POST /clear-cooldown` 与面板冷却徽标。发布中发现并前向修复 0.1.13 漏登记路由致宿主空 body 404。
+  - **按模型官方规格自适应放宽/截断 max_tokens**：根因是 Qoder 客户端写死 `max_output_tokens=8192`，长思维链吃满配额致正文被 `finish_reason: length` 截断（`output_tokens=reasoning_tokens=8192`，new-api 报无法扣费）。方案：内置官方规格表，推理模式自动放宽至官方上限、超限 clamp、元数据保底对齐。
+  - **ZCode 0.1.15 claim 端点**（后被 0.1.22 推翻为「领取指引」，0.1.28 再以无感验证实现）：claim 链路需 `X-Aliyun-Captcha-Verify-Param` + `sgp` 区域。
+  - **ZCode 0.1.14 修复用量管道/别名/额度刷新**：`usage_feed.go` 写孤立路径且缺 `tokens` 嵌套；`ExecutorModelScopeStatic` 误声明致别名未绑定；改 `ExecutorModelScopeOAuth` + `normalizeOfficialGLMModelID`。
+  - **qoder 两插件修复排队帧未识别致 60s 挂死（0.1.9 / 0.9.30）**：`parseQoderSSEChunk` 增第 4 类顶层 `code` 形态 + `unwrapNestedMessage` 逐层展开，三路径循环内即刻收尾，行为统一「立即报错」；哨兵反证移除识别分支后精确复现 10.00s 挂死。
+  - **删除 Gemini 插件（gemini-provider）**：体积 14.4MB、强依赖 GCP 结算、无面板与容灾 → `git rm` 后 registry 与 workflow 同步（9→8 插件）。
+  - **ZCode OAuth 重构为官方 CLI 轮询链路（0.1.5→0.1.8）**：`POST /api/v1/oauth/cli/init` + `GET .../cli/poll/<flow_id>`；redirect_uri 白名单结论经三臂实测推翻，真因是 deep-link 唤起本地客户端。
+  - **Qoder 403 首包假成功与流式诊断**：HTTP 200 下 `isQueued:true` 报错帧 + 连接僵死 60s、探活盲读 512 字节误判成功；生产 nginx `proxy_buffering off` 平滑重载后外网 1.35s 端到端。
+  - **deepseek-v4.1-flash 推理断开根因**：同名裸模型多服务商认领 + 会话亲和钉死故障服务商 + 两个 30s 超时串行；traework 补 `filterExcludedModels`。
+  - **Token 用量面板移除 4 图表（0.2.6/0.2.7/0.2.8）**：下线 `/stats/trends` 与序列聚合；0.2.7 修换句柄窗口丢记录（`ErrStoreClosed` 哨兵），0.2.8 让退役实例协程自退。
 
 - （更早的 13 条会话进展摘要已按 51200 字节上限裁剪，历史见 git log 与 PROJECT_HISTORY.md）
 
