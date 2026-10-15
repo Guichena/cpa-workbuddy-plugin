@@ -384,7 +384,58 @@ case "response.failed", "response.incomplete", "response.cancelled", "response.c
   - 吃满率极低（`rt ≥ 20000` 仅 9/11110 = 0.08%）且**与上下文规模无强相关**。
 - 生产插件版本：`workbuddy-ai-provider-v0.1.15.so`（宿主落盘 `2026-10-14 03:29`；`grep -a` 已确认含 `computeAdaptiveMaxTokens` 符号 ⇒ **自适应引擎确已上线**，本次故障是引擎生效后的新形态，非「未发布」）。
 - 用户约束（2026-10-15）：**不得改小最大输出** ⇒ 方案 C 作废。
-- 修复：**未实施**（受跨项目只读红线约束，`F:/new-api` 与 `F:/CLIProxyAPI` 仅出方案）。
-  - 方案 A（关思考重试）为**唯一剩余治本手段**，落在本仓库，待用户确认后实施。
-  - 方案 B 的精确 patch 已写入本文档第五节，可在 `F:/new-api` 目录新开会话执行。
-  - 方案 D 已实测否定（5.D.5）。
+- 修复状态更新（2026-10-15 晚间）：
+  - 方案 B 在 New-API（`F:/new-api`）已实现并提交上线（`d552194f0`，容器 20:59 就绪）。
+  - 但随后线上请求（21:03 与 21:06，会话 `dc19480f` 与 `47f3713d`）仍然复发相同现象：耗时 3m27s、New-API 报 `total tokens is 0` 与 `$0.00`。
+  - 进一步排查发现：CPA 转译层守卫（`openai_openai-responses_response.go:649`）在纯思维链零正文截断时直接提前返回，未发出任何终态事件（`response.completed` / `response.incomplete`），导致 New-API 的 `response.incomplete` 分支无法被触达（详细排查与修复见第八节）。
+
+---
+
+## 八、方案 B 线上复发诊断与 CPA 转译层根因修复（2026-10-15）
+
+### 8.1 复体现象与证据
+1. **New-API 生产容器**：20:59 携带方案 B 提交 `d552194f0` 启动生效。
+2. **复发请求**：
+   - 21:03:52 与 21:06:03 两个截断请求，首字延迟 4.2s，总耗时 188s 与 207s（3m27s）。
+   - New-API 日志依旧记录 `total tokens is 0`、`quota 0`、`上游没有返回计费信息，无法扣费（可能是上游超时）`。
+   - 插件端 `token-usage-feed.ndjson` 证实：插件层已完整捕获 `output=64000, reasoning=64000, input=145972, latency=206.8s`，数据在插件层未丢。
+
+### 8.2 根因定位（CPA 转译层终态事件截断）
+在 `F:\CLIProxyAPI\internal\translator\openai\openai\responses\openai_openai-responses_response.go:649`：
+```go
+if isDone {
+    finalizeOpenItems()
+    if hasActiveUnfinishedTool {
+        return out
+    }
+    // ⚠️ 历史防御代码（commit 522b4de5）遗漏了 reasoning 场景：
+    if len(st.MsgItemAdded) == 0 && len(st.FuncItemAdded) == 0 {
+        return out
+    }
+    st.CompletedEmitted = true
+    out = append(out, buildResponsesCompletedEvent(st, requestForNamespace, nextSeq))
+    return out
+}
+```
+- **机制原理**：当发生纯思维链吃满（64,000 tokens 截断且无任何正文输出和工具调用）时，`st.MsgItemAdded` 与 `st.FuncItemAdded` 长度均为 0。
+- 第 649 行守卫触发 `return out`，导致 `buildResponsesCompletedEvent` 被跳过。
+- CPA **对外完全未发射 `response.completed` 或 `response.incomplete` 终态事件帧**。
+- 下游 New-API 直接读到 SSE EOF 结束，无法收到任何 `response.incomplete` 事件，方案 B 分支未被激活。
+
+### 8.3 修复落地与验证
+1. **代码修复（`F:\CLIProxyAPI`）**：
+   放宽第 649 行守卫，仅在真正未产生任何输出项且未收到 finish_reason/usage 的异常流时抑制；对于合法产出 reasoning 或已有 finish_reason/usage 的流正常放行：
+   ```go
+   if len(st.MsgItemAdded) == 0 && len(st.FuncItemAdded) == 0 {
+       if len(st.Reasonings) == 0 || (st.FinishReason == "" && !st.UsageSeen) {
+           return out
+       }
+   }
+   ```
+2. **单元测试与门禁验证**：
+   - 在 `internal/translator/openai/openai/responses/openai_openai-responses_response_test.go` 新增测试用例 `TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_PureReasoningZeroBodyLengthEmitsIncomplete`。
+   - 修复前运行测试精准 FAIL（未发射 `response.incomplete`，断言失败）。
+   - 修复后测试全部 PASS，`response.status=incomplete`、`response.incomplete_details.reason=max_output_tokens`、`output_tokens=64000`、`input_tokens=100` 全部断言通过。
+   - 兼容测试 `TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_DoesNotCompleteReasoningOnlyStream` 及 translator 全量测试全部 PASS。
+   - `go build ./cmd/server` 整体构建通过，零编译错误。
+
