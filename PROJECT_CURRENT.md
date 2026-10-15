@@ -193,7 +193,7 @@
 {
   "version": 5,
   "registry_schema": "task_plan_projection_registry",
-  "registry_updated_at": "2026-10-13T18:09:27.704934Z",
+  "registry_updated_at": "2026-10-15T07:20:00Z",
   "projections": [
     {
       "projection_id": "SESSION/30608b3616fa2311bfb720a2776c09ac96b2738601ec3752b03a252c810cdb70",
@@ -430,6 +430,49 @@
           "id": "TASK-006",
           "step": "[TASK-006] 生产环境 plugin-store 热重载安装并验收",
           "status": "completed"
+        }
+      ]
+    },
+    {
+      "projection_id": "SESSION/eccae029046a47a1a6f9f417e5d06b29queueframefailover000000000000000000",
+      "session_id": "eccae029-046a-47a1-a6f9-f417e5d06b29",
+      "projection_origin": "synthesized",
+      "synthesis_mode": "exact",
+      "state": "active",
+      "plan_key": "FIX-QODER-QUEUE-FRAME-CLASSIFY-20261015",
+      "source_document": "doc/4-bugs/2026-10-15_150000_Qoder排队帧误判账号级故障且跨provider状态码通道缺失根因诊断.md",
+      "plan_fingerprint": "queue-frame-classify-and-status-channel-20261015",
+      "updated_at": "2026-10-15T07:20:00Z",
+      "steps": [
+        {
+          "id": "TASK-001",
+          "step": "[TASK-001] Bug 单落盘：排队帧误判账号级 + 跨 provider 通道缺失",
+          "status": "in_progress"
+        },
+        {
+          "id": "TASK-002",
+          "step": "[TASK-002] 第1步：排队帧不再误判为账号级故障",
+          "status": "pending"
+        },
+        {
+          "id": "TASK-003",
+          "step": "[TASK-003] 第2步：envelopeError 补 http_status 打通宿主状态码通道",
+          "status": "pending"
+        },
+        {
+          "id": "TASK-004",
+          "step": "[TASK-004] 宿主侧改动计划：异步流错误通道透传状态码",
+          "status": "pending"
+        },
+        {
+          "id": "TASK-005",
+          "step": "[TASK-005] 真实测试：单测 + 必失败哨兵 + cgo-shim 全绿",
+          "status": "pending"
+        },
+        {
+          "id": "TASK-006",
+          "step": "[TASK-006] 6-review + 发布 + 生产热重载验收",
+          "status": "pending"
         }
       ]
     }

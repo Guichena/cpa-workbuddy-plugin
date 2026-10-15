@@ -10,6 +10,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -171,5 +172,96 @@ func TestQueueFrameDoesNotRotate(t *testing.T) {
 	canonical := "upstream 200: " + msg
 	if shouldRotateOnUpstreamErr(200, canonical) {
 		t.Fatalf("queue frame must NOT rotate accounts, body=%q", canonical)
+	}
+}
+
+// queueFrameLivePayload 是 2026-10-15 生产实测的排队帧展开文本
+// （serviceAvailable:true、queueCount 上万、waitTime 数百秒）。
+const queueFrameLivePayload = `upstream 200: 403: 10605: {"isQueued":true,"modelKey":"qfmodel","queueCount":14250,"queueType":"p3","retryAfterSeconds":30,"serviceAvailable":true,"waitTime":478}`
+
+// TestIsQueueFrame_Classification 表驱动锁定排队帧识别边界。
+func TestIsQueueFrame_Classification(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"生产实测展开文本", queueFrameLivePayload, true},
+		{"裸 10605 业务码", "upstream 200: 403: 10605", true},
+		{"原始排队帧 JSON", queueFramePayload, true},
+		{"仅 isQueued 标记", `{"isQueued":true}`, true},
+		{"仅 queueCount 字段", `{"queueCount":3}`, true},
+		{"空文本", "", false},
+		{"普通 403 权限帧", `{"code":"403","message":"Forbidden"}`, false},
+		{"110 日次数上限", "upstream 200: 110: Billing daily count exceeded", false},
+		{"credit 耗尽", `{"error":"insufficient credit"}`, false},
+		{"正常业务帧", `{"choices":[{"delta":{"content":"hi"}}]}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isQueueFrame(tc.body); got != tc.want {
+				t.Fatalf("isQueueFrame(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestQueueFrameDoesNotCoolOrCount 是本轮核心回归：排队帧是上游容量状态，
+// 既不推进连续失败计数、也不产生账号冷却。修复前它被 remap 成 403 走硬失败
+// 通道，导致上游排队持续期间健康账号被逐个冷却、整池 auth_unavailable。
+func TestQueueFrameDoesNotCoolOrCount(t *testing.T) {
+	resetFailover(t)
+	// 连续 12 次排队（远超 6 账号池规模）都必须不记账、不冷却。
+	for i := 0; i < 12; i++ {
+		if recordAccountFailure("acc-queue", 403, queueFrameLivePayload) {
+			t.Fatalf("iteration %d: queue frame must not be counted as account failure", i)
+		}
+		if count, _, ok := failoverStateSnapshot("acc-queue"); ok && count != 0 {
+			t.Fatalf("iteration %d: queue frame must not advance count, got %d", i, count)
+		}
+		if isAccountCoolingDown("acc-queue") {
+			t.Fatalf("iteration %d: queue frame must not put a healthy account into cooldown", i)
+		}
+	}
+	// 对照：同文本若走 noteAccountFailure 亦不得生效（唯一记账入口已拦截）。
+	if noteAccountFailure("acc-queue-2", 403, queueFrameLivePayload) {
+		t.Fatal("noteAccountFailure must also skip queue frames")
+	}
+	if isAccountCoolingDown("acc-queue-2") {
+		t.Fatal("queue frame via noteAccountFailure must not cool the account")
+	}
+}
+
+// TestErrorEnvelopeCarriesQueueStatus 锁定第 2 步：排队帧失败信封必须携带
+// 数字状态码 503，使宿主 statusCodeFromError 命中跨 provider 轮转白名单；
+// 非排队错误保持省略（宿主按既有语义处理）。
+func TestErrorEnvelopeCarriesQueueStatus(t *testing.T) {
+	// 1. 排队帧 → http_status=503
+	var probe struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code       string `json:"code"`
+			Message    string `json:"message"`
+			HTTPStatus int    `json:"http_status"`
+		} `json:"error"`
+	}
+	raw := errorEnvelope("plugin_error", queueFrameLivePayload)
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if probe.OK {
+		t.Fatal("failure envelope must have ok=false")
+	}
+	if probe.Error.HTTPStatus != 503 {
+		t.Fatalf("queue frame envelope http_status = %d, want 503", probe.Error.HTTPStatus)
+	}
+	if !strings.Contains(probe.Error.Message, "10605") {
+		t.Fatalf("message must carry the queue frame: %q", probe.Error.Message)
+	}
+
+	// 2. 非排队错误 → 不携带 http_status（omitempty）
+	rawPlain := errorEnvelope("plugin_error", "some other failure")
+	if strings.Contains(string(rawPlain), "http_status") {
+		t.Fatalf("non-queue failure must omit http_status: %s", rawPlain)
 	}
 }

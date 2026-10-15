@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -31,5 +32,40 @@ func TestMarshalStreamErrorEnvelopeUsesErrorField(t *testing.T) {
 	var streamID string
 	if err := json.Unmarshal(probe["stream_id"], &streamID); err != nil || streamID != "stream-1" {
 		t.Fatalf("stream_id = %q err=%v, want stream-1", streamID, err)
+	}
+}
+
+// TestMarshalStreamErrorEnvelopeCarriesQueueStatus 锁定第 2 步的流式侧：
+// 排队帧的 stream.emit 错误信封必须额外带 http_status=503，供宿主跨 provider
+// 轮转；普通错误不携带该字段（宿主忽略未知字段，行为与旧版一致）。
+func TestMarshalStreamErrorEnvelopeCarriesQueueStatus(t *testing.T) {
+	// 1. 排队帧 → http_status=503
+	raw, err := marshalStreamErrorEnvelope("stream-q", queueFrameLivePayload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var status int
+	if err := json.Unmarshal(probe["http_status"], &status); err != nil {
+		t.Fatalf("http_status must be present for queue frames: %v (raw=%s)", err, raw)
+	}
+	if status != 503 {
+		t.Fatalf("queue frame stream http_status = %d, want 503", status)
+	}
+	// 错误仍以 "error" 字符串字段传递（不得退化为 payload 数据帧）。
+	if _, ok := probe["payload"]; ok {
+		t.Fatalf("payload key present: %s", raw)
+	}
+
+	// 2. 非排队错误 → 不携带 http_status
+	plain, err := marshalStreamErrorEnvelope("stream-p", "some other failure")
+	if err != nil {
+		t.Fatalf("marshal plain: %v", err)
+	}
+	if strings.Contains(string(plain), "http_status") {
+		t.Fatalf("non-queue stream error must omit http_status: %s", plain)
 	}
 }

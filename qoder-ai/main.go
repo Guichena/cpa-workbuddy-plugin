@@ -311,8 +311,9 @@ type envelope struct {
 }
 
 type envelopeError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	HTTPStatus int    `json:"http_status,omitempty"`
 }
 
 type identifierResponse struct {
@@ -344,7 +345,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.1.18"
+var version = "0.1.19"
 
 func wbRegistration() registration {
 	return registration{
@@ -994,8 +995,18 @@ func okEnvelope(v any) ([]byte, error) {
 	return json.Marshal(envelope{OK: true, Result: result})
 }
 
+// errorEnvelope 构造失败信封。排队帧按 envelopeHTTPStatusForError 带上 503，
+// 使宿主 statusCodeFromError 命中跨 provider 轮转白名单；其余错误保持 0
+// （宿主按既有语义处理）。
+// [参数] code：错误码；message：错误文本。
+// [返回] 序列化后的失败信封；序列化失败返回空切片。
+// 最近修改时间 2026-10-15（打通宿主跨 provider 轮转的状态码通道）
 func errorEnvelope(code, message string) []byte {
-	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{Code: code, Message: message}})
+	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{
+		Code:       code,
+		Message:    message,
+		HTTPStatus: envelopeHTTPStatusForError(message),
+	}})
 	return raw
 }
 

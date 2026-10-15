@@ -154,6 +154,9 @@ func isHardCreditError(status int, body string) bool {
 
 const httpStatusPaymentRequired = 402
 
+// httpStatusServiceUnavailable 是排队帧对外的状态码（见 queueFrameHTTPStatus）。
+const httpStatusServiceUnavailable = 503
+
 // isSoftRateLimit is pure throttling without hard-credit semantics.
 func isSoftRateLimit(status int, body string) bool {
 	if isHardCreditError(status, body) {
@@ -193,6 +196,55 @@ func isTransientThrottle(status int, body string) bool {
 		return false
 	}
 	return isSoftRateLimit(status, body) || isEmptyStreamBody(body)
+}
+
+// queueBusinessCode 是 Qoder 上游「排队 / 容量受限」的专属业务码。
+const queueBusinessCode = "10605"
+
+// queueFrameHTTPStatus 是排队帧对外呈现的 HTTP 状态码。
+//
+// 选 503 而非 403：宿主 MarkResult 对 403 会给凭据打 30 分钟冷却
+// （conductor_cooldown.go:856），而排队是分钟级现象；503 只触发瞬时冷却
+// （默认 1 分钟，conductor_cooldown.go:949），且同样在宿主跨 provider 轮转
+// 白名单（isCredentialRetryRoundStatus）内，能触发换道。
+const queueFrameHTTPStatus = httpStatusServiceUnavailable
+
+// isQueueFrame reports whether an upstream error text describes Qoder's
+// capacity-queue state rather than an account fault.
+//
+// 生产证据（2026-10-15）：排队帧为 `403: 10605: {"isQueued":true,
+// "queueCount":14250,"retryAfterSeconds":30,"serviceAvailable":true,
+// "waitTime":478}`。serviceAvailable:true 证明账号本身健康、饱和的只是上游
+// 队列；多账号同时命中同一队列（queueCount 单调递增）亦证明排队是请求级 +
+// 时段性。该帧此前被 remap 成 403 记账 + 15s 冷却，把上游容量问题放大成整池
+// auth_unavailable，故单独识别以跳过账号级记账。
+//
+// [参数] body：上游错误文本（含 sseErrorFrame 展开后的排队帧）。
+// [返回] 命中排队/容量语义时返回 true。
+// 最近修改时间 2026-10-15（排队帧误判账号级故障致健康号池被逐个冷却）
+func isQueueFrame(body string) bool {
+	if strings.TrimSpace(body) == "" {
+		return false
+	}
+	return strings.Contains(body, "isQueued") ||
+		strings.Contains(body, "queueCount") ||
+		strings.Contains(body, queueBusinessCode)
+}
+
+// envelopeHTTPStatusForError 决定失败信封对外携带的 HTTP 状态码。
+//
+// 宿主 statusCodeFromError（conductor_cooldown.go:1448）只认 StatusCode() int
+// 数字接口，纯文本错误恒得 0，跨 provider 轮转（isCredentialRetryRoundStatus）
+// 永不触发；排队帧据此带上 503，让宿主把请求换到另一家上游。
+//
+// [参数] message：失败信封的错误文本。
+// [返回] 排队帧返回 503；其余返回 0，保持既有行为。
+// 最近修改时间 2026-10-15（打通宿主跨 provider 轮转的状态码通道）
+func envelopeHTTPStatusForError(message string) int {
+	if isQueueFrame(message) {
+		return queueFrameHTTPStatus
+	}
+	return 0
 }
 
 // lifecycleActionFor chooses disable/none from credits.

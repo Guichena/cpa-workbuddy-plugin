@@ -34,8 +34,17 @@ func streamEmit(streamID string, payload []byte) error {
 }
 
 // marshalStreamErrorEnvelope 构造带 "error" 字段的 stream.emit 信封（纯函数，便于回归测试）。
+// 排队帧额外带上 http_status（见 envelopeHTTPStatusForError），供宿主识别为可跨
+// provider 轮转的容量错误；宿主未读取该字段时会被忽略，行为与旧版一致。
+// [参数] streamID：宿主流标识；message：终态错误文本。
+// [返回] 序列化后的 emit 信封；序列化失败返回错误。
+// 最近修改时间 2026-10-15；改动原因：排队帧补 http_status 供宿主跨 provider 轮转。
 func marshalStreamErrorEnvelope(streamID, message string) ([]byte, error) {
-	return json.Marshal(map[string]any{"stream_id": streamID, "error": message})
+	body := map[string]any{"stream_id": streamID, "error": message}
+	if status := envelopeHTTPStatusForError(message); status > 0 {
+		body["http_status"] = status
+	}
+	return json.Marshal(body)
 }
 
 // emitStreamErrorEnvelope 通过 host.stream.emit 信封的 "error" 字段发送终态错误。

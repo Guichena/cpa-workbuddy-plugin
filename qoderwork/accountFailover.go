@@ -214,6 +214,14 @@ func recordAccountFailure(authID string, status int, body string) bool {
 	if !failoverActive() {
 		return false
 	}
+	// 排队帧是上游容量状态，与账号健康度无关：既不推进计数也不冷却账号。
+	// 若在此冷却，上游排队持续期间每次请求都会把路由到的健康账号重新打进
+	// 冷却，整池被永久冷掉后宿主只能报 auth_unavailable（2026-10-15 生产实证：
+	// serviceAvailable:true 且 6 账号 queueCount 单调递增，证明饱和的是上游队列）。
+	// 快速失败与跨 provider 换道分别由插件流路径、宿主 503 状态码通道负责。
+	if isQueueFrame(body) {
+		return false
+	}
 	if !isAccountFailure(status, body) && !isTransientThrottle(status, body) {
 		return false
 	}

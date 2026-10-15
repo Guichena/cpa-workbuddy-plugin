@@ -1,5 +1,17 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.19
+
+### Fix - 排队帧不再误判为账号级故障，并打通宿主跨 provider 轮转的状态码通道
+
+- 变更要点:
+  1. 根因：上游排队帧（`403: 10605: {"isQueued":true,...,"serviceAvailable":true}`）此前被 remap 成 403 走硬失败通道，给健康账号推进连续失败计数 + 15s 冷却。上游排队持续期间，每个被路由到的账号都被逐个冷却，整池被冷掉后宿主只能报 `auth_unavailable`——把上游的"暂时排队"放大成 CPA 侧"完全不可用"。
+  2. 排队帧识别：`policy.go` 新增 `isQueueFrame`（识别 `isQueued` / `queueCount` / 业务码 `10605`）；`accountFailover.go` 的 `recordAccountFailure` 在唯一记账入口拦截，排队帧既不推进计数也不冷却账号。依据 2026-10-12 Bug 单结论：排队是请求级 + 时段性，非账号级。
+  3. 状态码通道：`envelopeError` 补 `HTTPStatus` 字段并从文本推导；排队帧带 **503**（而非 403——宿主对 403 打 30 分钟冷却，与"不冷却账号"冲突；503 只打瞬时冷却且同样在宿主跨 provider 轮转白名单内）。`marshalStreamErrorEnvelope` 同步带上 `http_status`，覆盖异步流式路径。
+  4. 覆盖路径：非流式与同步流式经 `errorEnvelope` 立即生效；异步流式需宿主侧读取该字段（改动计划见 `doc/3-实施/2026-10-15_160000_CLIProxyAPI宿主流式错误通道透传状态码改动计划.md`，宿主未读时字段被忽略、行为与旧版一致）。
+- 验证: 新增 `TestIsQueueFrame_Classification`（10 例边界）、`TestQueueFrameDoesNotCoolOrCount`（12 次排队不记账不冷却 + `noteAccountFailure` 同样拦截）、`TestErrorEnvelopeCarriesQueueStatus`（信封带 503 / 非排队省略）、`TestMarshalStreamErrorEnvelopeCarriesQueueStatus`（流式信封带 503）；两组必失败哨兵反证（改断言 → FAIL → 还原全绿）；`cgo-shim-build.py qoder-ai` build/vet/test 全绿。
+- 涉及文件: qoder-ai/policy.go、qoder-ai/accountFailover.go、qoder-ai/main.go、qoder-ai/stream.go、qoder-ai/stream_queue_frame_test.go、qoder-ai/stream_error_envelope_test.go、qoder-ai/VERSION、qoder-ai/CHANGELOG.md
+
 ## 0.1.18
 
 ### Feat - 签到恢复每 4 小时，与其余签到插件统一节奏
