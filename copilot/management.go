@@ -75,6 +75,7 @@ func managementRegistration() managementRegistrationResponse {
 		},
 		Resources: []resourceRoute{
 			{Path: "/panel", Menu: "Copilot", Description: "GitHub Copilot Provider dashboard: accounts, models, quota, import."},
+			{Path: "/login-bridge", Description: "Device-code bridge page opened by the host OAuth dialog."},
 		},
 	}
 }
@@ -163,6 +164,10 @@ func handleManagement(raw []byte) ([]byte, error) {
 			}
 		}
 		return ""
+	}
+
+	if method == http.MethodGet && subPath == "/login-bridge" {
+		return okEnvelope(handleLoginBridge(getQueryParam("state")))
 	}
 
 	switch {

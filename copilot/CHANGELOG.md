@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.1
+
+修复宿主管理页「登录」弹窗不显示设备码的问题：宿主 `ServePluginAuthURL` 只回传 `{status, url, state}`，插件返回的 `Metadata.user_code` 被写进宿主 session store 而不回传前端，导致用户在弹窗里看不到设备码、无法完成授权。现将登录启动返回的 `URL` 指向插件自有 resource 前缀的桥接页，宿主弹窗打开的即该页，页面内直接展示设备码与授权入口。
+
+**Fix**
+
+- `oauth.go`：`handleStartLogin` 返回的 `URL` 由 GitHub 授权地址改为桥接页相对路径 `/v0/resource/plugins/copilot-provider/login-bridge?state=<state>`；`Metadata` 新增 `bridge_url`，`prompt` 改为指引用户在弹窗页面内完成授权。
+- `management.go`：`Resources` 注册 `/login-bridge`（无 `Menu`，不进管理菜单）；`handleManagement` 在 resource 前缀下分发该路径到桥接页。
+
+**Feat**
+
+- `bridge.go`：新增设备码桥接页渲染（`loginBridgeURL` / `handleLoginBridge` / `loginBridgePage` / `htmlEscape`）。页面展示大号可选中设备码、三步授权指引与 GitHub 授权页入口；仅做展示，不驱动轮询、不消费登录会话，授权结果轮询与凭据落盘仍由宿主 `get-auth-status` → `PollLogin` 链路负责（桥接页若抢先调用 `pollDeviceLogin`，会在成功时消费掉会话导致宿主拿不到凭据）。
+
+**Test**
+
+- `bridge_test.go` 新增 3 例：桥接页渲染设备码与授权地址且 HTML 完整未截断、缺 state / 未知 state / 超时 state 的守卫与超时会话清理、resource 路由分发到桥接页。
+- `main_test.go` 的 `TestDeviceCodeFlowStartAndPoll` 补充断言：启动响应的 `URL` 必须是桥接页相对路径前缀，且 `Metadata.bridge_url` 与之一致。
+- 单测总数 30 例（`main_test.go` 17 + `management_test.go` 10 + `bridge_test.go` 3）。
+
+**涉及文件**：`copilot/`（`bridge.go`、`bridge_test.go`、`oauth.go`、`management.go`、`main.go`、`VERSION`、`main_test.go`）。
+
 ## 0.1.0
 
 首发版本：把 GitHub Copilot 订阅额度封装为 CPA 原生 Provider，覆盖设备码登录、令牌保活、模型发现、多账号池与管理面板。

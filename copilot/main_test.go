@@ -319,6 +319,7 @@ func TestDeviceCodeFlowStartAndPoll(t *testing.T) {
 		OK     bool `json:"ok"`
 		Result struct {
 			State    string         `json:"State"`
+			URL      string         `json:"URL"`
 			Metadata map[string]any `json:"Metadata"`
 		} `json:"result"`
 	}
@@ -330,6 +331,15 @@ func TestDeviceCodeFlowStartAndPoll(t *testing.T) {
 	}
 	if got := startEnv.Result.Metadata["user_code"]; got != "ABCD-1234" {
 		t.Fatalf("user_code=%v, want ABCD-1234", got)
+	}
+	// URL 必须是插件自有 resource 前缀的桥接页相对路径：宿主弹窗打开的即该页，
+	// 否则用户拿不到设备码（宿主 ServePluginAuthURL 丢弃 Metadata）。
+	bridgePrefix := "/v0/resource/plugins/" + providerName + "/login-bridge?state="
+	if !strings.HasPrefix(startEnv.Result.URL, bridgePrefix) {
+		t.Fatalf("start URL=%q, want bridge prefix %q", startEnv.Result.URL, bridgePrefix)
+	}
+	if got := startEnv.Result.Metadata["bridge_url"]; got != startEnv.Result.URL {
+		t.Fatalf("metadata bridge_url=%v, want %q", got, startEnv.Result.URL)
 	}
 
 	state := startEnv.Result.State

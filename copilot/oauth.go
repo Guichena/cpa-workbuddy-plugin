@@ -355,10 +355,16 @@ func pollDeviceLogin(state string) (pluginapi.AuthLoginStatus, string, *pluginap
 	return pluginapi.AuthLoginStatusSuccess, "GitHub Copilot 账号授权成功", authData, nil
 }
 
-// handleStartLogin 处理宿主发起 OAuth 登录请求：申请设备码并返回用户码与验证地址。
+// handleStartLogin 处理宿主发起 OAuth 登录请求：申请设备码并返回桥接页地址。
+//
+// URL 返回插件自有 resource 前缀的桥接页相对路径而非 GitHub 授权地址：宿主
+// ServePluginAuthURL 只回传 {status, url, state}，本响应 Metadata 中的 user_code
+// 会被写进宿主 session store 而不回传前端，故宿主通用弹窗打不开设备码展示；
+// 让宿主弹窗打开本插件的桥接页，即可在页面内看到设备码并完成授权。
+// Metadata 仍保留 user_code/verification_uri/interval，便于宿主未来修复后直接消费。
 // [参数] raw: 宿主登录启动请求载荷。
 // [返回] 授权启动响应与错误。
-// 最近修改时间：2026-10-15；改动原因：改为复用 startDeviceLogin 纯内核。
+// 最近修改时间：2026-10-16；改动原因：URL 改为桥接页相对路径，绕过宿主弹窗不显示设备码。
 func handleStartLogin(raw []byte) ([]byte, error) {
 	var req pluginapi.AuthLoginStartRequest
 	if len(raw) > 0 {
@@ -379,19 +385,21 @@ func handleStartLogin(raw []byte) ([]byte, error) {
 		expiresAt = time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second)
 	}
 
+	bridgeURL := loginBridgeURL(state)
 	return okEnvelope(pluginapi.AuthLoginStartResponse{
 		Provider:  providerName,
-		URL:       deviceResp.VerificationURI,
+		URL:       bridgeURL,
 		State:     state,
 		ExpiresAt: expiresAt.UTC(),
 		Metadata: map[string]any{
 			"logo":             pluginLogoURL,
 			"auth_url":         deviceResp.VerificationURI,
+			"bridge_url":       bridgeURL,
 			"user_code":        deviceResp.UserCode,
 			"verification_uri": deviceResp.VerificationURI,
 			"interval":         intervalSec,
-			"prompt": "请打开 " + deviceResp.VerificationURI + " 并输入设备码 " +
-				deviceResp.UserCode + " 完成 GitHub 授权；授权后本插件会自动轮询绑定账号。",
+			"prompt": "请在打开的授权页中输入设备码 " + deviceResp.UserCode +
+				" 完成 GitHub 授权；授权后本插件会自动轮询绑定账号。",
 		},
 	})
 }

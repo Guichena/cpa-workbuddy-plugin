@@ -4,7 +4,7 @@
 
 ## 核心特性
 
-1. **GitHub OAuth 设备码登录**：复刻 GitHub 官方 Device Flow（`client_id` 与 `scope` 为 VS Code Copilot 扩展使用的公开常量），面板内展示设备码与授权地址，插件自动轮询绑定账号，无需手工复制回调。
+1. **GitHub OAuth 设备码登录**：复刻 GitHub 官方 Device Flow（`client_id` 与 `scope` 为 VS Code Copilot 扩展使用的公开常量），面板内展示设备码与授权地址，插件自动轮询绑定账号，无需手工复制回调。宿主管理页的「登录」入口同样可用：登录启动返回的 `URL` 指向插件自有桥接页 `/v0/resource/plugins/copilot-provider/login-bridge`，宿主弹窗打开的即该页并直接展示设备码（宿主 `ServePluginAuthURL` 不回传插件 `Metadata`，通用弹窗自身拿不到设备码）。
 2. **Copilot 令牌自动保活**：用 GitHub access token 换取 Copilot 内部令牌，按上游 `refresh_in` / `expires_at` 的 80% 提前重取，失败指数退避，避免推理请求因令牌过期中断。
 3. **客户端指纹注入**：复刻 VS Code Copilot Chat 的请求头（`Copilot-Integration-Id`、`Editor-Version`、`Editor-Plugin-Version`、`Openai-Intent`、`X-Initiator` 等），指纹取值集中在 `upstream.go`，便于随上游版本单点更新。
 4. **多账号池与故障转移**：账号轮询调度、429/5xx 换号重试（最多 3 次）、15 秒阶梯冷却、测试失败硬隔离。
