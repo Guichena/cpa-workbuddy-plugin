@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -201,6 +202,15 @@ func fetchUpstreamModels(ctx context.Context, sa *StoredAuth) ([]string, error) 
 		return nil, fmt.Errorf("models upstream returned no chat-capable model")
 	}
 
+	// 可用性探测：上游 /models 只返回「账号可见」而非「账号可调用」的模型全集，
+	// 且响应中无任何静态字段能区分可调用性（实测 2026-10-16：25 条候选仅 10 条
+	// 真正可走 /chat/completions，其余报 400 model_not_supported）。故必须逐模型
+	// 探测，否则面板与宿主会暴露一堆点开即 400 的模型。
+	// 探测整体失败时保留原过滤结果（宁多勿空），不因探测故障清空模型出口。
+	if usable := probeUsableModels(ctx, sa, cfg, models); len(usable) > 0 {
+		models = usable
+	}
+
 	ttl := time.Duration(cfg.ModelCacheSecs) * time.Second
 	if ttl <= 0 {
 		ttl = 300 * time.Second
@@ -210,7 +220,130 @@ func fetchUpstreamModels(ctx context.Context, sa *StoredAuth) ([]string, error) 
 	modelCache.expiresAt[cacheKey] = time.Now().Add(ttl)
 	modelCache.Unlock()
 
+	// 同步落盘账号模型清单：modelCache 过期后 cachedModelsForIndex 会回落到
+	// 账号文件字段，若不刷新，面板卡片会退回历史兜底清单，与测试弹窗不一致。
+	if path := strings.TrimSpace(sa.PhysicalPath); path != "" && !stringSliceEqual(sa.Models, models) {
+		sa.Models = append([]string(nil), models...)
+		_ = writeAuthFileDirect(path, sa)
+	}
+
 	return models, nil
+}
+
+// stringSliceEqual 判断两个字符串切片是否逐元素相等。
+// [参数] a, b: 待比较切片。
+// [返回] 完全相等返回 true。
+// 最近修改时间：2026-10-16 01:45:00；改动原因：新增，避免模型清单未变化时重复落盘。
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// probeUsableModels 逐模型探测账号真实可调用性，只保留可走 /chat/completions 的模型。
+//
+// 探测手法（实测 2026-10-16 生产账号确认）：向 /chat/completions 发送仅含
+// {"model": id} 的请求（**故意省略 messages**）——
+//   - 账号可调用 → 400 "messages must be non-empty"（请求已过模型鉴权，进入参数校验）；
+//   - 账号无权调用 → 400 "The requested model is not supported."（模型鉴权阶段即拒）。
+//
+// 该请求在模型鉴权阶段被拒时不计费，实测 quota_snapshots 前后完全一致，属零配额消耗。
+//
+// 并发上限 6：实测 25 个模型耗时 3.38s，兼顾速度与上游压力。
+// 单个探测失败（网络错误 / 5xx）按「保留」处理，避免上游抖动误删可用模型；
+// 仅当明确收到「模型不受支持」类错误时才剔除。
+// 整批另设总预算：上游在探测中途变为不可达时，未完成探测的模型按「保留」处理，
+// 避免 25 个模型 × 15s 客户端超时把面板请求拖到分钟级。
+// [参数] ctx: 上下文；sa: 目标账号；cfg: 当前配置；candidates: 待探测模型 ID。
+// [返回] 可调用模型 ID 列表；全部探测失败时返回 nil，由调用方保留原清单。
+// 最近修改时间：2026-10-16 02:00:00；改动原因：新增，剔除账号无权调用的模型。
+func probeUsableModels(ctx context.Context, sa *StoredAuth, cfg Config, candidates []string) []string {
+	if len(candidates) == 0 {
+		return nil
+	}
+	token, errToken := ensureCopilotToken(sa)
+	if errToken != nil {
+		return nil
+	}
+	baseURL := resolveCopilotBaseURL(sa, cfg)
+
+	batchCtx, cancelBatch := context.WithTimeout(ctx, probeBatchBudget)
+	defer cancelBatch()
+
+	const maxConcurrency = 6
+	sem := make(chan struct{}, maxConcurrency)
+	results := make([]bool, len(candidates))
+	var wg sync.WaitGroup
+
+	for i, id := range candidates {
+		wg.Add(1)
+		go func(idx int, modelID string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[idx] = probeModelCallable(batchCtx, baseURL, token, modelID, cfg)
+		}(i, id)
+	}
+	wg.Wait()
+
+	var usable []string
+	for i, id := range candidates {
+		if results[i] {
+			usable = append(usable, id)
+		}
+	}
+	return usable
+}
+
+// probeBatchBudget 是整批可用性探测的总预算上限。
+const probeBatchBudget = 25 * time.Second
+
+// probeModelCallable 判定单个模型在当前账号下是否可调用。
+//
+// 返回 true 的条件：收到「非模型不可用」类 400（典型为 messages must be non-empty），
+// 或任何 2xx；返回 false 的条件：明确命中 model_not_supported / not accessible 类错误。
+// 传输错误、5xx 等不确定结果一律返回 true（保留），避免上游抖动误删模型。
+// [参数] ctx: 上下文；baseURL: 上游基础 URL；token: Copilot 内部令牌；modelID: 待探测模型；cfg: 当前配置。
+// [返回] true 表示可调用（或无法判定时保守保留）。
+// 最近修改时间：2026-10-16 01:45:00；改动原因：新增，零消耗探测单个模型可调用性。
+func probeModelCallable(ctx context.Context, baseURL, token, modelID string, cfg Config) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	payload, errMarshal := json.Marshal(map[string]any{"model": modelID})
+	if errMarshal != nil {
+		return true
+	}
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, baseURL+"/chat/completions", strings.NewReader(string(payload)))
+	if err != nil {
+		return true
+	}
+	applyCopilotHeaders(req.Header, nil, cfg, payload)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, errDo := modelHTTPClient.Do(req)
+	if errDo != nil {
+		return true
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return true
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	text := strings.ToLower(string(body))
+	if strings.Contains(text, "model_not_supported") ||
+		strings.Contains(text, "not supported") ||
+		strings.Contains(text, "not accessible") {
+		return false
+	}
+	return true
 }
 
 // cachedModelsForIndex 获取指定账号的模型列表，**只读缓存，不发起上游请求**。
