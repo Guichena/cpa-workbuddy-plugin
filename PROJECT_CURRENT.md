@@ -440,39 +440,39 @@
       "synthesis_mode": "exact",
       "state": "active",
       "plan_key": "FIX-QODER-QUEUE-FRAME-CLASSIFY-20261015",
-      "source_document": "doc/4-bugs/2026-10-15_150000_Qoder排队帧误判账号级故障且跨provider状态码通道缺失根因诊断.md",
+      "source_document": "doc/4-bugs/2026-10-15_160000_Qoder排队帧被误判账号级故障且跨provider状态码通道缺失根因诊断.md",
       "plan_fingerprint": "queue-frame-classify-and-status-channel-20261015",
-      "updated_at": "2026-10-15T07:20:00Z",
+      "updated_at": "2026-10-15T09:40:00Z",
       "steps": [
         {
           "id": "TASK-001",
           "step": "[TASK-001] Bug 单落盘：排队帧误判账号级 + 跨 provider 通道缺失",
-          "status": "in_progress"
+          "status": "completed"
         },
         {
           "id": "TASK-002",
           "step": "[TASK-002] 第1步：排队帧不再误判为账号级故障",
-          "status": "pending"
+          "status": "completed"
         },
         {
           "id": "TASK-003",
           "step": "[TASK-003] 第2步：envelopeError 补 http_status 打通宿主状态码通道",
-          "status": "pending"
+          "status": "completed"
         },
         {
           "id": "TASK-004",
           "step": "[TASK-004] 宿主侧改动计划：异步流错误通道透传状态码",
-          "status": "pending"
+          "status": "completed"
         },
         {
           "id": "TASK-005",
           "step": "[TASK-005] 真实测试：单测 + 必失败哨兵 + cgo-shim 全绿",
-          "status": "pending"
+          "status": "completed"
         },
         {
           "id": "TASK-006",
           "step": "[TASK-006] 6-review + 发布 + 生产热重载验收",
-          "status": "pending"
+          "status": "completed"
         }
       ]
     }
