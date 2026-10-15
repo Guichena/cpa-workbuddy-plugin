@@ -87,6 +87,14 @@ button:disabled{opacity:.5;cursor:default}
 .code{font:16px/1.6 ui-monospace,Menlo,Consolas,monospace;background:var(--surface);border-radius:8px;padding:12px;text-align:center;letter-spacing:2px;font-weight:600;margin:10px 0}
 .hint{font-size:12px;color:var(--mut);line-height:1.7}
 .hint a{color:var(--acc)}
+.model-list{display:flex;flex-wrap:wrap;gap:6px;max-height:260px;overflow:auto;padding:2px}
+.model-list button{padding:5px 10px;font-size:12px;background:var(--btn-sec);color:var(--fg)}
+.model-list button:hover{background:var(--btn-sec-hover)}
+.test-result{margin-top:12px}
+.test-result .r-hd{font-size:13px;font-weight:600;margin-bottom:4px}
+.test-result .r-hd.ok{color:var(--ok)}
+.test-result .r-hd.err{color:var(--err)}
+.test-result .r-item{font-size:12px;color:var(--mut);word-break:break-all}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:5px}
 @keyframes sp{to{transform:rotate(360deg)}}
 </style>
@@ -129,6 +137,16 @@ button:disabled{opacity:.5;cursor:default}
       <button class="sec" id="importCancel">取消</button>
       <button id="importOk">导入</button>
     </div>
+  </div>
+</div>
+
+<div class="mask" id="testMask">
+  <div class="modal">
+    <h3>测试模型</h3>
+    <div class="hint" id="testHint" style="margin-bottom:10px">选择要测试的模型</div>
+    <div id="testModelList" class="model-list"><div class="hint">加载模型中…</div></div>
+    <div id="testResult" class="test-result"></div>
+    <div class="foot"><button class="sec" id="testCancel">关闭</button></div>
   </div>
 </div>
 
@@ -291,6 +309,7 @@ function card(a){
     '<div class="acts">'+
       '<button class="sec" data-action="quota" data-auth-index="'+esc(a.auth_id)+'">刷新额度</button>'+
       '<button class="sec" data-action="models" data-auth-index="'+esc(a.auth_id)+'">模型</button>'+
+      '<button class="sec" data-action="test" data-auth-index="'+esc(a.auth_id)+'" title="选择模型后发起一次真实推理">测试</button>'+
       enableBtn+
     '</div></div>';
 }
@@ -338,6 +357,10 @@ document.getElementById("grid").addEventListener("click",async e=>{
       toast("可用模型 "+models.length+" 个", "ok", models.slice(0,12).join(", "));
       return;
     }
+    if(action==="test"){
+      openTestModal(authIndex);
+      return;
+    }
   }catch(err){
     toast("操作失败","err",err.message);
   }finally{
@@ -356,6 +379,82 @@ document.getElementById("btnDisableAll").onclick=async()=>{
   try{await api("/disable-all",{method:"POST"});toast("已全部禁用");await loadAccounts();}
   catch(e){toast("操作失败","err",e.message);}
 };
+
+/* ---------- 测试按钮：先弹出模型小窗口，点选指定模型后再测试 ----------
+   点卡片「测试」→ 打开弹窗 → GET /models 拉取该账号可用模型 → 点某个模型
+   → POST /test-active {auth_index, model} 发起一次真实推理，结果就地展示。 */
+let pendingTestAuthIndex="";
+function openTestModal(idx){
+  pendingTestAuthIndex=idx;
+  const a=(lastAccounts||[]).find(x=>x.auth_id===idx||x.auth_index===idx);
+  const who=a?(a.label||a.username||a.auth_id||idx):idx;
+  const hint=document.getElementById("testHint");
+  if(hint)hint.innerHTML='选择要测试的模型：<b>'+esc(who)+'</b>';
+  const res=document.getElementById("testResult");
+  if(res){res.innerHTML="";}
+  const list=document.getElementById("testModelList");
+  if(list)list.innerHTML='<div class="hint">加载模型中…</div>';
+  document.getElementById("testMask").classList.add("on");
+  loadTestModels(idx);
+}
+function closeTestModal(){
+  pendingTestAuthIndex="";
+  document.getElementById("testMask").classList.remove("on");
+}
+async function loadTestModels(idx){
+  const list=document.getElementById("testModelList");
+  if(!list)return;
+  try{
+    const d=await api("/models?auth_index="+encodeURIComponent(idx));
+    // 用户可能已关闭弹窗或切换了账号，丢弃过期响应避免错投。
+    if(pendingTestAuthIndex!==idx)return;
+    const models=(d&&Array.isArray(d.models))?d.models.filter(m=>String(m||"").trim()):[];
+    if(!models.length){
+      list.innerHTML='<div class="hint">暂无可用模型</div>';
+      return;
+    }
+    list.innerHTML=models.map(m=>'<button type="button" data-model="'+esc(m)+'">'+esc(m)+'</button>').join("");
+  }catch(e){
+    list.innerHTML='<div class="hint" style="color:var(--err)">'+esc(e.message||String(e))+'</div>';
+  }
+}
+async function runTestModel(btn){
+  const idx=pendingTestAuthIndex;
+  const model=btn&&btn.dataset?btn.dataset.model:"";
+  if(!idx||!model)return;
+  const list=document.getElementById("testModelList");
+  const buttons=list?list.querySelectorAll("button[data-model]"):[];
+  if(buttons)buttons.forEach(b=>{b.disabled=true;});
+  const res=document.getElementById("testResult");
+  if(res){res.innerHTML='<div class="r-hd">测试中…</div>';}
+  try{
+    const d=await api("/test-active", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({auth_index: idx, model: model})
+    });
+    const ok=!(d&&d.error);
+    if(res){
+      res.innerHTML='<div class="r-hd '+(ok?"ok":"err")+'">'+(ok?"测试成功":"测试失败")+'</div>'+
+        '<div class="r-item">'+esc(model)+' · '+esc(ok?(d.message||"活跃成功"):(d.error||"未知错误"))+'</div>';
+    }
+    if(ok)toast("测试成功","ok",d.message||("模型: "+model));
+    else toast("测试失败","err",d.error);
+  }catch(e){
+    if(res){res.innerHTML='<div class="r-hd err">测试失败</div><div class="r-item">'+esc(model)+' · '+esc(e.message||String(e))+'</div>';}
+    toast("测试失败","err",e.message||String(e));
+  }finally{
+    if(buttons)buttons.forEach(b=>{b.disabled=false;});
+  }
+}
+document.getElementById("testModelList").addEventListener("click",e=>{
+  const btn=e.target.closest("button[data-model]");
+  if(btn)runTestModel(btn);
+});
+document.getElementById("testCancel").onclick=closeTestModal;
+document.getElementById("testMask").addEventListener("click",e=>{
+  if(e.target===document.getElementById("testMask"))closeTestModal();
+});
 
 /* ---------- device flow login ---------- */
 let loginTimer=null;

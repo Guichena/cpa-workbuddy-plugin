@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.1.3
+
+修复模型自动获取不正确（面板与宿主长期只显示 5 个兜底模型，上游实际可用 25 个），并为面板补齐「测试模型」功能。
+
+**Fix**
+
+- `models.go`：`authModelsForIndex` 优先级反转为「上游动态发现 > 账号落盘缓存 > 配置 models > 静态兜底」。原先账号文件的 `models` 字段非空即返回，导致 `fetchUpstreamModels` 永不执行、动态发现被完全旁路。
+- `models.go`：`fetchUpstreamModels` 按上游契约过滤——只保留 `capabilities.type=chat` 且 `policy.state != disabled` 的条目，并剔除 `copilot-search-*` / `exec-agent-*` / `trajectory-compaction` 等内部子代理工具项（vendor=Fireworks 且 family 命中前缀）。实测生产 57 条 → 25 条可用对话模型。注意 `model_picker_enabled` 全为 false，不可用作判据。
+- `models.go`：`allConfiguredModels` 改为动态优先，不再无条件并入兜底清单，避免上游已下线模型污染宿主全局模型目录与跨 provider 路由选模。
+- `models.go`：落地此前形同虚设的 `dynamic_models` 配置开关（原字段被解析但全仓无读取点），显式 `false` 时跳过上游请求。
+- `authfile.go`：`saveAccount` / `saveTokenAccount` 落盘不再写入兜底清单，避免旧清单遮蔽动态发现。
+- `oauth.go`：`handleRefreshAuth` 在刷新令牌时顺带刷新模型清单，使存量账号的失真 `models` 字段能被自动纠正。
+- `management.go`：面板 `/accounts` 的模型列表改用 `authModelsForIndex`（动态优先），不再直读账号落盘字段。
+
+**Feat**
+
+- 新增面板「测试模型」功能：账号卡片「测试」按钮 → 模型选择弹窗 → 点选模型发起一次真实推理并就地展示结果。后端新增 `POST /test-active`（`active_ping.go`）。
+- 探活契约对齐既有插件成熟策略：流式请求 `stream=true, max_tokens=1`，收到首个有效输出帧即返回（TTFT 级），后台异步关流；拦截 HTTP 200 下的 `event: error` 与 JSON `error` 字段，不盲判首包成功。
+
+**Test**
+
+- `models_discovery_test.go` 新增 5 例：真实对话模型保留（含 policy 缺省）、不可用条目剔除（embeddings/completion/disabled/三类内部工具项）、内部工具项判定必须同时满足 vendor 条件、流式错误帧拦截（含正常帧与 `[DONE]` 不误报）、错误文本截断边界。
+- 哨兵反证 3 组：关闭 policy 过滤 → `disabled policy` 用例精确 FAIL；关闭内部工具项过滤 → 3 个工具项用例精确 FAIL；关闭 `event: error` 分支 → 错误帧用例精确 FAIL；恢复后全绿。
+- 真实 `.so` ABI 探针 5/5 PASS（`test/copilot/models_and_test_probe.py`）：注册表含 `/test-active`、`model.for_auth` 与 `model.static` 出口非空、`POST /test-active` 入参校验、`GET /models` 可达。
+- 生产真实数据验证：上游 `/models` 57 条经过滤判据得 25 条可用对话模型；真实凭据流式探活 `status=200`、首包 1313ms、非错误帧。
+
+**涉及文件**：`copilot/`（`models.go`、`authfile.go`、`management.go`、`oauth.go`、`active_ping.go`、`models_discovery_test.go`、`panel.html`、`VERSION`、`main.go`、`CHANGELOG.md`、`test/copilot/models_and_test_probe.py`）。
+
 ## 0.1.2
 
 修复插件调度器越界返回自有账号 ID 导致宿主判 `unknown auth id` 的问题：`handleSchedulerPick` 原先忽略宿主下发的候选集，直接返回自有账号池的 `AuthID`（`copilot-<hash8>`，不带 `.json`），而宿主候选 ID 带 `.json` 后缀，逐字校验失败后回落内建选择器，插件调度意图被完全忽略（3 小时窗口累计 1165 条告警）。现改为只在宿主候选集内取号并原样返回候选 ID。

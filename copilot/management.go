@@ -69,6 +69,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/enable-all", Description: "Enable all Copilot accounts."},
 			{Method: http.MethodPost, Path: base + "/disable-all", Description: "Disable all Copilot accounts."},
 			{Method: http.MethodGet, Path: base + "/models", Description: "List models available for one account."},
+			{Method: http.MethodPost, Path: base + "/test-active", Description: "Send an active ping chat inference request for one account (body: {auth_index, model})."},
 			{Method: http.MethodGet, Path: base + "/credits", Description: "Query Copilot quota for one account or all accounts."},
 			{Method: http.MethodPost, Path: base + "/login-start", Description: "Start GitHub Device Flow login from the panel."},
 			{Method: http.MethodGet, Path: base + "/login-poll", Description: "Poll GitHub Device Flow login result from the panel."},
@@ -207,6 +208,9 @@ func handleManagement(raw []byte) ([]byte, error) {
 		body, _ := json.Marshal(map[string]any{"models": models})
 		return makeHTTPResponse(http.StatusOK, body)
 
+	case method == http.MethodPost && subPath == "/test-active":
+		return handleTestActive(req.Body)
+
 	case method == http.MethodGet && subPath == "/credits":
 		authID := getQueryParam("auth_index")
 		if authID == "" {
@@ -245,10 +249,8 @@ func handleListAccounts() ([]byte, error) {
 
 	list := make([]accountSummary, 0, len(accounts))
 	for _, acc := range accounts {
-		models := acc.Models
-		if len(models) == 0 {
-			models = defaultModels
-		}
+		// 只读缓存：面板刷新会遍历全部账号，逐账号发上游请求会在上游不可达时阻塞加载。
+		models := cachedModelsForIndex(acc.AuthID)
 		list = append(list, accountSummary{
 			AuthID:       acc.AuthID,
 			AuthIndex:    acc.AuthID,

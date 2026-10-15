@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -501,6 +502,11 @@ func handleRefreshAuth(raw []byte) ([]byte, error) {
 						nextRefresh = time.Now().Add(5 * time.Minute)
 					}
 				}
+			}
+			// 顺带刷新模型清单：存量账号的 models 字段可能仍是历史兜底值，
+			// 不刷新会让面板与宿主按账号注册长期显示失真清单。
+			if models, errModels := fetchUpstreamModels(context.Background(), &sa); errModels == nil && len(models) > 0 {
+				sa.Models = models
 			}
 			if path := strings.TrimSpace(sa.PhysicalPath); path != "" {
 				_ = writeAuthFileDirect(path, &sa)

@@ -438,7 +438,6 @@ func saveGitHubAccount(githubToken, copilotToken, apiEndpoint string, expiresAt 
 		Disabled:     false,
 		CreatedAt:    now,
 		UpdatedAt:    now,
-		Models:       append([]string(nil), defaultModels...),
 		TestFailed:   false,
 	}
 
@@ -477,7 +476,6 @@ func saveTokenAccount(githubToken, label string) (*StoredAuth, error) {
 		Disabled:    false,
 		CreatedAt:   now,
 		UpdatedAt:   now,
-		Models:      append([]string(nil), defaultModels...),
 		TestFailed:  false,
 	}
 
