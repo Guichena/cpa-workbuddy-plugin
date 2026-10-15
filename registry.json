@@ -569,29 +569,6 @@
           }
         ]
       }
-    },
-    {
-      "id": "copilot-provider",
-      "name": "GitHub Copilot",
-      "description": "GitHub Copilot provider for CLIProxyAPI: GitHub OAuth Device Flow login, Copilot internal token exchange and keep-alive, VS Code Copilot Chat client fingerprint mimicry, dynamic model discovery, multi-account pool with failover, streaming and non-streaming forwarding, quota view, and a dedicated management panel.",
-      "author": "Sliverkiss (cpa-workbuddy-plugin)",
-      "version": "0.1.0",
-      "repository": "https://github.com/luode0320/cpa-workbuddy-plugin",
-      "logo": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/assets/icons/Copilot.png",
-      "homepage": "https://github.com/luode0320/cpa-workbuddy-plugin/tree/main/copilot",
-      "license": "MIT",
-      "tags": [
-        "Provider",
-        "GitHub",
-        "Copilot",
-        "OAuth",
-        "DeviceFlow",
-        "Management"
-      ],
-      "install": {
-        "type": "direct",
-        "artifacts": []
-      }
     }
   ]
 }
