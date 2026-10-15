@@ -142,6 +142,21 @@ if hasAuthID {
 - `6-review` 风格回归（`STYLE: PASS`）
 - `code-change-finalization-gate-rules` 收口
 
+### 6.4 生产行为验收（0.1.2 部署后）
+
+发布链：`0054c28`（fix）→ CI run `38751333875` success → assets `ba471b0` → registry `bca1264` → 资产清理 `78b4069`。生产 `plugin-store install?version=0.1.2` 返回 `restart_required:false`，热重载日志 `active_version=0.1.2 retired_version=0.1.1`；落盘 `.so` sha256 `d9dd3b40…540b3`（7812672 字节）与本地 release zip 内二进制逐字节一致。
+
+**A/B 对照（同一生产实例，热重载时刻 `22:43:40`）**：
+
+| 窗口 | 真实 `/v1` 请求数 | `unknown auth id` 告警数 | 告警占比 |
+| --- | --- | --- | --- |
+| 热重载前 5 分钟（`22:38:40`–`22:43:40`） | 50 | 50（全部 `plugin_id=copilot-provider`） | 100% |
+| 热重载后（`22:43:40` 起） | 57+ | 0 | 0% |
+
+**正向路径验证**：发起真实 copilot 请求 `POST /v1/chat/completions`（`model=gpt-4o`），`http=200`、2.04s、响应 `content=PONG`，usage tracker 记录 `provider=copilot-provider model=gpt-4o failed=false`。即插件返回的候选 ID 被宿主采纳、请求经 copilot 账号正常出网。
+
+**替代解释排除**：零告警不能是「宿主不再调用插件调度器」导致——插件 `main.go:282` 声明 `Scheduler: true`，热重载日志含 `plugin loaded` + `plugin registered`，且 `unknown auth id` 的触发条件（[pluginhost/scheduler.go:83-86](file:///C:/Users/luode/go/pkg/mod/github.com/router-for-me/!c!l!i!proxy!a!p!i/v7@v7.2.129/internal/pluginhost/scheduler.go#L83-L86)）仅在「插件返回非空 AuthID 且不在候选集内」时命中；同窗口有真实流量且插件确被调用，故零告警等价于「返回 ID 全部命中候选集」。
+
 ## 7. 与用户原始症状的关系
 
 本 Bug 与用户报告的「授权完成但弹窗未跳转 / 面板无账号」是**两个独立问题**：
@@ -153,5 +168,5 @@ if hasAuthID {
 
 ## 8. 未覆盖 / 后续
 
-- **未覆盖**：修复后的调度路径尚未在**生产多账号**场景做端到端验证（当前生产 copilot 仅 1 个账号，轮转语义需 ≥2 账号才能完整观察）。需发版后在多账号环境确认 `unknown auth id` 归零且 copilot 流量按候选集路由。
+- **多账号轮转未观察**：生产 copilot 当前仅 1 个账号（`copilot-f13aadb583ef01ba`），单候选场景下轮转逻辑退化为「总是返回唯一候选」，与修复前的行为差异只体现在 ID 口径。轮转语义（`schedulerIndex` 取模）已由单测 `TestHandleSchedulerPickRoundRobinWithinCandidates` 与真实 `.so` ABI 双候选用例覆盖，但生产多账号场景仍待第二账号接入后观察。
 - **存量告警**：修复上线前产生的 1165 条历史告警不影响功能，仅在日志中留存。
