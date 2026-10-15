@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.1
+
+### Fix - 修复旅行域 record_id 类型不匹配致整段解析失败
+
+- 变更要点:
+  1. 生产行为验收（0.16.0 上线后对生产真实入口执行 `POST /growth`）暴露真实缺陷：上游 `/buddy/travel/status` 的 `record_id` 返回 **JSON number**，而 `growthTravelStatus.RecordID` 声明为 `string`，`json.Unmarshal` 报 `cannot unmarshal number into Go struct field ... of type string`，导致 **10/10 CN 账号旅行段整段失败**（收礼与派出均未执行）。
+  2. 修复方式：`RecordID` 与 `growthTravelLocation.ID` 改用 `json.RawMessage` 原样保留上游原始 JSON，写端点（`/buddy/travel/claim`、`/buddy/travel/depart`）回传时不做任何类型转换——数字形态保持数字、字符串形态保持字符串，同时避免大整数经 `float64` 中转丢精度。
+  3. 新增 `growthIDEmpty` 判空辅助：字段缺失 / `null` / 空串 / 纯空白串一律在发请求前拦截，杜绝用无效 ID 打写端点。
+  4. 删除两个从未被读取的字段 `arrive_at` / `server_now`（同样为数值时间戳形态，属同类定时炸弹）；`arrive_at` 仅为外部项目的展示用途，插件侧无消费方。
+  5. 回归用例改为按上游真实形态断言：`record_id` 同时覆盖 number 与 string 两种形态；写端点断言 body 内 `record_id` 仍为数字（`float64(9001)`）而非被强转成字符串。
+- 验证: `cgo-shim-build.py workbuddy` build/vet/test 全绿；修复后对生产真实入口再次执行 `POST /growth`，旅行段错误归零（见发布后生产再验收）。
+- 涉及文件: workbuddy/growth.go、workbuddy/growth_test.go、workbuddy/growth_orchestration_test.go、workbuddy/growth_handler_test.go、workbuddy/main.go、workbuddy/VERSION
+
 ## 0.16.0
 
 ### Feat - 接入国内版成长中心全自动领奖（7 类玩法）

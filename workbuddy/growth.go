@@ -375,25 +375,25 @@ func claimGrowthTask(sa *storedAuth, code string) (map[string]any, error) {
 
 // growthTravelStatus 是 Buddy 旅行的当前状态。
 // State 三态：idle（待派出）/ traveling（旅行中）/ arrived（已到达可收礼）。
+// RecordID 保留上游原始 JSON：上游为数字形态，强类型 string 绑定会整段解析失败（0.16.1 修复）。
 type growthTravelStatus struct {
-	State             string `json:"state"`
-	RecordID          string `json:"record_id"`
-	ArriveAt          string `json:"arrive_at"`
-	ServerNow         string `json:"server_now"`
-	DailyLimitReached bool   `json:"daily_limit_reached"`
+	State             string          `json:"state"`
+	RecordID          json.RawMessage `json:"record_id"`
+	DailyLimitReached bool            `json:"daily_limit_reached"`
 }
 
 // growthTravelLocation 是旅行配置中的一个目的地。
+// ID 与 RecordID 同族：保留上游原始 JSON，派出时原样回传。
 type growthTravelLocation struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	DurationHours int64  `json:"duration_hours"`
+	ID            json.RawMessage `json:"id"`
+	Name          string          `json:"name"`
+	DurationHours int64           `json:"duration_hours"`
 }
 
 // fetchTravelStatus 读取 Buddy 旅行状态。
 // [参数] sa：账号凭据。
 // [返回] 旅行状态；失败时返回错误。
-// 最近修改时间：2026-10-15 21:30:00 新增 Buddy 旅行域端点（TASK-1.4）
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
 func fetchTravelStatus(sa *storedAuth) (*growthTravelStatus, error) {
 	// 1. 拉取旅行状态并按 State 三态（idle / traveling / arrived）解包
 	data, err := growthCall(sa, http.MethodGet, growthPathTravelStatus, nil)
@@ -410,7 +410,7 @@ func fetchTravelStatus(sa *storedAuth) (*growthTravelStatus, error) {
 // fetchTravelConfig 读取 Buddy 旅行可选目的地配置。
 // [参数] sa：账号凭据。
 // [返回] 目的地列表；失败时返回错误。
-// 最近修改时间：2026-10-15 21:30:00 新增 Buddy 旅行域端点（TASK-1.4）
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
 func fetchTravelConfig(sa *storedAuth) ([]growthTravelLocation, error) {
 	// 1. 拉取可选目的地列表，供派出时选取合法 location_id
 	data, err := growthCall(sa, http.MethodGet, growthPathTravelConfig, nil)
@@ -426,27 +426,43 @@ func fetchTravelConfig(sa *storedAuth) ([]growthTravelLocation, error) {
 	return payload.Locations, nil
 }
 
+// growthIDEmpty 判断上游 ID 原始 JSON 是否为空值（字段缺失 / null / 空白串）。
+// [参数] raw：上游返回的 ID 原始 JSON。
+// [返回] true 表示该 ID 不可用于写请求。
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
+func growthIDEmpty(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return true
+	}
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			return strings.TrimSpace(v) == ""
+		}
+	}
+	return false
+}
+
 // claimTravelReward 领取已到达旅行的奖励。
-// [参数] sa：账号凭据；recordID：旅行记录 ID。
+// [参数] sa：账号凭据；recordID：旅行记录 ID（上游原始 JSON，数字 / 字符串形态均原样回传）。
 // [返回] 响应顶层字段 map（含 reward_credit）；recordID 为空时直接返回错误且不发请求。
-// 最近修改时间：2026-10-15 21:30:00 新增 Buddy 旅行域端点（TASK-1.4）
-func claimTravelReward(sa *storedAuth, recordID string) (map[string]any, error) {
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
+func claimTravelReward(sa *storedAuth, recordID json.RawMessage) (map[string]any, error) {
 	// 1. 空记录 ID 直接拒绝，避免对无效记录发收礼请求
-	recordID = strings.TrimSpace(recordID)
-	if recordID == "" {
+	if growthIDEmpty(recordID) {
 		return nil, fmt.Errorf("empty record_id")
 	}
 	return growthPostMap(sa, growthPathTravelClaim, map[string]any{"record_id": recordID})
 }
 
 // departBuddy 派出 Buddy 前往指定目的地。
-// [参数] sa：账号凭据；locationID：目的地 ID（来自 fetchTravelConfig）。
+// [参数] sa：账号凭据；locationID：目的地 ID（来自 fetchTravelConfig，原始 JSON 原样回传）。
 // [返回] 响应顶层字段 map（含 location.name / duration_hours）；locationID 为空时直接返回错误且不发请求。
-// 最近修改时间：2026-10-15 21:30:00 新增 Buddy 旅行域端点（TASK-1.4）
-func departBuddy(sa *storedAuth, locationID string) (map[string]any, error) {
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
+func departBuddy(sa *storedAuth, locationID json.RawMessage) (map[string]any, error) {
 	// 1. 空目的地 ID 直接拒绝，避免派出到无效目的地
-	locationID = strings.TrimSpace(locationID)
-	if locationID == "" {
+	if growthIDEmpty(locationID) {
 		return nil, fmt.Errorf("empty location_id")
 	}
 	return growthPostMap(sa, growthPathTravelDepart, map[string]any{"location_id": locationID})
@@ -635,7 +651,7 @@ func runGrowthForAccount(sa *storedAuth, authIndex string) *growthResult {
 // growthRunTravel 执行 Buddy 旅行分段：到达收礼 → 读取配置 → 再派出。
 // [参数] sa：账号凭据；res：结果累加器。
 // [返回] 无（结果写入 res）。
-// 最近修改时间：2026-10-15 21:40:00 新增成长中心编排（TASK-2.1）
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
 func growthRunTravel(sa *storedAuth, res *growthResult) {
 	// 1. 读旅行状态；失败即记录并退出本段
 	st, err := fetchTravelStatus(sa)

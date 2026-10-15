@@ -563,24 +563,34 @@ func TestClaimGrowthTask_RejectsEmptyCode(t *testing.T) {
 }
 
 // TestFetchTravelStatus_ParsesThreeStates 覆盖旅行状态三态字段解析。
+// record_id 同时覆盖上游真实数字形态与历史字符串形态：强类型 string 绑定会
+// 在数字形态下整段解析失败（0.16.1 修复的线上缺陷）。
 // [参数] t：测试上下文。
 // [返回] 无。
-// 最近修改时间：2026-10-15 21:30:00 新增 Buddy 旅行域端点（TASK-1.4）
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
 func TestFetchTravelStatus_ParsesThreeStates(t *testing.T) {
-	states := []string{"idle", "traveling", "arrived"}
-	for _, want := range states {
-		want := want
+	cases := []struct {
+		state string
+		idRaw string
+	}{
+		{"idle", "9001"},
+		{"traveling", "9001"},
+		{"arrived", "9001"},
+		{"arrived", `"r-1"`},
+	}
+	for _, c := range cases {
+		c := c
 		cleanup := newGrowthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"state":"` + want + `","record_id":"r-1","arrive_at":"2026-10-16T00:00:00Z","daily_limit_reached":false}}`))
+			_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"state":"` + c.state + `","record_id":` + c.idRaw + `,"daily_limit_reached":false}}`))
 		})
 		st, err := fetchTravelStatus(&storedAuth{})
 		cleanup()
 		if err != nil {
-			t.Fatalf("state %s: %v", want, err)
+			t.Fatalf("state %s id %s: %v", c.state, c.idRaw, err)
 		}
-		if st.State != want || st.RecordID != "r-1" {
-			t.Fatalf("state %s: %+v", want, st)
+		if st.State != c.state || string(st.RecordID) != c.idRaw {
+			t.Fatalf("state %s id %s: %+v", c.state, c.idRaw, st)
 		}
 	}
 }
@@ -588,7 +598,7 @@ func TestFetchTravelStatus_ParsesThreeStates(t *testing.T) {
 // TestFetchTravelConfig_ParsesLocations 覆盖目的地配置解析。
 // [参数] t：测试上下文。
 // [返回] 无。
-// 最近修改时间：2026-10-15 21:30:00 新增 Buddy 旅行域端点（TASK-1.4）
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
 func TestFetchTravelConfig_ParsesLocations(t *testing.T) {
 	cleanup := newGrowthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -603,15 +613,16 @@ func TestFetchTravelConfig_ParsesLocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if len(locs) != 2 || locs[0].ID != "loc-1" || locs[0].DurationHours != 4 {
+	if len(locs) != 2 || string(locs[0].ID) != `"loc-1"` || locs[0].DurationHours != 4 {
 		t.Fatalf("locations = %+v", locs)
 	}
 }
 
 // TestClaimTravelReward_SendsRecordID 覆盖收礼写端点 body 与单发语义。
+// 用上游真实数字形态断言 body 内 record_id 仍为数字（不被强转成字符串）。
 // [参数] t：测试上下文。
 // [返回] 无。
-// 最近修改时间：2026-10-15 21:30:00 新增 Buddy 旅行域端点（TASK-1.4）
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
 func TestClaimTravelReward_SendsRecordID(t *testing.T) {
 	var calls int32
 	var gotBody map[string]any
@@ -623,11 +634,11 @@ func TestClaimTravelReward_SendsRecordID(t *testing.T) {
 	})
 	defer cleanup()
 
-	m, err := claimTravelReward(&storedAuth{}, "r-9")
+	m, err := claimTravelReward(&storedAuth{}, json.RawMessage("9001"))
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if gotBody["record_id"] != "r-9" || jsonI64(m, "reward_credit") != 20 {
+	if gotBody["record_id"] != float64(9001) || jsonI64(m, "reward_credit") != 20 {
 		t.Fatalf("body=%v resp=%v", gotBody, m)
 	}
 	if calls != 1 {
@@ -638,7 +649,7 @@ func TestClaimTravelReward_SendsRecordID(t *testing.T) {
 // TestTravelWriteEndpoints_RejectEmptyIDs 覆盖空 ID 在发请求前被拦截。
 // [参数] t：测试上下文。
 // [返回] 无。
-// 最近修改时间：2026-10-15 21:30:00 新增 Buddy 旅行域端点（TASK-1.4）
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
 func TestTravelWriteEndpoints_RejectEmptyIDs(t *testing.T) {
 	var calls int32
 	cleanup := newGrowthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -646,11 +657,13 @@ func TestTravelWriteEndpoints_RejectEmptyIDs(t *testing.T) {
 	})
 	defer cleanup()
 
-	if _, err := claimTravelReward(&storedAuth{}, " "); err == nil {
-		t.Fatal("expected error for empty record_id")
-	}
-	if _, err := departBuddy(&storedAuth{}, " "); err == nil {
-		t.Fatal("expected error for empty location_id")
+	for _, empty := range []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage(`""`), json.RawMessage(`"  "`)} {
+		if _, err := claimTravelReward(&storedAuth{}, empty); err == nil {
+			t.Fatalf("expected error for empty record_id %q", string(empty))
+		}
+		if _, err := departBuddy(&storedAuth{}, empty); err == nil {
+			t.Fatalf("expected error for empty location_id %q", string(empty))
+		}
 	}
 	if calls != 0 {
 		t.Fatalf("expected 0 calls, got %d", calls)
@@ -660,7 +673,7 @@ func TestTravelWriteEndpoints_RejectEmptyIDs(t *testing.T) {
 // TestDepartBuddy_SendsLocationID 覆盖派出写端点 body 与单发语义。
 // [参数] t：测试上下文。
 // [返回] 无。
-// 最近修改时间：2026-10-15 21:30:00 新增 Buddy 旅行域端点（TASK-1.4）
+// 最近修改时间：2026-10-15 22:40:00 修复旅行域 record_id 类型不匹配（0.16.1）
 func TestDepartBuddy_SendsLocationID(t *testing.T) {
 	var calls int32
 	var gotBody map[string]any
@@ -672,7 +685,7 @@ func TestDepartBuddy_SendsLocationID(t *testing.T) {
 	})
 	defer cleanup()
 
-	if _, err := departBuddy(&storedAuth{}, "loc-1"); err != nil {
+	if _, err := departBuddy(&storedAuth{}, json.RawMessage(`"loc-1"`)); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 	if gotBody["location_id"] != "loc-1" {

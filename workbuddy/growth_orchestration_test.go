@@ -51,7 +51,7 @@ func growthStubBody(path string) string {
 	case "/v2/billing/meter/daily-checkin":
 		return `{"code":0,"msg":"OK","data":{"credit":5}}`
 	case growthPathPrefix + growthPathTravelStatus:
-		return `{"code":0,"msg":"OK","data":{"state":"arrived","record_id":"r-1","daily_limit_reached":false}}`
+		return `{"code":0,"msg":"OK","data":{"state":"arrived","record_id":9001,"arrive_at":1760000000,"server_now":1759990000,"daily_limit_reached":false}}`
 	case growthPathPrefix + growthPathTravelClaim:
 		return `{"code":0,"msg":"OK","data":{"reward_credit":20}}`
 	case growthPathPrefix + growthPathTravelConfig:
@@ -168,7 +168,7 @@ func TestRunGrowthForAccount_IdempotentSecondRun(t *testing.T) {
 			if atomic.LoadInt32(&departed) == 1 {
 				state = "traveling"
 			}
-			ok(fmt.Sprintf(`{"state":"%s","record_id":"r-1","daily_limit_reached":false}`, state))
+			ok(fmt.Sprintf(`{"state":"%s","record_id":9001,"daily_limit_reached":false}`, state))
 		case growthPathPrefix + growthPathTravelClaim:
 			ok(`{"reward_credit":20}`)
 		case growthPathPrefix + growthPathTravelConfig:
@@ -269,7 +269,7 @@ func TestRunGrowthForAccount_TravelSkipsWhenDailyLimitReached(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case growthPathPrefix + growthPathTravelStatus:
-			_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"state":"arrived","record_id":"r-1","daily_limit_reached":true}}`))
+			_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"state":"arrived","record_id":9001,"daily_limit_reached":true}}`))
 		case growthPathPrefix + growthPathTravelClaim:
 			_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"reward_credit":20}}`))
 		case growthPathPrefix + growthPathTravelConfig:

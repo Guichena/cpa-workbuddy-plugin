@@ -31,7 +31,7 @@ func growthHandlerServer(t *testing.T) (func(), *int32) {
 		case "/v2/billing/meter/checkin-activity-status":
 			_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"active":false,"today_checked_in":true}}`))
 		case growthPathPrefix + growthPathTravelStatus:
-			_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"state":"arrived","record_id":"r-1"}}`))
+			_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"state":"arrived","record_id":9001}}`))
 		case growthPathPrefix + growthPathTravelClaim:
 			_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"reward_credit":20}}`))
 		default:
