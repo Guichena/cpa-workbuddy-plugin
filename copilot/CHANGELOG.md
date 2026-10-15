@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.2
+
+修复插件调度器越界返回自有账号 ID 导致宿主判 `unknown auth id` 的问题：`handleSchedulerPick` 原先忽略宿主下发的候选集，直接返回自有账号池的 `AuthID`（`copilot-<hash8>`，不带 `.json`），而宿主候选 ID 带 `.json` 后缀，逐字校验失败后回落内建选择器，插件调度意图被完全忽略（3 小时窗口累计 1165 条告警）。现改为只在宿主候选集内取号并原样返回候选 ID。
+
+**Fix**
+
+- `scheduler.go`：`handleSchedulerPick` 改为按 `req.Candidates` 过滤（本 provider、未禁用、不在冷却期），在候选集内轮转取号并原样返回 `candidate.ID`；非本 provider 候选或无可用候选时返回 `Handled:false` 交由宿主内建调度器处理。新增 `candidateDisabled` 对齐宿主候选禁用语义（`Status=disabled` 与 `Metadata.disabled`）。
+
+**Test**
+
+- `scheduler_test.go` 新增 6 例：候选 ID 逐字返回（回归判据）、外部 provider 让位、禁用跳过与全禁用让位、冷却跳过与全冷却让位、空候选让位、候选集内轮转。
+- 真实 `.so` ABI 探针 5/5 PASS（WSL gcc 构建 + ctypes 宿主桥驱动完整生产路径，覆盖单测无法触达的 ABI 边界与 JSON 字段名契约）。
+- 哨兵反证：注入 `strings.TrimSuffix(candidates[idx].ID, ".json")` 后 4 例精确 FAIL，恢复后全绿。
+
+**涉及文件**：`copilot/`（`scheduler.go`、`scheduler_test.go`、`VERSION`、`main.go`）。
+
 ## 0.1.1
 
 修复宿主管理页「登录」弹窗不显示设备码的问题：宿主 `ServePluginAuthURL` 只回传 `{status, url, state}`，插件返回的 `Metadata.user_code` 被写进宿主 session store 而不回传前端，导致用户在弹窗里看不到设备码、无法完成授权。现将登录启动返回的 `URL` 指向插件自有 resource 前缀的桥接页，宿主弹窗打开的即该页，页面内直接展示设备码与授权入口。
