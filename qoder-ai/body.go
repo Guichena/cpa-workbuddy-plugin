@@ -61,8 +61,7 @@ func cpaToUpstreamKey(cpaModel string) string {
 // openAIMessage is one message in the OpenAI chat completion format.
 // Content 归一为字符串：纯文本请求原样接收，多模态部件数组由
 // UnmarshalJSON 提取文本后拼接，使下游 buildQoderBody 无需感知差异。
-// ToolCalls / ToolCallID / Name 原样保留：多轮 agent 往返中工具结果必须与先前的
-// 工具调用配对，丢弃会让模型无法判定探测已完成而重复发起同类调用。
+// ToolCalls / ToolCallID / Name 承载工具调用与工具结果，供重建上游 messages 时保持配对。
 type openAIMessage struct {
 	Role       string `json:"role"`
 	Content    string `json:"content"`
@@ -253,6 +252,9 @@ func extractLatestUserPrompt(messages []openAIMessage) string {
 
 // buildQoderBody renders the upstream agent_chat_generation body for one request.
 // modelKey is the upstream key (already mapped via cpaToUpstreamKey).
+// [参数] req: 客户端 OpenAI 请求；modelKey: 上游模型键；userType: 阿里云用户类型。
+// [返回] []byte: 渲染后的上游请求体；error: 模板解析或渲染异常。
+// 最近修改时间 2026-10-15；改动原因：重建 messages 时保留 tool_calls / tool_call_id / name 配对结构
 func buildQoderBody(req *openAIRequest, modelKey, userType string) ([]byte, error) {
 	var base map[string]any
 	if err := json.Unmarshal(basepromptJSON, &base); err != nil {
