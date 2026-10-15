@@ -110,17 +110,51 @@ func TestGrowthAutoConfig_BooleanForms(t *testing.T) {
 	}
 }
 
-// TestGrowthAutoConfig_AbsentKeyDisables 覆盖缺省 growth_auto 时关闭。
-// 默认关闭是刻意的：写端点会真实发放积分，需用户显式开启。
+// TestGrowthAutoConfig_AbsentKeyKeepsDefaultOn 覆盖缺省 growth_auto 时保持默认开启。
+// 0.16.2 起默认开启：成长中心是无人值守场景，用户可用 `growth_auto: false` 显式关闭。
 // [参数] t：测试上下文。
 // [返回] 无。
-// 最近修改时间：2026-10-15 22:10:00 新增 growth_auto 配置与 tick 接入（TASK-2.2）
-func TestGrowthAutoConfig_AbsentKeyDisables(t *testing.T) {
-	setGrowthAutoForTest(t, true)
+// 最近修改时间：2026-10-16 02:00:00 growth_auto 缺省值改为开启（0.16.2）
+func TestGrowthAutoConfig_AbsentKeyKeepsDefaultOn(t *testing.T) {
+	setGrowthAutoForTest(t, false)
 	configure(configYAMLForTest(t, "checkin_auto: true\n"))
-	if growthEnabled() {
-		t.Fatal("absent growth_auto must reset the switch to off")
+	if !growthEnabled() {
+		t.Fatal("absent growth_auto must keep the default-on switch")
 	}
+}
+
+// TestGrowthAutoConfig_QuotedKeys 覆盖宿主持久化产生的带引号键形态。
+// 生产 spool 中宿主写入的插件配置键带引号（如 "growth_auto": false），引号会
+// 原样透传给插件；裸前缀匹配会静默忽略这些行，导致用户无法关闭开关
+// （0.16.2 修复：解析前先去掉键两端的引号）。
+// [参数] t：测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-16 02:30:00 修复带引号键解析（0.16.2）
+func TestGrowthAutoConfig_QuotedKeys(t *testing.T) {
+	configure(configYAMLForTest(t, "\"growth_auto\": false\n"))
+	if growthEnabled() {
+		t.Fatal("quoted growth_auto: false must disable growth")
+	}
+
+	configure(configYAMLForTest(t,
+		"\"growth_auto\": true\n\"checkin_auto\": false\n\"lifecycle_auto\": true\n"))
+	if !growthEnabled() {
+		t.Fatal("quoted growth_auto: true must enable growth")
+	}
+	checkinAutoMu.RLock()
+	gotCheckin := checkinAuto
+	checkinAutoMu.RUnlock()
+	if gotCheckin {
+		t.Fatal("quoted checkin_auto: false must disable checkin")
+	}
+	if !lifecycleEnabled() {
+		t.Fatal("quoted lifecycle_auto: true must enable lifecycle")
+	}
+
+	// 复位到缺省形态，避免把 lifecycle=true 泄漏给后续用例。
+	t.Cleanup(func() {
+		configure(configYAMLForTest(t, "growth_auto: true\ncheckin_auto: true\nlifecycle_auto: false\n"))
+	})
 }
 
 // growthTickStub 起一个只统计成长中心路径请求数的 httptest 服务，并同时把

@@ -1100,6 +1100,7 @@ async function growthOne(idx, btn){
     const res=(d.results||[])[0]||{};
     const credits=Number(res.credits_gained)||0;
     const energy=Number(res.energy_gained)||0;
+    const balance=Number(res.energy_balance)||0;
     const tasks=(Number(res.tasks_accepted)||0)+(Number(res.tasks_claimed)||0);
     let text;
     if(credits||energy||tasks){
@@ -1107,6 +1108,7 @@ async function growthOne(idx, btn){
     }else{
       text="今日已领完";
     }
+    if(balance)text+=`（能量余额 ${balance}）`;
     if(line)line.textContent="成长中心："+text;
     if(res.errors&&res.errors.length){
       toast("成长中心部分失败","warn",res.errors.join("; "));

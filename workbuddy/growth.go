@@ -534,9 +534,12 @@ func growthInterAccountDelay() time.Duration {
 var growthLocks sync.Map // auth_index -> *sync.Mutex
 
 // growthResult 汇总一次成长中心执行的收益与分段结果。
+// EnergyBalance 是账号当前能量余额（只读快照），与 EnergyGained（本轮收益）语义
+// 分离：余额不能混入收益，否则零领取的轮次也会显示「+N 能量」误导用户（0.16.2 修复）。
 type growthResult struct {
 	CreditsGained int64    `json:"credits_gained"`
 	EnergyGained  int64    `json:"energy_gained"`
+	EnergyBalance int64    `json:"energy_balance"`
 	TasksAccepted int      `json:"tasks_accepted"`
 	TasksClaimed  int      `json:"tasks_claimed"`
 	Segments      []string `json:"segments"`
@@ -583,7 +586,7 @@ func pruneGrowthLocks() {
 // 时放弃剩余段并返回已得结果。写操作一律不重试（由 growthCall 保证）。
 // [参数] sa：账号凭据；authIndex：账号索引（用于账号级互斥）。
 // [返回] 本轮收益与分段结果。
-// 最近修改时间：2026-10-15 21:40:00 新增成长中心编排（TASK-2.1）
+// 最近修改时间：2026-10-16 02:00:00 能量余额改记 EnergyBalance（0.16.2）
 func runGrowthForAccount(sa *storedAuth, authIndex string) *growthResult {
 	mu := growthLockFor(authIndex)
 	mu.Lock()
@@ -636,10 +639,11 @@ func runGrowthForAccount(sa *storedAuth, authIndex string) *growthResult {
 		growthRunBuddyBox(sa, res)
 	}
 
-	// 8. 汇总：能量余额与连登天数只读读取
+	// 8. 汇总：能量余额与连登天数只读读取（余额是快照，记入 EnergyBalance
+	//    而非收益；混入 EnergyGained 会让零领取轮次也显示「+N 能量」）
 	if !time.Now().After(deadline) {
 		if m, err := fetchGrowthEnergy(sa); err == nil {
-			res.EnergyGained += jsonI64(m, "balance")
+			res.EnergyBalance = jsonI64(m, "balance")
 		}
 		if m, err := fetchGrowthStreak(sa); err == nil {
 			res.Segments = append(res.Segments, fmt.Sprintf("streak=%d", jsonI64(mapOrEmpty(m, "streak"), "days")))

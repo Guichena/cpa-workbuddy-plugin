@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.2
+
+### Fix - 修正能量余额被误当收益显示 + 成长中心默认自动开启
+
+- 变更要点:
+  1. 修正记账语义缺陷：`runGrowthForAccount` 汇总段此前把 `/energy` 的 `balance`（账号能量**余额**快照）累加进 `EnergyGained`（**本轮收益**），导致零领取轮次也显示「+N 能量」误导用户。生产实测对同一账号连跑两次：第二次零领取动作（`segments: ["streak=0"]`）仍报 `+3 能量`，即为余额污染证据。现余额改记独立字段 `energy_balance`，`energy_gained` 只统计各段实发值（任务/兑换/抽奖/盲盒返回值）。
+  2. 面板摘要行同步：能量收益与余额分开展示（`+N 积分 / +M 能量 / K 任务（能量余额 B）`），无收益时仍显示「今日已领完」。
+  3. `growth_auto` 默认值由 `false` 改为 `true`（0.16.2 起自动开启）：成长中心面向无人值守场景，随每 4 小时 tick 与签到同槽执行；用户可用 `growth_auto: false` 显式关闭。Global 账号无成长中心能力，分支提前返回、不发任何上游请求。
+  4. 修复带引号键静默失效缺陷：宿主持久化会保留 YAML 键的引号样式（生产 spool 中现存 `"lifecycle_auto": false` 形态），下发插件的 `config_yaml` 原样带引号，而解析器用裸前缀匹配会整行忽略——用户无法关闭开关。新增 `normalizeConfigKeyLine` 在解析前剥离键名两端引号，`usage_config.go` 全部开关与 `usage_feed.go` 的 feed 配置一并覆盖。
+  5. 回归用例补强：全绿路径断言能量收益只含各段实发值（6）且余额落 `EnergyBalance`（42）；二次执行（零领取）断言能量收益为 0——变异自测确认该断言能捕获余额污染回退；新增引号键用例覆盖 `"growth_auto": false/true`、`"checkin_auto"`、`"lifecycle_auto"` 三种形态（先红后绿）。
+- 验证: `cgo-shim-build.py workbuddy` build/vet/test 全绿；变异自测（临时把余额改回累加进收益）确认两条新断言均 FAIL、回滚后复验全绿；引号键用例先红（`quoted growth_auto: false must disable growth`）后绿；面板内联 JS 经 `node --check` 语法通过。
+- 涉及文件: workbuddy/growth.go、workbuddy/credits_handler.go、workbuddy/usage_config.go、workbuddy/usage_feed.go、workbuddy/panel.html、workbuddy/growth_orchestration_test.go、workbuddy/growth_config_test.go、workbuddy/README.md、workbuddy/README_CN.md、workbuddy/main.go、workbuddy/VERSION
+
 ## 0.16.1
 
 ### Fix - 修复旅行域 record_id 类型不匹配致整段解析失败

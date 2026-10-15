@@ -23,10 +23,10 @@ var (
 	checkinAutoMu sync.RWMutex
 
 	// growthAuto gates the growth-center auto-claim run inside the check-in
-	// tick. Default false: growth endpoints are reverse-engineered (no public
-	// docs) and write ops grant real credits, so the user opts in explicitly
-	// after verifying on their own account.
-	growthAuto   = false
+	// tick. Default true (0.16.2): the flows are production-verified and the
+	// growth center is meant to run unattended; set `growth_auto: false` to
+	// opt out.
+	growthAuto   = true
 	growthAutoMu sync.RWMutex
 
 	// usageReportURL / usageReportKey: POST NDJSON to CPA-Manager-Plus
@@ -65,11 +65,11 @@ const fallbackUsageReportURL = "http://cpa-manager-plus:18317/v0/management/usag
 // configure decodes plugin config from the lifecycle request.
 // [参数] raw：宿主流式下发的 config_yaml 原文。
 // [返回] 无。
-// 最近修改时间：2026-10-15 21:50:00 新增 growth_auto 配置解析（TASK-2.2）
+// 最近修改时间：2026-10-16 02:00:00 growth_auto 缺省值改为开启（0.16.2）
 func configure(raw []byte) {
 	// Parse config without holding any lock (fixes nested-lock hazard).
 	nextCheckinAuto := true
-	nextGrowthAuto := false
+	nextGrowthAuto := true
 	nextLifecycleAuto := false
 	// scheduler default: session (per-conversation round-robin). Explicit
 	// scheduler_mode in config_yaml overrides it; unknown values fall back to
@@ -100,6 +100,7 @@ func configure(raw []byte) {
 			lines := strings.Split(string(req.ConfigYAML), "\n")
 			for i, line := range lines {
 				line = strings.TrimSpace(line)
+				line = normalizeConfigKeyLine(line)
 				if strings.HasPrefix(line, "checkin_auto:") {
 					v := strings.TrimSpace(strings.TrimPrefix(line, "checkin_auto:"))
 					nextCheckinAuto = v == "true" || v == "1" || v == "yes" || v == "on"
@@ -385,6 +386,32 @@ func indentOf(s string) int {
 		n++
 	}
 	return n
+}
+
+// normalizeConfigKeyLine 去除键名两端的引号，兼容宿主持久化产生的引号键形态。
+// 宿主管理 API 写回配置时保留 YAML 引号样式（如 "growth_auto": false），下发
+// 插件的 config_yaml 会原样带引号；裸前缀匹配会静默忽略这类行，导致开关
+// 无法生效（0.16.2 修复）。仅处理冒号前的键名，值部分原样保留。
+// [参数] line：已 TrimSpace 的配置行。
+// [返回] 键名去引号后的行；非引号键形态原样返回。
+// 最近修改时间：2026-10-16 02:30:00 修复带引号键解析（0.16.2）
+func normalizeConfigKeyLine(line string) string {
+	// 1. 仅处理引号开头的键（YAML 引号键的唯一形态）
+	if !strings.HasPrefix(line, "\"") && !strings.HasPrefix(line, "'") {
+		return line
+	}
+	// 2. 定位键名闭合引号，且其后必须紧跟冒号才算键
+	q := line[0]
+	end := strings.IndexByte(line[1:], q)
+	if end < 0 {
+		return line
+	}
+	end++
+	rest := line[end+1:]
+	if !strings.HasPrefix(rest, ":") {
+		return line
+	}
+	return line[1:end] + rest
 }
 
 // splitYAMLPair 按第一个冒号切分 "key: value"，返回 (key, value)。

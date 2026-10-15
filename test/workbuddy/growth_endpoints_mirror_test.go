@@ -52,3 +52,31 @@ func TestGrowthMirror_ErrorSnippetRedacted(t *testing.T) {
 		t.Fatalf("snippet must be truncated to 120 bytes, got %d", len(got))
 	}
 }
+
+// TestGrowthMirror_QuotedConfigKeys 断言宿主引号键形态经归一化后可按裸键匹配。
+// 宿主管理 API 写回配置时保留 YAML 引号样式，下发插件的 config_yaml 会带引号；
+// 该用例锁定 normalizeConfigKeyLine 的边界：单双引号键、冒号后无空格、非键行与
+// 值内引号均不得误伤（0.16.2 修复带引号键静默失效）。
+// [参数] t：测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-16 02:40:00 修复带引号键解析（0.16.2）
+func TestGrowthMirror_QuotedConfigKeys(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{`"growth_auto": false`, "growth_auto: false"},
+		{`"growth_auto":false`, "growth_auto:false"},
+		{`'growth_auto': true`, "growth_auto: true"},
+		{`growth_auto: false`, "growth_auto: false"},
+		{`"usage_report_key": "a:b"`, `usage_report_key: "a:b"`},
+		{`"unterminated: false`, `"unterminated: false`},
+		{`"not-a-key"`, `"not-a-key"`},
+		{`# "growth_auto": false`, `# "growth_auto": false`},
+	}
+	for _, tc := range cases {
+		if got := normalizeConfigKeyLine(tc.in); got != tc.want {
+			t.Errorf("normalizeConfigKeyLine(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

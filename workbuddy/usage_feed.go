@@ -58,6 +58,8 @@ func configureUsageFeed(raw []byte) {
 		if err := json.Unmarshal(raw, &req); err == nil {
 			for _, line := range strings.Split(string(req.ConfigYAML), "\n") {
 				line = strings.TrimSpace(line)
+				// 宿主持久化会保留键的引号样式，先归一化键名再匹配（0.16.2）。
+				line = normalizeConfigKeyLine(line)
 				switch {
 				case strings.HasPrefix(line, "usage_feed_enabled:"):
 					v := strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "usage_feed_enabled:")), "\"'")

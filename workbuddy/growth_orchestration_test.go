@@ -104,6 +104,14 @@ func TestRunGrowthForAccount_AllSegmentsGreen(t *testing.T) {
 	if res.CreditsGained != 156 {
 		t.Fatalf("CreditsGained = %d, want 156 (segments=%v)", res.CreditsGained, res.Segments)
 	}
+	// 能量收益只统计各段实发值（任务 1 + 兑换 2 + 盲盒 3 = 6）；
+	// /energy 的 42 是余额快照，必须落在 EnergyBalance 而非 EnergyGained（0.16.2 回归）。
+	if res.EnergyGained != 6 {
+		t.Fatalf("EnergyGained = %d, want 6 (segments=%v)", res.EnergyGained, res.Segments)
+	}
+	if res.EnergyBalance != 42 {
+		t.Fatalf("EnergyBalance = %d, want 42", res.EnergyBalance)
+	}
 	if res.TasksAccepted != 1 || res.TasksClaimed != 1 {
 		t.Fatalf("tasks accepted=%d claimed=%d", res.TasksAccepted, res.TasksClaimed)
 	}
@@ -232,6 +240,14 @@ func TestRunGrowthForAccount_IdempotentSecondRun(t *testing.T) {
 	second := runGrowthForAccount(&storedAuth{}, "idx-3")
 	if second.TasksClaimed != 0 {
 		t.Fatalf("second run must not re-claim tasks, got %d", second.TasksClaimed)
+	}
+	// 生产症状回归（0.16.2）：零领取轮次不得报能量收益；余额 42 只能进 EnergyBalance。
+	// 修复前此处 EnergyGained 被 /energy 的 balance 污染为 42，面板显示「+42 能量」。
+	if second.EnergyGained != 0 {
+		t.Fatalf("zero-claim run must not report energy gain, got %d (segments=%v)", second.EnergyGained, second.Segments)
+	}
+	if second.EnergyBalance != 42 {
+		t.Fatalf("EnergyBalance = %d, want 42", second.EnergyBalance)
 	}
 	if atomic.LoadInt32(&checkedIn) != 1 || atomic.LoadInt32(&makeupUsed) != 1 || atomic.LoadInt32(&lotteryDrawn) != 1 || atomic.LoadInt32(&redeemed) != 1 {
 		t.Fatalf("write endpoints re-fired: checkedIn=%d makeup=%d lottery=%d redeemed=%d",

@@ -263,8 +263,8 @@ func handleGrowth(req pluginapi.ManagementRequest) map[string]any {
 // growthOneAccount 对单个账号执行一次成长中心领奖并归一化返回字段。
 // Global 账号无成长中心能力，直接标记 skipped_global 且不发上游请求。
 // [参数] f：账号条目。
-// [返回] 单账号结果 map（含 credits_gained / energy_gained / segments 等）。
-// 最近修改时间：2026-10-15 22:30:00 新增成长中心管理路由与面板入口（TASK-3.1）
+// [返回] 单账号结果 map（含 credits_gained / energy_gained / energy_balance / segments 等）。
+// 最近修改时间：2026-10-16 02:00:00 新增 energy_balance 字段（0.16.2）
 func growthOneAccount(f pluginapi.HostAuthFileEntry) map[string]any {
 	// 1. 取账号凭据；失败即回传错误
 	out := map[string]any{"auth_index": f.AuthIndex}
@@ -286,6 +286,7 @@ func growthOneAccount(f pluginapi.HostAuthFileEntry) map[string]any {
 	out["success"] = len(gr.Errors) == 0
 	out["credits_gained"] = gr.CreditsGained
 	out["energy_gained"] = gr.EnergyGained
+	out["energy_balance"] = gr.EnergyBalance
 	out["tasks_accepted"] = gr.TasksAccepted
 	out["tasks_claimed"] = gr.TasksClaimed
 	out["segments"] = gr.Segments
