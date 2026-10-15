@@ -45,6 +45,10 @@ type wbAccount struct {
 // and fetches them lazily via /credits?auth_index=<idx>. This avoids hitting
 // upstream billing APIs for all accounts simultaneously on page load (which
 // causes 500 from rate-limited /v2/billing/meter/get-user-resource).
+//
+// [参数] force：跳过缓存强制回源；fetchCredits：是否本轮拉取实时积分。
+// [返回] 面板 dashboard 契约 map（accounts / summary 等）。
+// 最近修改时间：2026-10-15 22:30:00 面板裁剪时同步清理成长中心锁（TASK-3.1）
 func buildDashboardEx(force, fetchCredits bool) map[string]any {
 	files, err := hostAuthList()
 	if err != nil {
@@ -70,9 +74,10 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 		}
 		return true
 	})
-	// Also prune stale lifecycle state and checkin locks for gone accounts.
+	// Also prune stale lifecycle state, checkin locks and growth locks for gone accounts.
 	pruneLifecycleState()
 	pruneCheckinLocks()
+	pruneGrowthLocks()
 	out := make([]wbAccount, len(files))
 	// Accounts are independent — fetch their dashboards concurrently. With 4
 	// accounts this cuts cold-load latency from ~4×(3 serial upstream calls)

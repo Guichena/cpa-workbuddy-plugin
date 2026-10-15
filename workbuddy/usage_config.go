@@ -22,6 +22,13 @@ var (
 	checkinAuto   = true // enabled by default
 	checkinAutoMu sync.RWMutex
 
+	// growthAuto gates the growth-center auto-claim run inside the check-in
+	// tick. Default false: growth endpoints are reverse-engineered (no public
+	// docs) and write ops grant real credits, so the user opts in explicitly
+	// after verifying on their own account.
+	growthAuto   = false
+	growthAutoMu sync.RWMutex
+
 	// usageReportURL / usageReportKey: POST NDJSON to CPA-Manager-Plus
 	// /v0/management/usage/import (only path that reaches request monitoring;
 	// c-shared plugins cannot use host usage.DefaultManager/redisqueue).
@@ -56,9 +63,13 @@ const defaultUsageReportURL = "http://127.0.0.1:18317/v0/management/usage/import
 const fallbackUsageReportURL = "http://cpa-manager-plus:18317/v0/management/usage/import"
 
 // configure decodes plugin config from the lifecycle request.
+// [参数] raw：宿主流式下发的 config_yaml 原文。
+// [返回] 无。
+// 最近修改时间：2026-10-15 21:50:00 新增 growth_auto 配置解析（TASK-2.2）
 func configure(raw []byte) {
 	// Parse config without holding any lock (fixes nested-lock hazard).
 	nextCheckinAuto := true
+	nextGrowthAuto := false
 	nextLifecycleAuto := false
 	// scheduler default: session (per-conversation round-robin). Explicit
 	// scheduler_mode in config_yaml overrides it; unknown values fall back to
@@ -92,6 +103,11 @@ func configure(raw []byte) {
 				if strings.HasPrefix(line, "checkin_auto:") {
 					v := strings.TrimSpace(strings.TrimPrefix(line, "checkin_auto:"))
 					nextCheckinAuto = v == "true" || v == "1" || v == "yes" || v == "on"
+				}
+				if strings.HasPrefix(line, "growth_auto:") {
+					v := strings.TrimSpace(strings.TrimPrefix(line, "growth_auto:"))
+					v = strings.Trim(v, "\"'")
+					nextGrowthAuto = v == "true" || v == "1" || v == "yes" || v == "on"
 				}
 				if strings.HasPrefix(line, "lifecycle_auto:") {
 					v := strings.TrimSpace(strings.TrimPrefix(line, "lifecycle_auto:"))
@@ -170,6 +186,10 @@ func configure(raw []byte) {
 	checkinAutoMu.Lock()
 	checkinAuto = nextCheckinAuto
 	checkinAutoMu.Unlock()
+
+	growthAutoMu.Lock()
+	growthAuto = nextGrowthAuto
+	growthAutoMu.Unlock()
 
 	lifecycleAutoMu.Lock()
 	lifecycleAuto = nextLifecycleAuto

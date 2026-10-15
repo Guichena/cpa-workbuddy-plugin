@@ -139,6 +139,10 @@ func setManagementBasePath(p string) {
 	managementBasePathCacheMu.Unlock()
 }
 
+// managementRegistration 声明本插件的管理路由与面板资源。
+// [参数] 无。
+// [返回] 路由与资源注册表。
+// 最近修改时间：2026-10-15 22:30:00 新增 /growth 路由（TASK-3.1）
 func managementRegistration() managementRegistrationResponse {
 	base := "/plugins/" + providerName
 	return managementRegistrationResponse{
@@ -148,6 +152,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodGet, Path: base + "/refresh/status", Description: "Async refresh progress snapshot."},
 			{Method: http.MethodPost, Path: base + "/checkin", Description: "Manually check in one account (auth_index) or all."},
 			{Method: http.MethodPost, Path: base + "/checkin/config", Description: "Toggle auto check-in (enabled: true/false)."},
+			{Method: http.MethodPost, Path: base + "/growth", Description: "Run growth-center auto-claim (travel/tasks/streak/redeem/lottery/buddy) for one (auth_index) or all CN accounts."},
 			{Method: http.MethodGet, Path: base + "/credits", Description: "Get real-time credits for one (auth_index query) or all accounts."},
 			{Method: http.MethodPost, Path: base + "/import", Description: "Import WorkBuddy credential JSON (nested or flat) into host auth store."},
 			{Method: http.MethodGet, Path: base + "/export", Description: "Export all WorkBuddy credentials as a single JSON document for backup/sharing (raw physical files, nested form re-importable via /import)."},
@@ -165,6 +170,10 @@ func managementRegistration() managementRegistrationResponse {
 	}
 }
 
+// handleManagement 分发插件管理请求：资源路由直出面板，其余按路径分派到各 handler。
+// [参数] raw：宿主透传的管理请求原始 JSON。
+// [返回] 信封化响应体；解析失败时返回错误。
+// 最近修改时间：2026-10-15 22:30:00 新增 /growth 分派分支（TASK-3.1）
 func handleManagement(raw []byte) ([]byte, error) {
 	var req pluginapi.ManagementRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
@@ -200,6 +209,8 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleManualCheckin(req)))
 	case req.Method == http.MethodPost && path == base+"/checkin/config":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleCheckinConfig(req)))
+	case req.Method == http.MethodPost && path == base+"/growth":
+		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleGrowth(req)))
 	case req.Method == http.MethodGet && path == base+"/credits":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleCreditsQuery(req)))
 	case req.Method == http.MethodPost && path == base+"/import":
@@ -277,12 +288,17 @@ func checkManagementAuth(req pluginapi.ManagementRequest) (int, string) {
 
 // mutatingManagementPath reports whether the path performs a write (checkin,
 // import, trial claim, select, refresh, config toggle). Read endpoints pass.
+//
+// [参数] path：管理路径。
+// [返回] true 表示该路径执行写操作。
+// 最近修改时间：2026-10-15 22:30:00 纳入 /growth（TASK-3.1）
 func mutatingManagementPath(path string) bool {
 	base := loadedManagementBasePath() + "/plugins/" + providerName
 	switch path {
 	case base + "/refresh",
 		base + "/checkin",
 		base + "/checkin/config",
+		base + "/growth",
 		base + "/import",
 		base + "/export",
 		base + "/trial",

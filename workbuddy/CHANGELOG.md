@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.16.0
+
+### Feat - 接入国内版成长中心全自动领奖（7 类玩法）
+
+- 变更要点:
+  1. 新增 `growth.go`：成长中心客户端（`{billingBase}/v2/activity/growth` 前缀）与编排函数 `runGrowthForAccount`，覆盖每日签到、Buddy 旅行（收礼 + 派出）、成长任务（接单 + 领奖）、断签补登卡、连登阶梯兑换、盲盒抽奖、Buddy 能量盲盒 7 类玩法；每段独立执行，单段失败只记入 `Errors`，不影响其余段。
+  2. 写语义按外部项目对齐：GET 遇 5xx 走既有重试；**写操作一律不重试**（幂等性未经证实，避免重复扣减）；补登卡每轮最多 1 张、抽奖每轮最多 1 次；账号间 1~3s 随机延迟；单账号总时长预算 180s；账号级互斥锁 `growthLocks` 与签到锁分离。
+  3. 新增配置项 `growth_auto`（默认 `false`，需用户显式开启，支持 `true/1/yes/on`）：开启后并入既有每 4 小时 tick，与签到共用调度槽；Global 账号无成长中心能力，分支提前返回、不发任何上游请求。
+  4. 新增管理路由 `POST /v0/management/plugins/workbuddy-provider/growth`：单账号（`auth_index`）或全量 CN 扇出（sem=4），返回 `{results, summary}`，summary 含 `total/success/fail/skipped_global/credits_gained/energy_gained`。
+  5. 面板 CN 卡片新增「成长中心」按钮与结果摘要行（`+N 积分 / +M 能量 / K 任务`，无收益显示「今日已领完」）；Global 卡片不渲染该按钮。
+  6. 新增只读探针 `scripts/probe_growth_endpoints.py`：逐个端点打印 HTTP 状态与响应顶层字段名，**不回显任何 token / UID / 凭据原值**。
+- 验证: `cgo-shim-build.py workbuddy` build/vet/test 全绿；面板两段内联脚本经 `node --check` 语法通过；成长中心端点契约取自外部项目 EXT-1 并用 httptest 桩逐端点断言（本机无 CN 账号凭据，真实账号只读探针记为环境阻断，未以 test/prod 凭据替代）。
+- 涉及文件: workbuddy/growth.go、workbuddy/growth_test.go、workbuddy/growth_orchestration_test.go、workbuddy/growth_config_test.go、workbuddy/growth_handler_test.go、workbuddy/checkin.go、workbuddy/credits_handler.go、workbuddy/management.go、workbuddy/usage_config.go、workbuddy/panel.html、workbuddy/main.go、workbuddy/VERSION、scripts/probe_growth_endpoints.py、test/workbuddy/growth_endpoints_mirror_test.go
+
 ## 0.15.10
 
 ### Chore - 修正面板签到时刻文案漂移（后端调度本为每 4 小时）
