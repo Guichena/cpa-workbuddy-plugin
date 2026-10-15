@@ -115,6 +115,14 @@ copilot/                        # 插件 9：GitHub Copilot Provider
 - 期次定位：第四期。目标：全链路发布。
 - 阶段：CI workflow 同步 → registry → 图标 → 发布 → 生产热重载。
 - 收口条件：`AC-006`、`AC-007` 通过。
+- **执行结果（2026-10-15）**：
+  - `AC-006` **PASS**：`cgo-shim-build.py copilot` build/vet/test 全绿，单测 27 例；CI push run `38719640800` 与 dispatch run `38719658415` 均 success，产出 7 平台产物。
+  - `AC-007` **PASS**：提交链 `c546b57`(37 文件) → `56ac86f`(8 assets) → `8966b0c`(registry 原子更新)；远端 7/7 artifacts sha256+size ALL PASS；生产 `plugin-store install` 返回 `restart_required=false`，日志确认 `plugin loaded` + `plugin registered`，**零容器重启**。
+  - 生产落盘 `.so` sha256 `65d428b8…` 与本地 zip 内二进制**逐字节一致**；accounts / status / credits / panel 四条路由全 200。
+  - 发布链路接入点：CI workflow 8 处（头部注释、tag 触发、dispatch options、test matrix、build matrix ×5、build-cross ×2、release if 条件、tag 解析分支、DISPLAY 映射）、`assets/icons/Copilot.png`（640×640 RGBA，imagegen 真实出图）、README（插件计数 8→9 与各段落）、CHANGELOG。
+  - **过程中的真实故障**：侦察阶段曾提前向 registry 写入空 `artifacts` 占位条目，导致 CPA **整体拒绝 registry 源**（`plugins[8]: direct install requires at least one artifact`），所有插件 `plugin-store install` 返回 `plugin_not_found`。已由并行会话提交 `10a1f2f` 移除，本轮随后严格按发布 skill Step 11 语义（条目与 artifacts 由 `publish-assets.py` 原子写入）重做。
+  - 验证证据：`doc/5-tests/2026-10-15_234500_copilot插件CYCLE-4测试.md`、`doc/6-review/2026-10-15_233000_copilot_CYCLE4发布链路配置_6-review.md`。
+  - 诚实边界：未对生产发起真实推理流量（免费档配额有限）；`GAP-003` 风控边界仍待灰度观察。
 
 ### CYCLE-5：Kiro (AWS) 可行性评估
 
