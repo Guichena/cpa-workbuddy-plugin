@@ -11,6 +11,7 @@
 #   - tag 'workbuddy-token-usage-v*'        → release workbuddy-token-usage at that version
 #   - tag 'traework-provider-v*'            → release traework-provider at that version
 #   - tag 'cursor-provider-v*'              → release cursor-provider at that version
+#   - tag 'copilot-provider-v*'             → release copilot-provider at that version
 #   - workflow_dispatch                       → pick plugin + version manually
 #   - plain push/PR                          → CI builds for all (artifacts only, no release)
 #
@@ -32,13 +33,14 @@ on:
       - "cursor-provider-v*"
       - "qoder-ai-provider-v*"
       - "zcode-provider-v*"
+      - "copilot-provider-v*"
   workflow_dispatch:
     inputs:
       plugin:
         description: "Plugin to release"
         required: true
         type: choice
-        options: [workbuddy-provider, qoderwork-provider, workbuddy-token-usage, traework-provider, workbuddy-ai-provider, cursor-provider, qoder-ai-provider, zcode-provider]
+        options: [workbuddy-provider, qoderwork-provider, workbuddy-token-usage, traework-provider, workbuddy-ai-provider, cursor-provider, qoder-ai-provider, zcode-provider, copilot-provider]
       version:
         description: "Version without v (empty = plugin's VERSION file)"
         required: false
@@ -63,6 +65,7 @@ jobs:
           - dir: cursor
           - dir: qoder-ai
           - dir: zcode
+          - dir: copilot
     defaults:
       run:
         working-directory: ${{ matrix.dir }}
@@ -336,6 +339,37 @@ jobs:
             goarch: amd64
             runner: windows-2025
             ext: dll
+          # copilot-provider native (sources in copilot/)
+          - id: copilot-provider
+            src: copilot
+            goos: linux
+            goarch: amd64
+            runner: ubuntu-24.04
+            ext: so
+          - id: copilot-provider
+            src: copilot
+            goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            ext: so
+          - id: copilot-provider
+            src: copilot
+            goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+            ext: dylib
+          - id: copilot-provider
+            src: copilot
+            goos: darwin
+            goarch: arm64
+            runner: macos-15
+            ext: dylib
+          - id: copilot-provider
+            src: copilot
+            goos: windows
+            goarch: amd64
+            runner: windows-2025
+            ext: dll
     defaults:
       run:
         shell: bash
@@ -499,6 +533,14 @@ jobs:
             src: zcode
             target: freebsd-amd64
             ext: so
+          - id: copilot-provider
+            src: copilot
+            target: windows-arm64
+            ext: dll
+          - id: copilot-provider
+            src: copilot
+            target: freebsd-amd64
+            ext: so
     defaults:
       run:
         shell: bash
@@ -620,7 +662,8 @@ jobs:
         startsWith(github.ref, 'refs/tags/workbuddy-ai-provider-v') ||
         startsWith(github.ref, 'refs/tags/cursor-provider-v') ||
         startsWith(github.ref, 'refs/tags/qoder-ai-provider-v') ||
-        startsWith(github.ref, 'refs/tags/zcode-provider-v')
+        startsWith(github.ref, 'refs/tags/zcode-provider-v') ||
+        startsWith(github.ref, 'refs/tags/copilot-provider-v')
     needs:
       - build
       - build-cross
@@ -651,6 +694,8 @@ jobs:
             P="qoder-ai-provider"; V="${GITHUB_REF_NAME#qoder-ai-provider-v}"
           elif [[ "${GITHUB_REF_NAME}" == zcode-provider-v* ]]; then
             P="zcode-provider"; V="${GITHUB_REF_NAME#zcode-provider-v}"
+          elif [[ "${GITHUB_REF_NAME}" == copilot-provider-v* ]]; then
+            P="copilot-provider"; V="${GITHUB_REF_NAME#copilot-provider-v}"
           else
             P="workbuddy-token-usage"; V="${GITHUB_REF_NAME#workbuddy-token-usage-v}"
           fi
@@ -734,6 +779,7 @@ jobs:
             cursor-provider)       DISPLAY="Cursor Provider" ;;
             qoder-ai-provider)     DISPLAY="Qoder AI" ;;
             zcode-provider)        DISPLAY="ZCode Provider" ;;
+            copilot-provider)      DISPLAY="GitHub Copilot" ;;
           esac
           TITLE="${DISPLAY:-$PLUGIN} v${VERSION}"
           if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then

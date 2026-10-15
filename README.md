@@ -2,7 +2,7 @@
 
 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) 的 Go 原生插件集合，将主流 AI 服务与私有逆向协议封装为 **OpenAI / Anthropic 兼容 Provider**，供 CPA 网关统一调度。套件支持多账号运维管理、账号阶梯故障转移、40x 同请求换号重试、会话粘性路由、全插件统一调度（硬排除测试标签 + 低积分优先）、动态模型发现与别名映射、流式长推理稳定性加固（首包即停与 liveBody 实时流）、每日自动签到与积分生命周期管理、桌面客户端指纹模拟（Mimic）与阿里安全盾（UMID）协议支持，以及统一 Token 用量统计与实时看板。
 
-目前包含 **8 个并列插件**（7 大 AI 服务商 Provider + 1 统一用量统计插件），每个插件采用独立模块、独立版本与独立 Release 生命周期管理。
+目前包含 **9 个并列插件**（8 大 AI 服务商 Provider + 1 统一用量统计插件），每个插件采用独立模块、独立版本与独立 Release 生命周期管理。
 
 ---
 
@@ -17,6 +17,7 @@
 | [`qoder-ai-provider`](#qoder-ai-provider--qoder-ai-国际版) | [`qoder-ai/`](qoder-ai/) | Qoder AI 国际版（qoder.com） | `v0.1.8` | 纯 Go 独立实现阿里安全盾 UMID 设备指纹协议，多账号虚拟硬件隔离每日签到（+100 积分），COSY 签名 |
 | [`cursor-provider`](#cursor-provider--cursor-provider) | [`cursor/`](cursor/) | Cursor（cursor.sh） | `v0.1.4` | 会话 Token 导入与备份 JSON 恢复，Connect-RPC 协议转译与会话连续性，250+ 真实模型发现与秒开搜索 |
 | [`zcode-provider`](#zcode-provider--zcode-provider) | [`zcode/`](zcode/) | ZCode（BigModel Coding Plan） | `v0.1.4` | Anthropic 兼容协议接入，ZCode 桌面客户端真实指纹模拟（Mimic），选模型测试探活与专属 Web 面板 |
+| [`copilot-provider`](#copilot-provider--github-copilot-provider) | [`copilot/`](copilot/) | GitHub Copilot（github.com） | `v0.1.0` | GitHub OAuth 设备码登录，Copilot 内部令牌保活，VS Code Copilot Chat 客户端指纹模拟，动态模型发现与多账号故障转移 |
 | [`workbuddy-token-usage`](#workbuddy-token-usage--用量统计-dashboard) | [`token-usage-tracker/`](token-usage-tracker/) | 统一 Token 用量统计与实时看板 | `v0.2.6` | 汇聚各插件共享 NDJSON 用量流，提供请求明细（含服务商列）、维度汇总与成本分析，移除图表轻量化 |
 
 > 注：表格中「当前商店版本」以 [registry.json](registry.json)（CPA 插件商店官方可直接安装版本）为准；源码目录内 `VERSION` 可能包含已开发完毕的更高版本。
@@ -119,6 +120,20 @@
 
 ---
 
+### copilot-provider — GitHub Copilot Provider
+
+将 GitHub Copilot 的订阅额度封装为 CPA 标准 Provider：
+
+- **GitHub OAuth 设备码登录** — 复刻 GitHub 官方 Device Flow（`client_id` 与 `scope` 为 VS Code Copilot 扩展使用的公开常量），面板内展示设备码与授权地址，插件自动轮询绑定账号，无需手工复制回调。
+- **Copilot 令牌自动保活** — 用 GitHub access token 换取 Copilot 内部令牌，按上游 `refresh_in` / `expires_at` 的 80% 提前重取，失败指数退避，避免推理请求因令牌过期中断。
+- **客户端指纹模拟** — 复刻 VS Code Copilot Chat 的请求头（`Copilot-Integration-Id`、`Editor-Version`、`Editor-Plugin-Version`、`Openai-Intent`、`X-Initiator` 等），指纹取值集中管理，便于随上游版本单点更新。
+- **动态模型发现** — 实时拉取上游 `/models` 并带缓存，支持宿主 `oauth-model-alias` 与 `oauth-excluded-models` 治理。
+- **多账号池与故障转移** — 账号轮询调度、429/5xx 换号重试、阶梯冷却、测试失败硬隔离，账号类型（individual / business / enterprise）自动推导上游端点。
+- **流式与非流式转发** — 原生 SSE 逐行实时推送，遇 `[DONE]` 立即退出并关闭连接，杜绝 Keep-Alive 空闲挂起。
+- **专属管理控制台** — 挂载于 `/v0/resource/plugins/copilot-provider/panel`，支持深浅主题、账号卡片、配额进度条、模型查看与账号启停。
+
+---
+
 ### workbuddy-token-usage — 用量统计 Dashboard
 
 记录、统计并可视化跨插件各账户的真实 Token 消耗与费用：
@@ -170,7 +185,8 @@ cpa-workbuddy-plugin/
 ├── qoder-ai/                   # 插件 5：Qoder AI 国际版 Provider（阿里安全盾 UMID / 每日签到）
 ├── cursor/                     # 插件 6：Cursor Provider（Connect-RPC 协议 / 真实模型发现 / 面板）
 ├── zcode/                      # 插件 7：ZCode Provider（桌面客户端指纹模拟 Mimic / Web 面板）
-├── token-usage-tracker/        # 插件 8：统一 Token 用量看板（共享 NDJSON / 明细表 / 维度分析）
+├── copilot/                    # 插件 8：GitHub Copilot Provider（设备码登录 / 内部令牌保活 / 指纹模拟）
+├── token-usage-tracker/        # 插件 9：统一 Token 用量看板（共享 NDJSON / 明细表 / 维度分析）
 ├── registry.json               # 插件商店自定义源元数据（schema v2，direct install，包含 sha256 与 size）
 ├── release-assets/             # 各版本 7 平台架构 zip 与 checksums 产物（发布后仅保留各插件最新版）
 ├── assets/                     # 共享资源（官方高清图标 icons/ 等）
@@ -233,6 +249,7 @@ checksums.txt                       # 7 平台产物的 SHA-256 校验清单
    - `qoder-ai-provider`
    - `cursor-provider`
    - `zcode-provider`
+   - `copilot-provider`
    - `workbuddy-token-usage`
 
 > 提示：服务器生产环境可通过管理 API 热重载安装指定版本：
@@ -281,6 +298,10 @@ plugins:
       base_url: "https://open.bigmodel.cn/api/anthropic"
       mimic:
         enabled: true
+    copilot-provider:
+      enabled: true
+      account_type: "individual"
+      dynamic_models: true
     workbuddy-token-usage:
       enabled: true
 ```
@@ -301,6 +322,7 @@ python scripts/cgo-shim-build.py traework
 python scripts/cgo-shim-build.py workbuddy
 python scripts/cgo-shim-build.py cursor
 python scripts/cgo-shim-build.py zcode
+python scripts/cgo-shim-build.py copilot
 python scripts/cgo-shim-build.py token-usage-tracker
 
 # 校验 registry.json 格式与哈希合法性
