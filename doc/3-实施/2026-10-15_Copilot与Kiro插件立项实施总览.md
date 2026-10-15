@@ -130,6 +130,13 @@ copilot/                        # 插件 9：GitHub Copilot Provider
 - 产出：Kiro 协议可行性报告（免费额度、OAuth 形态、逆向难度、风控风险）+ 立项建议。
 - 进入条件：CYCLE-4 收口完成（Copilot 已跑通）。
 - 收口条件：报告落盘，给出「立项 / 不立项」明确建议。
+- **执行结果（2026-10-15）**：
+  - 收口条件 **PASS**：报告落盘 `doc/3-实施/2026-10-15_235000_Kiro可行性评估报告.md`，结论为**不立项**。
+  - 决定性依据（官方一手，已直接核验）：① Kiro 官方 FAQ 明文「Use through third-party automation harnesses ... that route requests outside of Kiro's native interfaces **is not permitted**」，本插件形态直接命中；② 免费档仅 **50 credits/月**（计价单位为 credits，IDE/CLI/Web 共用同一池，无独立 API 额度），经济价值极低。
+  - 风险实证：社区记录批量导入后 `All connections banned by upstream`（终局封禁、一年冷却），触发信号为 IP/指纹与 IDE 不一致、突发流量、批量加号；存在设备指纹绑定。
+  - 技术可行性（记录备查，不影响结论）：复用 CodeWhisperer 后端，`GenerateAssistantResponse` + Bearer token + CodeWhisperer 专有 JSON 体 + AWS eventstream 二进制响应，需伪装 `KiroVersion` 指纹；难度中高档，明显高于 Copilot 式纯 Bearer + REST。
+  - 对比结论：Copilot 已立项发布（免费档可用）；OpenCode 已裁定暂停（免费模型被指纹闸门封死）；Kiro 不立项（ToS 明文禁止 + 额度极低 + 封号实证）。
+  - 诚实边界：纯桌面调研，未对 Kiro 发起真实请求或抓包；合规判断基于官方原文，未取得 AWS 法律意见。
 
 ## 六、最小任务清单
 
