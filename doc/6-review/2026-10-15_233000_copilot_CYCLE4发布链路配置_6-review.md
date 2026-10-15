@@ -51,6 +51,63 @@
 - 判据：`"testing"` 导入、`Test*`/`Benchmark*`/`Fuzz*` 导出函数、`testHook`/`testOnly`/`forTest` 类测试专用钩子、`t.TempDir`/`t.Fatalf` 等测试 API 调用。
 - 结论：**POLLUTION: PASS**（命中 0）。
 
-## 五、负向边界声明
+## 六、OCR 代码审查
 
-本审查只覆盖风格、格式、命名、注释、落点与测试资产归位；**不判断**业务逻辑正确性、需求覆盖度与发布放行。`AC-006` 结论以 `scripts/cgo-shim-build.py copilot` 全绿为准，`AC-007` 以发布链路远端验证为准，本审查不构成其通过结论。
+按 `code-change-finalization-gate-rules` 的 `references/ocr-review/review-workflow.md` 执行，路径映射取自 `rule-path-map.md`：
+
+| 语言 | 规则文件 | 审查范围 |
+|---|---|---|
+| Go | `rule_docs/go.md` | `copilot/*.go`（18 个生产文件） |
+| JS | `rule_docs/ts_js_tsx_jsx.md` | `copilot/panel.html` 内联脚本、`test/copilot/panel_render_repro.mjs` |
+| Python | `rule_docs/python.md` | `test/copilot/host_bridge_probe.py` |
+| YAML | `rule_docs/github_workflows.md` | `.github/workflows/build.yml` |
+
+### 6.1 Go 规则核验
+
+| 条款 | 结论 | 证据 |
+|---|---|---|
+| 安全敏感随机源须用 `crypto/rand` | PASS | `util.go:4` 导入 `crypto/rand`，`randomHex`/`randomUUID`（`X-Request-Id`）均用其生成；全仓无 `math/rand` |
+| 路径遍历防护 | PASS | `isSafeCopilotAuthPath` 三重校验：拒绝 `../` 与 `/..`、`filepath.Base` 须匹配 `copilot-*.json` 命名、`base == Base(Clean(path))`；调用点覆盖读/写/删全路径（`authfile.go:173/177/214/335/341`） |
+| 凭据不得进入日志/错误 | PASS | 错误信息只含 `auth_id` 与状态码，无 token 原值；面板展示走 `maskAPIKey`（`key[:4]+"...."+key[-4:]`）；`management.go:331` 批量操作错误用 `maskAPIKey(token)` 脱敏 |
+| `resp.Body` 全路径关闭 | PASS | 6 个出站请求点全部覆盖：5 处 `defer resp.Body.Close()`，`executor.go:129` 在错误分支手动 Close 后 `cancel()`（与成功分支的 defer 互补，无重复无遗漏） |
+| goroutine 生命周期与取消 | PASS | 唯一后台 goroutine `pumpUpstreamStream` 的 `defer` 内执行 `cancel()` + `resp.Body.Close()` + `streamClose(streamID)`；`for` 循环首行 `select ctx.Done()` 保证可退出；`ctx` 传 `context.Background()` 与 `zcode/executor.go:198` 基线一致 |
+| 锁与共享状态 | PASS | 全部 `RLock`/`RUnlock` 与 `Lock`/`Unlock` 成对（手动解锁路径为提前返回，已逐处核对）；`models.go:79-86` 在 `RLock` 内仅取数据、锁外做 `time.Now()` 比较；`cachedQuota` 锁外做 `time.Parse` |
+| 不可复制同步原语 | PASS | `sync.RWMutex`/`sync.Mutex` 均为包级变量或嵌入结构体指针持有，无按值传递/复制 |
+| 无限重试与忙等待 | PASS | `stream.go:81` 的 `for` 有 `ctx.Done()` 退出路径与 `[DONE]`/`event: error` 哨兵；重试上限硬编码 3 次（`executor.go:100`） |
+| 边界索引 | PASS | `maskAPIKey` 有 `len<=8` 前置分支；`management.go:157` 有 `len(vals)>0` 守卫；`scheduler.go:78` 在 `len(candidates)==0` 早退之后 |
+
+### 6.2 JS 规则核验
+
+| 条款 | 结论 | 证据 |
+|---|---|---|
+| XSS 防护 / innerHTML 安全 | PASS | 所有用户可控数据经 `esc()`（转义 `& < > " '`）后插入；`card()` 内 `label`/`username`/`auth_id`/`account_type`/`expires_at` 全部 `esc()` 包裹；纯文本场景用 `textContent`（`panel.html:200-201/392`） |
+| 禁止 `eval` / `Function` / 字符串 `setTimeout` | PASS | 全仓无命中 |
+| 禁止 `document.write` | PASS | 无命中 |
+| 原型链安全 | PASS | 无 `.prototype` 赋值 |
+| 敏感信息暴露 | PASS | 面板只展示 `api_key_masked`，不返回原值 |
+
+### 6.3 Python 规则核验
+
+| 条款 | 结论 | 证据 |
+|---|---|---|
+| 可变默认参数 | PASS | 唯一默认值为 `SO = os.environ.get("COPILOT_SO", "/tmp/...")`（字符串不可变） |
+| 资源管理 | PASS | 无文件/socket 未关闭路径；ctypes 内存由 `libc.malloc`/`libc.free` 配对管理，`host_call` 分配、`host_free` 释放 |
+| 边界与空值 | PASS | `req_len` 为 0 时不构造 buffer；`out.ptr and out.len` 双条件守卫后再 `string_at` |
+| 凭据硬编码 | PASS | 凭据经 `COPILOT_GH_TOKEN` 环境变量读入，脚本不回显原值 |
+
+### 6.4 工作流规则核验
+
+| 条款 | 结论 | 证据 |
+|---|---|---|
+| 语法与触发器完整 | PASS | `yaml.safe_load` 解析通过，jobs 为 `test`/`build`/`build-cross`/`release`；`copilot-provider` 已加入 tag 触发与 dispatch options |
+| 第三方 action 版本 | PASS | 全部使用语义化版本标签（`checkout@v4`、`setup-go@v5`、`upload-artifact@v4`、`go-cross/cgo-actions@v1`），无未固定版本 |
+| 权限最小化 | PASS | 仅 `contents: write`（创建 Release 与 push tag 所需） |
+| 无硬编码敏感信息 | PASS | 凭据仅经 `${{ github.token }}` / `secrets.*` 引用；命中的 "token" 均为 `workbuddy-token-usage` 插件名 |
+
+### 6.5 审查结论
+
+**OCR 审查:PASS** —— 未发现 Critical 或 High 级别问题。Go 侧的错误处理、并发安全、资源清理、路径校验四项关键面均与 `zcode` 基线同构；JS 侧 XSS 防护完整；工作流未引入新的权限或版本固定缺陷。
+
+## 七、负向边界声明
+
+本审查只覆盖风格、格式、命名、注释、落点、测试资产归位与 OCR 行级审查；**不判断**业务逻辑正确性、需求覆盖度与发布放行。`AC-006` 结论以 `scripts/cgo-shim-build.py copilot` 全绿为准，`AC-007` 以发布链路远端验证为准，本审查不构成其通过结论。
