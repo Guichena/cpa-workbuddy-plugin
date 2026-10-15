@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"strings"
@@ -76,6 +77,11 @@ func handleStartLogin(raw []byte) ([]byte, error) {
 	})
 }
 
+// handlePollLogin 处理 OAuth 轮询：待授权完成拿到 token 后，先尽力补齐账号注册
+// 链路（注册地 + 云账号 + 试用包），再返回凭证。补注册失败不阻断授权成功。
+// [参数] raw 宿主传入的 AuthLoginPollRequest JSON（含 state）
+// [返回] AuthLoginPollResponse 信封；state 缺失/过期/上游异常时返回错误
+// 最近修改时间：2026-10-15 18:20:00；改动原因：新增授权后补注册钩子
 func handlePollLogin(raw []byte) ([]byte, error) {
 	var req pluginapi.AuthLoginPollRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
@@ -138,9 +144,24 @@ func handlePollLogin(raw []byte) ([]byte, error) {
 	}
 
 	loginStates.Delete(state)
+
+	// 授权成功不等于注册完成：浏览器登录页在 platform=CLI 下会跳过注册地选择，
+	// 账号将以 areaInfoComplete=false 落盘且拿不到额度池。这里在返回凭证前尽力
+	// 补齐注册链路；失败只记录状态、不阻断授权（授权本身已成功，落盘仍然有效）。
+	message := "login successful"
+	if res, err := ensureAccountRegistered(sa); err != nil {
+		log.Printf("[workbuddy-ai] post-login registration incomplete for %s: %v", sa.Account.UID, err)
+		message = "login successful; registration incomplete: " + err.Error()
+	} else if ok, _ := res["registered"].(bool); ok {
+		if region, _ := res["region"].(string); region != "" {
+			message = "login successful; registered (" + region + ")"
+		}
+	}
+
 	return okEnvelope(pluginapi.AuthLoginPollResponse{
-		Status: pluginapi.AuthLoginStatusSuccess,
-		Auth:   toAuthData(sa),
+		Status:  pluginapi.AuthLoginStatusSuccess,
+		Message: message,
+		Auth:    toAuthData(sa),
 	})
 }
 

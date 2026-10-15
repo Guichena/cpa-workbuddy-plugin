@@ -31,12 +31,42 @@ type wbAccount struct {
 	Credits      *creditsSummary `json:"credits,omitempty"`
 	Checkin      *checkinSummary `json:"checkin,omitempty"`
 	TrialClaimed bool            `json:"trial_claimed,omitempty"`
+	Registered   bool            `json:"registered"` // 已完成注册地填写；false 且无额度时为「未注册」态
 	Error        string          `json:"error,omitempty"`
 	Success      int64           `json:"success,omitempty"`
 	Failed       int64           `json:"failed,omitempty"`
 	FailCount    int             `json:"fail_count,omitempty"`
 	Cooling      bool            `json:"cooling,omitempty"`
 	CoolUntil    int64           `json:"cool_until,omitempty"`
+}
+
+// resolveRegisteredState 判定账号是否已完成注册。已有 plan（trial/free/付费）的账号
+// 必然走过注册流程，直接判定为已注册、不产生额外上游调用；仅对无 plan 的疑似未注册
+// 账号查询上游 areaInfoComplete，并把结果缓存到 accountCache 避免每轮重查。
+// [参数] authID 账号缓存键；sa 账号凭证；plan 当前套餐（空表示无套餐）
+// [返回] true 表示已完成注册
+// 最近修改时间：2026-10-15 18:20:00；改动原因：新增补注册链路的面板状态透出
+func resolveRegisteredState(authID string, sa *storedAuth, plan string) bool {
+	if strings.TrimSpace(plan) != "" {
+		return true
+	}
+	if v, ok := accountCache.Load(authID); ok {
+		if e, ok2 := v.(*accountCacheEntry); ok2 && e.registered != nil {
+			return *e.registered
+		}
+	}
+	registered, err := fetchRegistrationStatus(sa)
+	if err != nil {
+		return false
+	}
+	if v, ok := accountCache.Load(authID); ok {
+		if e, ok2 := v.(*accountCacheEntry); ok2 {
+			fresh := *e
+			fresh.registered = &registered
+			accountCache.Store(authID, &fresh)
+		}
+	}
+	return registered
 }
 
 func buildDashboardEx(force, fetchCredits bool) map[string]any {
@@ -113,6 +143,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 				acct.Exhausted = isCreditsExhausted(cr)
 				acct.LowCredits = cr != nil && !acct.Exhausted && cr.TotalRemain < loadedMinRoutableCredits()
 				acct.TrialClaimed = hasTrialPack(cr)
+				acct.Registered = resolveRegisteredState(f.ID, sa, plan)
 				_ = syncAuthNote(f.AuthIndex, f.ID, sa, cr, acct.Disabled)
 				acct.Error = strings.Join(errs, "; ")
 			} else {
@@ -124,6 +155,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 						acct.Exhausted = isCreditsExhausted(e.credits)
 						acct.LowCredits = e.credits != nil && !acct.Exhausted && e.credits.TotalRemain < loadedMinRoutableCredits()
 						acct.TrialClaimed = hasTrialPack(e.credits)
+						acct.Registered = resolveRegisteredState(f.ID, sa, e.plan)
 					}
 				}
 			}

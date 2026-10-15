@@ -12,10 +12,11 @@ import (
 
 // the failed field falls back to the previous value instead of being wiped.
 type accountCacheEntry struct {
-	checkin *checkinSummary
-	credits *creditsSummary
-	plan    string
-	fetched time.Time
+	checkin    *checkinSummary
+	credits    *creditsSummary
+	plan       string
+	registered *bool // nil = 未探测；面板仅在无 plan 时才探测注册态
+	fetched    time.Time
 }
 
 var (

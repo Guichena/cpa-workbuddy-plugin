@@ -1,5 +1,17 @@
 # WorkBuddy AI Plugin Changelog
 
+## 0.1.16
+
+### Feat - 国际版 OAuth 授权后自动补注册地，修复新账号无可用额度
+
+- 变更要点:
+  1. 修复根因：插件以 `platform=CLI` 调 `auth/state`，官方登录页据此主动跳过注册地选择页，新账号以 `areaInfoComplete=false` 落盘，云账号未注册、无额度池（面板表现为 plan 为空、可用积分 0）。
+  2. 新增 `registration.go` 补注册链路：查 `areaInfoComplete` → 按出口 IP 推导注册地（`CN` 映射为 `HK`）→ 取国家完整条目 → 提交注册地 → 注册云账号 → 尽力领试用包，全流程 Bearer 鉴权，无需官方客户端或浏览器会话。
+  3. 授权钩子接入：`handlePollLogin` 在返回凭证前调用 `ensureAccountRegistered`，已注册账号零额外调用直接跳过；补注册失败只记录状态、不阻断授权落盘（授权本身已成功）。
+  4. 面板状态透出：`wbAccount` 新增 `registered` 字段，无 plan 时才探测注册态并回写缓存；新增「未注册」徽标与「补注册」按钮，对应管理路由 `POST /register`。
+  5. 新增 `registration_test.go` 六个用例（嵌套 JSON 解包、CN→HK 映射、已注册跳过、完整链路、提交失败、UID 缺失），并完成 CN→HK 哨兵反证。
+- 涉及文件: workbuddy-ai/registration.go、workbuddy-ai/registration_test.go、workbuddy-ai/oauth.go、workbuddy-ai/management.go、workbuddy-ai/credits_handler.go、workbuddy-ai/panel.go、workbuddy-ai/panel.html、workbuddy-ai/cache.go
+
 ## 0.1.15
 
 ### Chore - 定时探活降频至 4 小时并修正失败账号节流缺陷

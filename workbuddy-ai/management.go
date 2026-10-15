@@ -68,6 +68,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/import", Description: "Import WorkBuddy AI credential JSON into host auth store."},
 			{Method: http.MethodGet, Path: base + "/export", Description: "Export all WorkBuddy AI credentials as JSON backup."},
 			{Method: http.MethodPost, Path: base + "/trial", Description: "Claim expert trial pack for one account (auth_index). 250 credits / 14 days."},
+			{Method: http.MethodPost, Path: base + "/register", Description: "Complete account registration (region + cloud account + trial) for one account (auth_index)."},
 			{Method: http.MethodPost, Path: base + "/select", Description: "Select the active account card used for chat routing (body: {auth_index})."},
 			{Method: http.MethodPost, Path: base + "/delete", Description: "Delete one WorkBuddy AI account and auth file (body: {auth_index})."},
 			{Method: http.MethodPost, Path: base + "/keepalive", Description: "Manually refresh access tokens for all accounts."},
@@ -123,6 +124,8 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleExportAuth(req)))
 	case req.Method == http.MethodPost && path == base+"/trial":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleClaimTrial(req)))
+	case req.Method == http.MethodPost && path == base+"/register":
+		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleRegisterAccount(req)))
 	case req.Method == http.MethodPost && path == base+"/select":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleSelectAuth(req)))
 	case req.Method == http.MethodPost && path == base+"/delete":
@@ -263,6 +266,7 @@ func mutatingManagementPath(path string) bool {
 		base + "/import",
 		base + "/export",
 		base + "/trial",
+		base + "/register",
 		base + "/select",
 		base + "/delete",
 		base + "/keepalive",

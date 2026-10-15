@@ -189,6 +189,60 @@ func handleClaimTrial(req pluginapi.ManagementRequest) map[string]any {
 	return map[string]any{"error": "account not found"}
 }
 
+// handleRegisterAccount 补齐单个账号的注册链路（注册地 + 云账号 + 试用包）。
+// 用于存量未注册账号的人工补注册，以及 OAuth 自动补注册失败后的重试入口。
+// [参数] req 管理请求，body 需含 auth_index
+// [返回] 补注册结果明细
+// 最近修改时间：2026-10-15 18:20:00；改动原因：新增补注册链路
+func handleRegisterAccount(req pluginapi.ManagementRequest) map[string]any {
+	var body struct {
+		AuthIndex string `json:"auth_index"`
+	}
+	_ = json.Unmarshal(req.Body, &body)
+	authIndex := strings.TrimSpace(body.AuthIndex)
+	if authIndex == "" {
+		return map[string]any{"error": "auth_index is required"}
+	}
+	files, err := hostAuthList()
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	for _, f := range files {
+		if f.AuthIndex != authIndex {
+			continue
+		}
+		sa, err := hostAuthGet(f.AuthIndex)
+		if err != nil {
+			return map[string]any{"auth_index": authIndex, "error": err.Error()}
+		}
+		res, err := ensureAccountRegistered(sa)
+		out := map[string]any{
+			"auth_index": authIndex,
+			"nickname":   sa.Account.Nickname,
+			"uid":        sa.Account.UID,
+		}
+		for k, v := range res {
+			out[k] = v
+		}
+		if err != nil {
+			out["error"] = err.Error()
+		}
+		if v, ok := accountCache.Load(f.ID); ok {
+			if e, ok2 := v.(*accountCacheEntry); ok2 {
+				fresh := *e
+				fresh.credits = nil
+				fresh.fetched = time.Now()
+				accountCache.Store(f.ID, &fresh)
+			}
+		}
+		if lifecycleEnabled() {
+			_, _ = reconcileOneAccount(authIndex, f.ID, true)
+		}
+		return out
+	}
+	return map[string]any{"error": "account not found"}
+}
+
 func handleSelectAuth(req pluginapi.ManagementRequest) map[string]any {
 	var body struct {
 		AuthIndex string `json:"auth_index"`
@@ -337,6 +391,9 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 				acct["low_credits"] = cr != nil && !isCreditsExhausted(cr) && cr.TotalRemain < loadedMinRoutableCredits()
 				acct["trial_claimed"] = hasTrialPack(cr)
 				acct["plan"] = fetchPaymentType(sa)
+				if registered, regErr := fetchRegistrationStatus(sa); regErr == nil {
+					acct["registered"] = registered
+				}
 				if v, ok := accountCache.Load(f.ID); ok {
 					if e, ok2 := v.(*accountCacheEntry); ok2 {
 						fresh := *e

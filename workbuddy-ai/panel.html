@@ -71,6 +71,7 @@ button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background
 .badge.test-failed{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-style:italic}
 .badge.stat{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-weight:500}
 .badge.cooling{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
+.badge.unregistered{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
 /* 后台刷新卡片三态（data-refresh-state：pending/running/done/failed）
    running 虚线高亮 + spinner；done 短暂绿色高亮；failed 红框 + ⚠️ 错误文本。 */
 .card[data-refresh-state="running"]{border:1px dashed var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
@@ -471,6 +472,7 @@ function bindCardActions(root){
       else if(act==="select") selectAuth(idx, ev.currentTarget);
       else if(act==="refresh") refreshCredits(idx, ev.currentTarget);
       else if(act==="test") openTestModal(idx);
+      else if(act==="register") registerAccount(idx, ev.currentTarget);
       else if(act==="unfreeze") unfreezeOne(idx, ev.currentTarget);
       else if(act==="delete") openDeleteModal(idx);
     });
@@ -503,6 +505,12 @@ function isAccountLowCredits(a){
   const remain=Number(cr.total_remain)||0;
   return remain>0 && remain<20;
 }
+// 未注册态判定：授权完成但注册地未填（后端 registered=false），且当前无套餐。
+// 这类账号即使不报错也拿不到额度池，需要「补注册」。
+function isAccountUnregistered(a){
+  if(!a || a.registered!==false) return false;
+  return !String(a.plan||"").trim();
+}
 function card(a){
   const plan=(a.plan||"unknown").toLowerCase();
   const ci=a.checkin||{}, cr=a.credits;
@@ -521,14 +529,18 @@ function card(a){
   const testFailedBadge=a.test_failed?`<span class="badge test-failed" title="定时活跃测试失败且仍有积分；建议人工复核后清理">测试</span>`:"";
   const lowCredits=isAccountLowCredits(a);
   const lowCreditsBadge=lowCredits?`<span class="badge low-credits" title="剩余额度低于安全红线(20)，已暂停路由，防止推理中途断开">低额保护</span>`:"";
-  const badges=testFailedBadge+(exhausted?`<span class="badge exhausted">耗尽</span>`:lowCreditsBadge)+regionBadge+`<span class="badge ${plan}">${esc(a.plan||"-")}</span>`;
+  // 未注册态：授权完成但注册地未填（platform=CLI 登录页会跳过该步），此时拿不到额度池。
+  const unregistered=isAccountUnregistered(a);
+  const unregisteredBadge=unregistered?`<span class="badge unregistered" title="授权成功但未完成注册（注册地未填），拿不到额度池；点击「补注册」按出口 IP 自动补齐">未注册</span>`:"";
+  const registerBtn=unregistered?`<button class="sec" data-action="register" data-auth-index="${esc(a.auth_index)}" title="按出口 IP 自动提交注册地并注册云账号，随后领取试用包">补注册</button>`:"";
+  const badges=testFailedBadge+unregisteredBadge+(exhausted?`<span class="badge exhausted">耗尽</span>`:lowCreditsBadge)+regionBadge+`<span class="badge ${plan}">${esc(a.plan||"-")}</span>`;
   return `<div class="card${selected?" selected":""}" data-region="${region}" data-auth="${esc(a.auth_index)}" data-nickname="${esc(a.nickname||a.label||a.name||"")}" data-label="${esc(a.label||"")}" data-name="${esc(a.name||"")}" data-uid="${esc(a.uid||"")}" data-test="${a.test_failed?"1":"0"}" data-low="${lowCredits?"1":"0"}" data-failed="${((Number(a.failed)||0)>0||(Number(a.fail_count)||0)>0)?"1":"0"}">
   <h2>${esc(a.nickname||a.label||a.name)} <span style="display:flex;gap:6px;align-items:center">${badges}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_index)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
   <div class="uid">${esc(a.uid||"")} · ${esc(a.name||"")}</div>
   ${a.created_at?`<div class="uid">创建 ${esc(fmtCST(a.created_at))}</div>`:''}
   ${progressHTML(cr,a)}
   ${a.error?`<div class="row"><span class="k">错误</span><span class="v err">${esc(a.error)}</span></div>`:""}
-  <div class="actions">${refreshBtn}${actionHTML}<button class="sec" data-action="test" data-auth-index="${esc(a.auth_index)}" title="测试账号活跃并发送一次推理请求">测试</button></div>
+  <div class="actions">${refreshBtn}${actionHTML}${registerBtn}<button class="sec" data-action="test" data-auth-index="${esc(a.auth_index)}" title="测试账号活跃并发送一次推理请求">测试</button></div>
   </div>`;
 }
 // 冷却倒计时：每秒刷新积分首行中的冷却剩余秒数。
@@ -1194,6 +1206,20 @@ async function refreshCredits(idx, btn){
   }catch(e){
     toast("刷新失败","err",e.message||String(e));
   }finally{
+    busy(btn,false);
+  }
+}
+async function registerAccount(idx, btn){
+  busy(btn,true);
+  try{
+    const d=await api("/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_index:idx})});
+    if(d.error){toast("补注册失败","err",d.error);busy(btn,false);return;}
+    const who=d.nickname||idx;
+    const region=d.region?(" · 注册地 "+d.region):"";
+    toast("补注册成功","ok",who+region);
+    await load();
+  }catch(e){
+    toast("补注册失败","err",e.message||String(e));
     busy(btn,false);
   }
 }
