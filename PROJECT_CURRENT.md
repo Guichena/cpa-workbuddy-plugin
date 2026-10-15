@@ -19,10 +19,10 @@
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
   - `zcode-provider`: **0.1.31**（面板额度改为逐模型独立进度条（GLM-5.3 / GLM-5.3-Flash 各一条）并移除「过期」等冗余信息；0.1.30 面板额度改用 `billing/balance` 取真实已用/剩余 + 领取失败文案友好化；0.1.29 修复面板无感验证 captcha 配置缺陷；0.1.28 面板内无感验证领取 Start Plan + OAuth 默认中国区）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
-  - `qoderwork-provider`: **0.9.36**（tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷；签到 10:00/22:00）
-  - `qoder-ai-provider`: **0.1.16**（tools 对齐修复；0.1.15 max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册；签到 10:00/22:00）
-  - `traework-provider`: **0.2.12**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.2.11 max_tokens 32768 底线 + payload 层同步，探活改全量模型按序测试）
-  - `workbuddy-provider`: **0.15.9**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.15.8 max_tokens 32768 底线，探活改全量模型按序测试）
+  - `qoderwork-provider`: **0.9.38**（签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.9.37 tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷）
+  - `qoder-ai-provider`: **0.1.18**（签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.1.17 tools 对齐修复；0.1.15 max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册）
+  - `traework-provider`: **0.2.13**（面板签到时刻文案漂移修正为 00/04/08/12/16/20；0.2.12 定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.2.11 max_tokens 32768 底线 + payload 层同步，探活改全量模型按序测试）
+  - `workbuddy-provider`: **0.15.10**（面板签到时刻文案漂移修正为 00/04/08/12/16/20；0.15.9 定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.15.8 max_tokens 32768 底线，探活改全量模型按序测试）
   - `workbuddy-ai-provider`: **0.1.15**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.1.14 max_tokens 32768 底线，探活改全量模型按序测试）
   - `workbuddy-token-usage`: **0.2.8**（0.2.8 让退役实例的 feed 导入协程在连续 3 轮关闭句柄后自行退出；0.2.7 修复宿主配置重载换句柄窗口导致的用量记录丢失；0.2.6 移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细与维度汇总展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
@@ -30,7 +30,17 @@
 
 ## 活动会话进展摘要
 
-- 当前会话（2026-10-15）：**zcode-provider 面板额度改为逐模型独立进度条并移除冗余信息（0.1.31），全链路发布生产**：
+- 当前会话（2026-10-15）：**五插件签到节奏统一为每 4 小时，四插件全链路发布生产（qoderwork 0.9.38 / qoder-ai 0.1.18 / workbuddy 0.15.10 / traework 0.2.13）**：
+  - 需求背景：用户裁定「把所有支持签到的插件改成每 4 小时尝试签到一次」。**关键事实**：5 个签到插件中 workbuddy / workbuddy-ai / traework 后端本就已是每 4 小时六槽，只有 qoderwork / qoder-ai 在 2026-10-12 被收敛为 `[10,22]`；zcode / cursor 不支持签到。
+  - **行为变更（qoder 两插件）**：① `checkinHours` 由 `[10,22]` 恢复为 `[0,4,8,12,16,20]`；② **移除 `shouldRunCheckinNow` 门控**——该门控只在「签到表 ≠ 保活表」时才有意义，两表取值一致后 `nextCheckinTime` 并集恒等于签到表本身、门控退化为恒真死代码，删除后与 workbuddy 系 `schedulerLoop` 同构；③ 面板 `schedule` 与文案同步六槽。
+  - **文案漂移修正（workbuddy / traework）**：`panel.html` 与 README/architecture 长期错标 `09:00/21:00`（后端实为六槽），修正为 `00/04/08/12/16/20`；`panel.html` 经 `go:embed` 进二进制，必须发版才生效。
+  - **发布闭环**：提交 `91ca440`(feat 33 文件含实施/测试/6-review 文档) → 四插件 dispatch CI（`38623746537`/`38623755098`/`38623764859` success）→ `cf40437`(32 assets) → `97db81e`(registry) → `8c2ea35`(prune 4 旧版)。
+  - **CI 处置**：qoderwork 首个 run `38623737653` 因既有 flaky 测试 `Test (token-usage-tracker)` 失败致 Release skipped → 单插件重发 `38626694582` success（踩坑 45/55 复现，并取消冗余 push run 释放 Runner）。
+  - **生产验收**：四插件 `plugin-store install` 均 `restart_required=false`、日志确认 `plugin hot reloaded`（04:02，active=目标版 retired=旧版），**零容器重启**（容器 Up 26h），落盘 `.so` sha256 与本地 zip 逐字节一致（`eb5fed79…`/`18abd6e0…`/`e7eb3c16…`/`7a4a623f…`）；accounts/panel 全 200，新文案 `00/04/08/12/16/20` 就位、旧文案残留全为 0。远端 28/28 artifacts sha256+size ALL PASS、无旧版残留。
+  - 门禁：四插件**隔离 worktree**（`git worktree add --detach HEAD` + 仅复制本轮文件，模拟 CI 构建对象，因工作树含 20 个并行会话文件）cgo-shim build/vet/test 全绿；哨兵变异精确 FAIL 后恢复全绿；面板内联 JS `node --check` + vm/DOM 桩回归全 PASS；`POLLUTION: PASS`；`STYLE: PASS`。提交全程按路径限定（踩坑 57），并行会话 20 个文件完好未混入。
+  - 文档：`doc/3-实施/2026-10-15_031646_全插件签到节奏统一为每4小时实施总览.md`、`doc/5-tests/2026-10-15_031646_*`、`doc/6-review/2026-10-15_031646_*`。
+
+- 上一会话（2026-10-15）：**zcode-provider 面板额度改为逐模型独立进度条并移除冗余信息（0.1.31），全链路发布生产**：
   - 需求背景：用户反馈截图显示一个账号的 GLM-5.3 / GLM-5.3-Flash 仍共用**一条**汇总进度条，看不出各模型各自消耗；并要求移除「过期」等与额度判断无关的信息。
   - **改造（纯前端，`zcode/panel.html`）**：`quotaHTML` 由「单条汇总条」改为按 `entitlements[]` **逐模型渲染独立进度条**——每个模型一条 `.pb-item`，标签显示「剩 X / Y」并按「剩余/授予」着色（≤30% 黄、≤10% 红）；回退通道（无真实用量）模型单独展示「授予 X」+ 半透明满格条；`card()` 移除「过期」行。CSS 新增 `.pb-item`/`.pb-name`/`.pb-used.warn|err`，移除本轮失效的 `.pb-primary`/`.pb-segment`。
   - **回归脚本同步（`test/zcode/panel_quota_render_repro.mjs`）**：新增逐模型进度条数量、逐模型剩余/授予文案、耗尽模型转红、卡片不展示过期行等断言；并修正两处**既有失配**（0.1.28 默认授权站点已改中国区、0.1.30 汇总文案已改「今日授予合计」，脚本此前仍断言旧值，长期失去判别力）。
