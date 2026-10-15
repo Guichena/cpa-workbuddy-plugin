@@ -287,7 +287,7 @@
       "name": "WorkBuddy AI",
       "description": "Tencent CodeBuddy International (WorkBuddy AI) OAuth provider for CLIProxyAPI: dedicated workbuddy.ai endpoint, clean prefix workbuddyai-, built-in QR login modal in plugin panel, dynamic models, Pro 14-day trial (+250 credits), 4h token keepalive and 10m watchdog.",
       "author": "luode0320",
-      "version": "0.1.15",
+      "version": "0.1.16",
       "repository": "https://github.com/luode0320/cpa-workbuddy-plugin",
       "logo": "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png",
       "homepage": "https://github.com/luode0320/cpa-workbuddy-plugin/tree/main/workbuddy-ai",
@@ -305,51 +305,51 @@
           {
             "goos": "darwin",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_darwin_amd64.zip",
-            "sha256": "eca1aeac4b131410c3befe5e724d141eaf5cc5eaff86685f8be3c7e139ea5f29",
-            "size": 3066312
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.16/workbuddy-ai-provider_0.1.16_darwin_amd64.zip",
+            "sha256": "5b2e1c8c28ba77013bfbe957d4c0173adb1e8926cec3d929339942a0fce7649b",
+            "size": 3076342
           },
           {
             "goos": "darwin",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_darwin_arm64.zip",
-            "sha256": "2978e99db1b26a44d1ff3956e8c5952c19c4c09998647bac6e5523b83fee86b4",
-            "size": 2830189
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.16/workbuddy-ai-provider_0.1.16_darwin_arm64.zip",
+            "sha256": "93a71eb57651bd8b99b7caa79af7439f4d47c83d08c5131f714094d984dc626e",
+            "size": 2838758
           },
           {
             "goos": "freebsd",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_freebsd_amd64.zip",
-            "sha256": "4e72a2bbc8fc0385b0fb28cb270269cb2265429035619a90ae43709306fb5ac1",
-            "size": 3146864
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.16/workbuddy-ai-provider_0.1.16_freebsd_amd64.zip",
+            "sha256": "01fee1a366b78dde750e5f4de5c0f9e8e290f13ae999196c03d0af2888f54ff7",
+            "size": 3155949
           },
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_linux_amd64.zip",
-            "sha256": "11ad8ea78fb5b6c16b6498cee6608e9840efabcaf525e6c3067b02e0746355eb",
-            "size": 3226253
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.16/workbuddy-ai-provider_0.1.16_linux_amd64.zip",
+            "sha256": "ffc2d619c2af40df9ae0db8296a0218409685f038472df100239c23fe95e0630",
+            "size": 3238045
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_linux_arm64.zip",
-            "sha256": "d7cf3dcc6ec48f49fcdb2a524b48e02cd549bd24a9a1e68c20316cf26d58a431",
-            "size": 2929921
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.16/workbuddy-ai-provider_0.1.16_linux_arm64.zip",
+            "sha256": "a89ca94a7b638d075d5943689f60fad478b0b26250b0ba9134cfe981162247d8",
+            "size": 2939151
           },
           {
             "goos": "windows",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_windows_amd64.zip",
-            "sha256": "3262108151347d71c9a174b5e15485b5bf43f708d349e43aa97e7b6a205fa578",
-            "size": 3151469
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.16/workbuddy-ai-provider_0.1.16_windows_amd64.zip",
+            "sha256": "0a66f892caf71f9c96202f5350415509a01d7e08710ab6d82b3d45fbdde020a4",
+            "size": 3162510
           },
           {
             "goos": "windows",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.15/workbuddy-ai-provider_0.1.15_windows_arm64.zip",
-            "sha256": "7995bdb77911b4567787e8ffcf1a3d2a9d9fe48682c783f35595c6261c9c0908",
-            "size": 2917782
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/workbuddy-ai-provider-0.1.16/workbuddy-ai-provider_0.1.16_windows_arm64.zip",
+            "sha256": "4a867a14247d7130f9e280a884da444393e5c680511609a47e24f17102f228a7",
+            "size": 2926207
           }
         ]
       }
@@ -568,6 +568,29 @@
             "size": 2967766
           }
         ]
+      }
+    },
+    {
+      "id": "copilot-provider",
+      "name": "GitHub Copilot",
+      "description": "GitHub Copilot provider for CLIProxyAPI: GitHub OAuth Device Flow login, Copilot internal token exchange and keep-alive, VS Code Copilot Chat client fingerprint mimicry, dynamic model discovery, multi-account pool with failover, streaming and non-streaming forwarding, quota view, and a dedicated management panel.",
+      "author": "Sliverkiss (cpa-workbuddy-plugin)",
+      "version": "0.1.0",
+      "repository": "https://github.com/luode0320/cpa-workbuddy-plugin",
+      "logo": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/assets/icons/Copilot.png",
+      "homepage": "https://github.com/luode0320/cpa-workbuddy-plugin/tree/main/copilot",
+      "license": "MIT",
+      "tags": [
+        "Provider",
+        "GitHub",
+        "Copilot",
+        "OAuth",
+        "DeviceFlow",
+        "Management"
+      ],
+      "install": {
+        "type": "direct",
+        "artifacts": []
       }
     }
   ]
