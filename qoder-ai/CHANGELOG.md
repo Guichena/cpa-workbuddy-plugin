@@ -1,5 +1,17 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.20
+
+### Fix - 重建上游 messages 时保留工具调用结构，修复 agent 多轮往返中工具结果失去配对
+
+- 变更要点:
+  1. 根因：客户端多轮 agent 往返的历史里，`assistant.tool_calls`（工具调用及其 `id`）与 `role:"tool"` 消息的 `tool_call_id` 在插件重建 messages 时被丢弃，工具结果以无主文本形式留在历史中；上游无法把工具结果与先前的工具调用配对，模型难以判定「该探测的都探测完了」，倾向于重复发起同类调用，表现为「推理一小段就停、需反复追问」。与 0.1.17 修的是同一缺陷的两半：0.1.17 覆盖「客户端未声明 tools」，本版覆盖「客户端声明了 tools」（Qoder Desktop 默认即声明）。
+  2. `openAIMessage` 补 `ToolCalls` / `ToolCallID` / `Name` 三个字段，`UnmarshalJSON` 同步解析——该函数是自定义实现，不同步解析则新字段恒为空。
+  3. `buildQoderBody` 重建 messages 时按非空保留上述字段，不再只搬 `role` / `content`。
+- 验证: 新增 `TestOpenAIRequestPreservesToolStructure`（解析层保留 tool_calls / tool_call_id / name）与 `TestBuildQoderBodyPreservesToolPairing`（重建层保留配对结构）；两组必失败哨兵反证（分别回退重建逻辑与解析赋值 → 对应测试精确 FAIL → 还原全绿）；`cgo-shim-build.py qoder-ai` build/vet/test 全绿。
+- 边界说明: 严格对照实验显示「保留结构」非充分条件——探索型任务下完整结构与缺失结构均可能不收敛，单次工具即可解决的任务下两者均收敛。本版修的是明确缺陷（结构丢失），探索倾向的进一步抑制需另行评估。
+- 涉及文件: qoder-ai/body.go、qoder-ai/body_test.go、qoder-ai/main.go、qoder-ai/VERSION、qoder-ai/CHANGELOG.md
+
 ## 0.1.19
 
 ### Fix - 排队帧不再误判为账号级故障，并打通宿主跨 provider 轮转的状态码通道

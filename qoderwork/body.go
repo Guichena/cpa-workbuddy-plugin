@@ -61,9 +61,14 @@ func cpaToUpstreamKey(cpaModel string) string {
 // openAIMessage is one message in the OpenAI chat completion format.
 // Content 归一为字符串：纯文本请求原样接收，多模态部件数组由
 // UnmarshalJSON 提取文本后拼接，使下游 buildQoderBody 无需感知差异。
+// ToolCalls / ToolCallID / Name 原样保留：多轮 agent 往返中工具结果必须与先前的
+// 工具调用配对，丢弃会让模型无法判定探测已完成而重复发起同类调用。
 type openAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	ToolCalls  []any  `json:"tool_calls,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Name       string `json:"name,omitempty"`
 }
 
 // openAIContentPart 是 OpenAI 多模态 content 数组中的一个部件。
@@ -77,11 +82,14 @@ type openAIContentPart struct {
 // 仅提取 text / input_text 部件的文本（图片等非文本部件无对应位置，按空处理）。
 // [参数] raw: 单条消息的原始 JSON。
 // [返回] 解析成功返回 nil；content 为非法形态时返回错误。
-// 最近修改时间 2026-10-10；改动原因：修复多模态 content 数组导致 payload parse 503
+// 最近修改时间 2026-10-15；改动原因：同步解析 tool_calls / tool_call_id / name，避免重建 messages 时丢失工具配对结构
 func (m *openAIMessage) UnmarshalJSON(raw []byte) error {
 	var wire struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCalls  []any           `json:"tool_calls"`
+		ToolCallID string          `json:"tool_call_id"`
+		Name       string          `json:"name"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return err
@@ -92,6 +100,9 @@ func (m *openAIMessage) UnmarshalJSON(raw []byte) error {
 	}
 	m.Role = wire.Role
 	m.Content = text
+	m.ToolCalls = wire.ToolCalls
+	m.ToolCallID = wire.ToolCallID
+	m.Name = wire.Name
 	return nil
 }
 
@@ -309,10 +320,17 @@ func buildQoderBody(req *openAIRequest, modelKey, userType string) ([]byte, erro
 	}
 	// Append the actual conversation
 	for _, m := range req.Messages {
-		systemMsgs = append(systemMsgs, map[string]any{
-			"role":    m.Role,
-			"content": m.Content,
-		})
+		msg := map[string]any{"role": m.Role, "content": m.Content}
+		if len(m.ToolCalls) > 0 {
+			msg["tool_calls"] = m.ToolCalls
+		}
+		if m.ToolCallID != "" {
+			msg["tool_call_id"] = m.ToolCallID
+		}
+		if m.Name != "" {
+			msg["name"] = m.Name
+		}
+		systemMsgs = append(systemMsgs, msg)
 	}
 	base["messages"] = systemMsgs
 
