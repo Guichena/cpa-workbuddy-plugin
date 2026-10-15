@@ -569,6 +569,79 @@
           }
         ]
       }
+    },
+    {
+      "id": "copilot-provider",
+      "name": "GitHub Copilot",
+      "description": "GitHub Copilot provider for CLIProxyAPI: GitHub OAuth Device Flow login, Copilot internal token exchange and keep-alive, VS Code Copilot Chat client fingerprint mimicry, dynamic model discovery, multi-account pool with failover, streaming and non-streaming forwarding, quota view, and a dedicated management panel.",
+      "author": "Sliverkiss (cpa-workbuddy-plugin)",
+      "version": "0.1.0",
+      "repository": "https://github.com/luode0320/cpa-workbuddy-plugin",
+      "logo": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/assets/icons/Copilot.png",
+      "homepage": "https://github.com/luode0320/cpa-workbuddy-plugin/tree/main/copilot",
+      "license": "MIT",
+      "tags": [
+        "Provider",
+        "GitHub",
+        "Copilot",
+        "OAuth",
+        "DeviceFlow",
+        "Management"
+      ],
+      "install": {
+        "type": "direct",
+        "artifacts": [
+          {
+            "goos": "darwin",
+            "goarch": "amd64",
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/copilot-provider-0.1.0/copilot-provider_0.1.0_darwin_amd64.zip",
+            "sha256": "8ed7e88673f28aedf2fcc8ea9053e0539046a7ebca54976b8386abd32b9f6184",
+            "size": 3014122
+          },
+          {
+            "goos": "darwin",
+            "goarch": "arm64",
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/copilot-provider-0.1.0/copilot-provider_0.1.0_darwin_arm64.zip",
+            "sha256": "73204f04d389f4a0889138e0794f9e675ebae8da7269f85062848dbf366179c0",
+            "size": 2779400
+          },
+          {
+            "goos": "freebsd",
+            "goarch": "amd64",
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/copilot-provider-0.1.0/copilot-provider_0.1.0_freebsd_amd64.zip",
+            "sha256": "201750c51c990e59c0f0651e56e9eba3cadd3fb874d63ad1fa4704eca41e3d41",
+            "size": 3081424
+          },
+          {
+            "goos": "linux",
+            "goarch": "amd64",
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/copilot-provider-0.1.0/copilot-provider_0.1.0_linux_amd64.zip",
+            "sha256": "244de570a0ba732f4aa4fb53b97d53b1a91465b38da4456960a60c22306d6994",
+            "size": 3160242
+          },
+          {
+            "goos": "linux",
+            "goarch": "arm64",
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/copilot-provider-0.1.0/copilot-provider_0.1.0_linux_arm64.zip",
+            "sha256": "cca482ca103a1dbdbe90f0b2bca68690783add1946e1b5faf44dd036dc95864e",
+            "size": 2868390
+          },
+          {
+            "goos": "windows",
+            "goarch": "amd64",
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/copilot-provider-0.1.0/copilot-provider_0.1.0_windows_amd64.zip",
+            "sha256": "c3bd4c99c267d963bf96146087c49906f0412acb4b7bc31efe0fb0a4fd1a35f5",
+            "size": 3084723
+          },
+          {
+            "goos": "windows",
+            "goarch": "arm64",
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/copilot-provider-0.1.0/copilot-provider_0.1.0_windows_arm64.zip",
+            "sha256": "8b4e30125731265a34f544e138b8ffe2c6113726767d089d1d4da57462cfe9eb",
+            "size": 2857467
+          }
+        ]
+      }
     }
   ]
 }
