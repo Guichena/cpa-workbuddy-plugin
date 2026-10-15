@@ -20,19 +20,28 @@
 - 状态：活跃维护中。9 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
   - `zcode-provider`: **0.1.31**（面板额度改为逐模型独立进度条（GLM-5.3 / GLM-5.3-Flash 各一条）并移除「过期」等冗余信息；0.1.30 面板额度改用 `billing/balance` 取真实已用/剩余 + 领取失败文案友好化；0.1.29 修复面板无感验证 captcha 配置缺陷；0.1.28 面板内无感验证领取 Start Plan + OAuth 默认中国区）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
-  - `qoderwork-provider`: **0.9.38**（签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.9.37 tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷）
-  - `qoder-ai-provider`: **0.1.18**（签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.1.17 tools 对齐修复；0.1.15 max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册）
+  - `qoderwork-provider`: **0.9.40**（0.9.40 重建上游 messages 时保留工具调用结构修复 agent 多轮往返工具结果失配对；0.9.38 签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.9.37 tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷）
+  - `qoder-ai-provider`: **0.1.20**（0.1.20 重建上游 messages 时保留工具调用结构修复 agent 多轮往返工具结果失配对；0.1.18 签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.1.17 tools 对齐修复；0.1.15 max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册）
   - `traework-provider`: **0.2.13**（面板签到时刻文案漂移修正为 00/04/08/12/16/20；0.2.12 定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.2.11 max_tokens 32768 底线 + payload 层同步，探活改全量模型按序测试）
   - `workbuddy-provider`: **0.15.10**（面板签到时刻文案漂移修正为 00/04/08/12/16/20；0.15.9 定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.15.8 max_tokens 32768 底线，探活改全量模型按序测试）
   - `workbuddy-ai-provider`: **0.1.15**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.1.14 max_tokens 32768 底线，探活改全量模型按序测试）
-  - `copilot-provider`: **0.1.0**（首发：GitHub OAuth Device Flow 登录 + Copilot 内部令牌 80% 提前保活 + VS Code Copilot Chat 客户端指纹模拟 + 动态模型发现 + 多账号池 429/5xx 换号重试 + 流式/非流式转发 + 额度查询与专属面板）
+  - `copilot-provider`: **0.1.1**（0.1.1 宿主 OAuth 弹窗改开插件桥接页展示设备码；0.1.0 首发：Device Flow 登录 + 内部令牌 80% 提前保活 + VS Code Copilot Chat 指纹模拟 + 动态模型发现 + 多账号池换号重试 + 流式/非流式转发 + 额度与面板）
   - `workbuddy-token-usage`: **0.2.8**（0.2.8 让退役实例的 feed 导入协程在连续 3 轮关闭句柄后自行退出；0.2.7 修复宿主配置重载换句柄窗口导致的用量记录丢失；0.2.6 移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细与维度汇总展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-15 (GMT+8)
 
 ## 活动会话进展摘要
 
-- 当前会话（2026-10-15）：**五插件签到节奏统一为每 4 小时，四插件全链路发布生产（qoderwork 0.9.38 / qoder-ai 0.1.18 / workbuddy 0.15.10 / traework 0.2.13）**：
+- 当前会话（2026-10-15）：**qoder 双插件重建上游 messages 保留工具调用结构（qoderwork 0.9.40 / qoder-ai 0.1.20），全链路发布生产**：
+  - 需求背景：会话 `3ed4dd9f-109e-404e-8757-81b6d46d7ce1` 用 `qwen-3.8-flash` 时「推理老是突然推理一点点就结束、要不停继续提问」。根因诊断（`doc/4-bugs/2026-10-15_193641_*`）：主因是模板 `baseprompt.json` agent 会话上下文（无条件上行），放大器是插件重建 messages 只搬 `role`+`content`、丢掉 `assistant.tool_calls` 与 `tool.tool_call_id`。
+  - **实施（方案 A）**：`openAIMessage` 补 `ToolCalls`/`ToolCallID`/`Name` 三字段 + **自定义 `UnmarshalJSON` 同步解析**（关键陷阱：结构体带自定义 UnmarshalJSON 时加字段必须同步赋值，否则恒空）+ `buildQoderBody` 重建时按非零值条件保留三者；双插件逐行同构。
+  - **发布闭环**：`f74a5e8`(fix 10 文件) → `6d32f84`(assets 14/14 校验) → `d9e8592`(registry) → `5124003`(prune 两个旧版)；生产热重载 `active_version=0.9.40/0.1.20`、**零容器重启**（Up 42h）、落盘 `.so` sha256 与本地 zip 逐字节一致、accounts/panel 四路由全 200；远端 14/14 artifacts ALL PASS 无残留。
+  - 门禁：隔离 worktree（`git worktree add --detach HEAD` + 仅复制本轮 8 文件，工作树含 20+ 并行会话文件）cgo-shim build/vet/test 全绿；两组哨兵变异各精确 FAIL 一项后恢复全绿（重建逻辑 → `TestBuildQoderBodyPreservesToolPairing`；UnmarshalJSON 赋值 → `TestOpenAIRequestPreservesToolStructure`）；提交按踩坑 57 路径限定，并行文件完好未混入。
+  - **⚠️ 方案 A 判别力边界（生产 A/B 实测，诚实标注）**：单工具任务（带配对历史 + tools）PAIRED 与 BROKEN **均收敛** 6/6 ⇒ 无判别力；探索型任务（「分析所有 Python 脚本各自作用」+ 2 轮历史）PAIRED 与 BROKEN **均不收敛**，各 3/3 发 tool_calls ⇒ 方案 A 修的是明确缺陷（结构丢失），**不承诺消除探索型任务的持续工具调用**；探索倾向抑制（方案 B）需另行评估。
+  - 未决：① 方案 B 待评估；② `chat_context.text` 在 agent loop 中恒回退最初提问是否致每轮从头探测（需上游裸直连验证）；③ 上游是否真正消费 `messages[].tool_calls`（未做裸直连 A/B）。
+  - 文档：`doc/4-bugs/2026-10-15_193641_qwen-3.8-flash客户端声明tools致上游持续发起工具调用而推理提前结束根因诊断.md`（第七节已更新为修复已发布态）。
+
+- 上一会话（2026-10-15）：**五插件签到节奏统一为每 4 小时，四插件全链路发布生产（qoderwork 0.9.38 / qoder-ai 0.1.18 / workbuddy 0.15.10 / traework 0.2.13）**：
   - 需求背景：用户裁定「把所有支持签到的插件改成每 4 小时尝试签到一次」。**关键事实**：5 个签到插件中 workbuddy / workbuddy-ai / traework 后端本就已是每 4 小时六槽，只有 qoderwork / qoder-ai 在 2026-10-12 被收敛为 `[10,22]`；zcode / cursor 不支持签到。
   - **行为变更（qoder 两插件）**：① `checkinHours` 由 `[10,22]` 恢复为 `[0,4,8,12,16,20]`；② **移除 `shouldRunCheckinNow` 门控**——该门控只在「签到表 ≠ 保活表」时才有意义，两表取值一致后 `nextCheckinTime` 并集恒等于签到表本身、门控退化为恒真死代码，删除后与 workbuddy 系 `schedulerLoop` 同构；③ 面板 `schedule` 与文案同步六槽。
   - **文案漂移修正（workbuddy / traework）**：`panel.html` 与 README/architecture 长期错标 `09:00/21:00`（后端实为六槽），修正为 `00/04/08/12/16/20`；`panel.html` 经 `go:embed` 进二进制，必须发版才生效。
@@ -112,14 +121,20 @@
     4. **生产验收**：`/v0/resource/plugins/zcode-provider/panel` 200（70,280 字节）且新文案生效（`领取指引`×7、`guideModal`×7、旧文案 `激活开通`/`activateAccount` 均为 0）；accounts 200（3 账号）。
   - 说明：上一轮 0.1.21 已由并行会话发布完毕（registry/GitHub release/release-assets 三处一致），故本轮直接发 0.1.22，无版本冲突。
 
-- 当前会话（2026-10-15）：**新增 copilot-provider 插件（0.1.0 首发）并完成 Kiro 可行性评估（裁定不立项）**：
-  - **copilot-provider 立项与实现**：按 `doc/3-实施/2026-10-15_Copilot与Kiro插件立项实施总览.md` 的 CYCLE-1~4 推进。GitHub 免费档实测可用（`sku=free_limited_copilot` 可换内部令牌、发现 57 个模型、流式与非流式推理均通），关闭 `GAP-001`；`GAP-002` 关闭（持久化上游 `endpoints.api` 权威端点，解析优先级改为配置 `base_url` > 账号端点 > 账号类型推导，含 `*.githubcopilot.com` 域校验）。单测 27 例（main 17 + management 10）。
-  - **CYCLE-4 发布闭环**：`c546b57`(feat 37 文件) → `56ac86f`(8 assets) → `8966b0c`(registry)；CI push run `38719640800` + dispatch run `38719658415` 双 success（72 job 全绿）；远端 7/7 artifacts sha256+size ALL PASS；生产 `plugin-store install` 返回 `restart_required=false`，日志确认 `plugin loaded` + `plugin registered`，**零容器重启**，落盘 `.so` sha256 `65d428b8…` 与本地 zip 逐字节一致，accounts/status/credits/panel 四路由全 200。`AC-006`/`AC-007` 双 PASS。
-  - **发布链路接入点**：`.github/workflows/build.yml` 8 处（头部注释、tag 触发、dispatch options、test matrix、build matrix ×5、build-cross ×2、release if 条件、tag 解析分支、DISPLAY 映射）+ `assets/icons/Copilot.png`（640×640 RGBA，imagegen CLI 真实出图）+ README（计数 8→9 与各段落）+ CHANGELOG。
-  - **过程中的真实故障（已修复）**：侦察阶段提前写入的 registry 占位条目（`artifacts: []`）被并行会话的宽泛 `git add` 一并推送 → CPA 源级校验失败（`plugins[8]: direct install requires at least one artifact`）→ **所有插件** install 返回 `plugin_not_found`。由并行会话 `10a1f2f` 移除恢复；本轮随后严格按发布 skill Step 11 语义（条目与 artifacts 由 `publish-assets.py` 原子写入）重做。已沉淀知识库笔记与项目记忆。
-  - **Kiro 可行性评估（CYCLE-5，评估非实现）**：结论**不立项**。决定性依据为官方一手证据——① Kiro FAQ 明文「Use through third-party automation harnesses ... that route requests outside of Kiro's native interfaces **is not permitted**」，本插件形态直接命中；② 免费档仅 **50 credits/月**（计价单位为 credits，IDE/CLI/Web 共用同一池、无独立 API 额度）。另有社区实证终局封禁案例（一年冷却）与设备指纹/IP 绑定风险。技术事实备查（CodeWhisperer 后端 + Bearer + 专有 JSON 体 + AWS eventstream 二进制流，难度中高档）。报告 `doc/3-实施/2026-10-15_235000_Kiro可行性评估报告.md`。
-  - 门禁：`cgo-shim` 全绿；`STYLE: PASS`；`POLLUTION: PASS`；OCR 审查 PASS（Go/JS/Python/workflow 四类规则逐条核验）；提交全程路径限定，并行会话文件完好未混入。
-  - 文档：`doc/2-需求/2026-10-15_180000_*`、`doc/3-实施/2026-10-15_*`（总览 + Kiro 报告）、`doc/5-tests/2026-10-15_{190000,210000,220000,234500}_*`、`doc/6-review/2026-10-15_*`。
+- 当前会话（2026-10-15）：**copilot-provider 0.1.1：宿主 OAuth 弹窗改开插件桥接页展示设备码，全链路发布生产**：
+  - 需求背景：用户在管理台点「登录」后，GitHub 授权页 8 个空白框需手输设备码，但宿主 OAuth 弹窗**不显示设备码**（附截图）。根因：宿主 `ServePluginAuthURL`（`auth_files_oauth_callback.go:218`）把插件 start 响应的 `Metadata` 只写进宿主 session store、**不回传前端**，硬编码返回 `{status,url,state}`；宿主内置 provider 是把 `user_code` 放响应顶层才显示，插件无法照做。用户采纳「选项 B：桥接页」方案。
+  - **实现（方案 B）**：`handleStartLogin` 的 `URL` 改返回**插件自有 resource 前缀桥接页相对路径** `/v0/resource/plugins/copilot-provider/login-bridge?state=<state>`（resource 路由是插件唯一免鉴权 GET 面），新增 `bridge.go`（`loginBridgeURL`/`handleLoginBridge`/`loginBridgePage`/`htmlEscape`），桥接页渲染设备码（32px/letter-spacing:4px/user-select:all）+ GitHub 授权链接 + 三步指引；注册进 `managementRegistration().Resources`（**不挂 Menu**，不进菜单）。
+  - **关键设计**：桥接页**只展示、不驱动轮询**——`pollDeviceLogin` 成功即 `Delete` 会话（read-once），桥接页若自行轮询会偷走凭据致宿主 `PollLogin` 拿不到 `AuthData`；轮询与落盘仍归宿主 `get-auth-status` → `PollLogin` 链路。
+  - **发布闭环**：`100bc6b`(fix 11 文件) → CI dispatch `38732577295` success（并 cancel 同 head 冗余 push run `38732367637`）→ `2324317`(8 assets，sha256sum -c 7/7 OK + zip 内 `.so` 含 `0.1.1`/`login-bridge`) → `a5c2da0`(registry) → `fe8ed5a`(prune 0.1.0)；生产热重载 `active_version=0.1.1 retired_version=0.1.0`（20:26:17），**零容器重启**（Up 42h），落盘 `.so` sha256 `12c9fb2e…` 与本地 zip 逐字节一致。
+  - **生产行为验收（真实端点）**：宿主弹窗端点 `GET /v0/management/copilot-provider-auth-url` 返回 `url=/v0/resource/plugins/copilot-provider/login-bridge?state=…`（`is_bridge=True`）；用该 state 打开桥接页真实渲染出设备码（与 start 返回一致）、含 GitHub 授权链接、HTML 完整；`get-auth-status` 返回 `{"status":"wait"}`；accounts/panel/bridge 内网与外网全 200。远端 7/7 artifacts sha256+size ALL PASS、0.1.0 已 404。
+  - 门禁：cgo-shim build/vet/test 全绿（30 例）+ 面板回归 PASS + 双重变异反证（哨兵进编译 / 还原 URL 精确 FAIL）+ 真实浏览器 DOM 取证（正常页与错误页两分支）+ `gofmt -l` 空 + `POLLUTION: PASS` + `STYLE: PASS` + OCR 无 Critical；提交全程路径限定（踩坑 57）。
+  - 文档：`doc/3-实施/2026-10-16_010000_copilot宿主OAuth弹窗设备码桥接页实施总览.md`、`doc/6-review/2026-10-16_013000_*`。
+
+- 上一会话（2026-10-15）：**新增 copilot-provider 插件（0.1.0 首发）并完成 Kiro 可行性评估（裁定不立项）**：
+  - **copilot-provider 立项与实现**：按 `doc/3-实施/2026-10-15_Copilot与Kiro插件立项实施总览.md` 的 CYCLE-1~4 推进。GitHub 免费档实测可用（`sku=free_limited_copilot` 可换内部令牌、发现 57 个模型、流式与非流式推理均通），关闭 `GAP-001`；`GAP-002` 关闭（持久化上游 `endpoints.api` 权威端点）。单测 27 例。
+  - **CYCLE-4 发布闭环**：`c546b57` → `56ac86f`(8 assets) → `8966b0c`(registry)；CI 双 run success；远端 7/7 ALL PASS；生产 `plugin-store install` 返回 `restart_required=false`，**零容器重启**，落盘 `.so` sha256 `65d428b8…` 逐字节一致，四路由全 200。`AC-006`/`AC-007` 双 PASS。
+  - **过程中的真实故障（已修复）**：侦察阶段提前写入的 registry 占位条目（`artifacts: []`）被并行会话的宽泛 `git add` 一并推送 → CPA 源级校验失败 → **所有插件** install 返回 `plugin_not_found`。由并行会话 `10a1f2f` 移除恢复；本轮随后严格按发布 skill Step 11 语义重做。
+  - **Kiro 可行性评估（CYCLE-5，评估非实现）**：结论**不立项**。① Kiro FAQ 明文禁第三方 harness；② 免费档仅 **50 credits/月**；另有社区终局封禁实证。报告 `doc/3-实施/2026-10-15_235000_Kiro可行性评估报告.md`。
 
 - 会话（2026-10-13，更早历史已压缩，详见 git log 与 PROJECT_HISTORY.md）：
   - **六插件 max_tokens 统一 32768 最低输出底线**：`model_specs.go` 新增 `minMaxTokensFloor=32768` + `applyMaxTokensFloor`，兜底 ReasoningMax 8192→32768，四个出口全部经 floor 收敛，广播层与 traework payload 层同步保底；zcode 规格矩阵由 14 扩至 64 条（最长前缀优先 + `vendor/` 剥离）；workbuddy/workbuddy-ai/traework 定时探活改「全量按序 any-success」，zcode 新增探活（30 分钟节流）；发布链 `7ec23c0`→`0aaaa65`/`b2b82e7`→`02e7375`→`82e437f`，六插件生产热重载零重启。
