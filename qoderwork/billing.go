@@ -174,6 +174,7 @@ func fetchCheckinStatus(sa *storedAuth) (*checkinSummary, error) {
 	active, todayChecked, campaignID, dailyCredit := pickCheckinCampaign(&q, time.Now())
 	sum := &checkinSummary{
 		Active:         active,
+		ShowCampaign:   q.ShowCampaign,
 		TodayCheckedIn: todayChecked,
 		DailyCredit:    dailyCredit,
 		ActivityName:   "每日签到",

@@ -293,7 +293,7 @@ func checkinOneAccount(f pluginapi.HostAuthFileEntry) map[string]any {
 	if !ci.Active {
 		out["success"] = false
 		out["reason"] = "global"
-		out["message"] = "当前无可领取的签到活动"
+		out["message"] = checkinNoActivityMessage(ci)
 		return out
 	}
 
@@ -333,6 +333,18 @@ func checkinOneAccount(f pluginapi.HostAuthFileEntry) map[string]any {
 func checkinLockFor(authIndex string) *sync.Mutex {
 	v, _ := checkinLocks.LoadOrStore(authIndex, &sync.Mutex{})
 	return v.(*sync.Mutex)
+}
+
+// checkinNoActivityMessage 为「无可领取活动」区分两种成因并返回对应提示。
+// [参数] ci: 签到摘要（读 ShowCampaign）。
+// [返回] 中文提示文案。
+// 最近修改时间：2026-10-17 02:10:00 新增，区分活动未下发与账号不适用。
+func checkinNoActivityMessage(ci *checkinSummary) string {
+	// 1. 活动平台开启但列表无 CLAIM_BENEFIT 条目 = 服务端未下发
+	if ci != nil && ci.ShowCampaign {
+		return "签到活动暂未下发到该账号"
+	}
+	return "该账号不适用签到活动"
 }
 
 // checkProUpgradeEligibility returns whether the account can still claim the

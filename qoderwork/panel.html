@@ -446,15 +446,17 @@ function card(a){
   const selected=!!a.selected;
   const regionBadge=`<span class="badge cn">CN</span>`;
   // CN: 签到 button + 领取Pro button
-  // active=false means the upstream check-in activity is not enabled for
-  // this account (e.g. Community plan). Show disabled button with '?'.
+  // active=false 有两种成因：show_campaign=true 表示活动被服务端隐藏未下发，
+  // false 表示账号本不参与该活动；两者按钮文案与提示需区分。
   let actionHTML;
   const checked=ci.today_checked_in;
   const ciActive=ci.active!==false; // absent=true (default active)
+  const campaignHidden=!ciActive && ci.show_campaign===true;
   const btnClass=checked?"done":(ciActive?"sec":"done");
-  const btnText=checked?"已签到":(ciActive?"签到":"不可签");
+  const btnText=checked?"已签到":(ciActive?"签到":(campaignHidden?"未下发":"不可签"));
+  const btnTitle=campaignHidden?"活动由服务端按账号下发，当前账号暂未收到签到活动":"该账号不适用签到活动";
   const btnDisabled=(checked||!ciActive)?" disabled=\"disabled\"":"";
-  actionHTML=`<button class="${btnClass}" data-action="checkin" data-auth-index="${esc(a.auth_index)}"${btnDisabled}>${btnText}</button>`+
+  actionHTML=`<button class="${btnClass}" data-action="checkin" data-auth-index="${esc(a.auth_index)}"${btnDisabled} title="${esc(btnTitle)}">${btnText}</button>`+
     `<button class="sec" data-action="claim-pro" data-auth-index="${esc(a.auth_index)}" title="领取Pro升级包">领取Pro</button>`;
   const selectBtn=selected
     ? `<button class="done" disabled="disabled">使用中</button>`

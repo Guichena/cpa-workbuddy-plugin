@@ -53,6 +53,7 @@ type packageSummary struct {
 
 type checkinSummary struct {
 	Active          bool     `json:"active"`
+	ShowCampaign    bool     `json:"show_campaign"`
 	TodayCheckedIn  bool     `json:"today_checked_in"`
 	StreakDays      int64    `json:"streak_days"`
 	DailyCredit     int64    `json:"daily_credit"`

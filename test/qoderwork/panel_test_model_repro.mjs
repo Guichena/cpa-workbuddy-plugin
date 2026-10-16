@@ -238,6 +238,38 @@ const flush = () => new Promise((r) => setTimeout(r, 40));
   await flush();
   check("空列表提示「暂无可用模型」", s2.els("testModelList").innerHTML.indexOf("暂无可用模型") >= 0, true);
 
+  console.log("场景5 签到按钮区分「未下发」与「不可签」：");
+  // 活动被服务端隐藏：show_campaign=true 但 active=false → 按钮「未下发」
+  const hiddenHTML = ctx.card(Object.assign(JSON.parse(JSON.stringify(account)), {
+    checkin: { active: false, show_campaign: true, today_checked_in: false },
+  }));
+  check("活动未下发时按钮文案为「未下发」", />未下发</.test(hiddenHTML), true);
+  check("未下发按钮带 title 说明", /title="[^"]*未收到签到活动/.test(hiddenHTML), true);
+  check("未下发按钮为禁用态", /disabled="disabled"[^>]*>未下发</.test(hiddenHTML), true);
+
+  // 账号不适用：show_campaign=false 且 active=false → 按钮「不可签」
+  const ineligibleHTML = ctx.card(Object.assign(JSON.parse(JSON.stringify(account)), {
+    checkin: { active: false, show_campaign: false, today_checked_in: false },
+  }));
+  check("账号不适用时按钮文案为「不可签」", />不可签</.test(ineligibleHTML), true);
+  check("不适用按钮带 title 说明", /title="[^"]*不适用签到活动/.test(ineligibleHTML), true);
+
+  // 活动可领：按钮为「签到」且可点击
+  const activeHTML = ctx.card(Object.assign(JSON.parse(JSON.stringify(account)), {
+    checkin: { active: true, show_campaign: true, today_checked_in: false },
+  }));
+  check("活动可领时按钮文案为「签到」", />签到</.test(activeHTML), true);
+  check("可领按钮未禁用", /data-action="checkin"[^>]*>签到</.test(activeHTML), true);
+
+  console.log("场景6 签到结果 toast 透传后端区分后的文案：");
+  const toastTexts = [];
+  ctx.toast = (title, kind, msg) => toastTexts.push({ title, kind, msg });
+  ctx.checkinResultToast({ nickname: "账号A", reason: "global", message: "签到活动暂未下发到该账号" });
+  check("toast 透传「未下发」文案", toastTexts.length && /未下发/.test(toastTexts[0].msg), true);
+  toastTexts.length = 0;
+  ctx.checkinResultToast({ nickname: "账号B", reason: "global", message: "该账号不适用签到活动" });
+  check("toast 透传「不适用」文案", toastTexts.length && /不适用/.test(toastTexts[0].msg), true);
+
   if (failures.length) {
     console.error("\n[回归] FAIL（" + failures.length + " 项）");
     failures.forEach((f) => console.error("   - " + f));
