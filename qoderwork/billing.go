@@ -20,6 +20,38 @@ import (
 // management.go 的同名常量）：仅 5xx 与传输错误重试，4xx 与业务错误立即返回。
 var billingRetryDelays = []time.Duration{300 * time.Millisecond, 900 * time.Millisecond}
 
+// campaignsURLForTest / campaignClaimURLForTest 供单元测试注入 mock 端点；为空时使用生产常量。
+var (
+	campaignsURLForTest     string
+	campaignClaimURLForTest string
+)
+
+// checkinLogTag 返回签到日志使用的账号标识：优先 UID，缺失时回退昵称。
+// [参数] sa: 目标账号凭据。
+// [返回] 非空账号标识字符串。
+// 最近修改时间：2026-10-17 01:30:00 新增，用于签到失败日志的账号归属。
+func checkinLogTag(sa *storedAuth) string {
+	// 1. 优先 UID，其次昵称，均缺失时返回占位
+	if sa == nil {
+		return "unknown"
+	}
+	if uid := strings.TrimSpace(sa.Account.UID); uid != "" {
+		return uid
+	}
+	if name := strings.TrimSpace(sa.Account.Nickname); name != "" {
+		return name
+	}
+	return "unknown"
+}
+
+// logCheckinFailure 记录签到链路失败，便于在生产日志中定位账号级问题。
+// [参数] op: 操作名（campaigns / claim）；sa: 目标账号凭据；err: 失败原因。
+// [返回] 无。
+// 最近修改时间：2026-10-17 01:30:00 新增，补齐签到失败可观测性。
+func logCheckinFailure(op string, sa *storedAuth, err error) {
+	log.Printf("[qoderwork] checkin %s failed for %s: %v", op, checkinLogTag(sa), err)
+}
+
 // billingDo 发送一次计费类请求，对上游 5xx / 传输错误做有限退避重试。
 // 计费链路（quota/plan/campaigns）的偶发 5xx 或 host 桥接抖动若不做重试，
 // 会让面板的积分与计划整行空白（stale-while-error 仅在已有前值时才兜底，
@@ -110,25 +142,34 @@ type benefit struct {
 // act-YYYYMMDD-NNN）；窗口内该活动 claimStatus=CLAIMED 即视为今日已签。
 // [参数] sa: 目标账号凭据。
 // [返回] 面板签到摘要（Active/TodayCheckedIn/CampaignID/DailyCredit 等）；上游错误。
-// 最近修改时间：2026-10-11；改动原因：CN 签到改走 campaigns（原 daily-check-in 已废弃）。
+// 最近修改时间：2026-10-17 01:30:00；改动原因：失败分支补账号级日志与测试端点注入。
 func fetchCheckinStatus(sa *storedAuth) (*checkinSummary, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpointCampaigns, nil)
+	target := endpointCampaigns
+	if strings.TrimSpace(campaignsURLForTest) != "" {
+		target = strings.TrimSpace(campaignsURLForTest)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, err
 	}
 	campaignHeaders(req, sa)
 	resp, err := billingDo(req, nil)
 	if err != nil {
+		logCheckinFailure("campaigns", sa, err)
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("campaigns http %d body=%s", resp.StatusCode, truncateRedacted(string(resp.Body), 200))
+		err := fmt.Errorf("campaigns http %d body=%s", resp.StatusCode, truncateRedacted(string(resp.Body), 200))
+		logCheckinFailure("campaigns", sa, err)
+		return nil, err
 	}
 	var q campaignStatusResponse
 	if err := json.Unmarshal(resp.Body, &q); err != nil {
-		return nil, fmt.Errorf("campaigns parse: %w", err)
+		err := fmt.Errorf("campaigns parse: %w", err)
+		logCheckinFailure("campaigns", sa, err)
+		return nil, err
 	}
 	active, todayChecked, campaignID, dailyCredit := pickCheckinCampaign(&q, time.Now())
 	sum := &checkinSummary{
@@ -267,12 +308,16 @@ func fetchPaymentType(sa *storedAuth) string {
 // performCheckinCall 调用 CN 活动领取接口（campaigns claim）。
 // [参数] sa: 目标账号凭据；campaignID: 待领取活动的 campaignId（来自 fetchCheckinStatus）。
 // [返回] 面板使用的 success 布尔语义响应 map；响应非法时返回错误。
-// 最近修改时间：2026-10-11；改动原因：CN 签到改走 campaigns claim（原 daily-check-in 恒 409 AlreadyExists）。
+// 最近修改时间：2026-10-17 01:30:00；改动原因：失败分支补账号级日志与测试端点注入。
 func performCheckinCall(sa *storedAuth, campaignID string) (map[string]any, error) {
 	if campaignID == "" {
 		return map[string]any{"success": false, "message": "no claimable check-in campaign"}, nil
 	}
-	req, err := http.NewRequest(http.MethodPost, endpointCampaignClaim+campaignID+"/claim", strings.NewReader("{}"))
+	claimURL := endpointCampaignClaim + campaignID + "/claim"
+	if strings.TrimSpace(campaignClaimURLForTest) != "" {
+		claimURL = strings.TrimSpace(campaignClaimURLForTest) + campaignID + "/claim"
+	}
+	req, err := http.NewRequest(http.MethodPost, claimURL, strings.NewReader("{}"))
 	if err != nil {
 		return nil, err
 	}
@@ -280,13 +325,18 @@ func performCheckinCall(sa *storedAuth, campaignID string) (map[string]any, erro
 	// claim 语义幂等（重复领取返回 replayed=true），5xx 重试安全。
 	resp, err := billingDo(req, []byte("{}"))
 	if err != nil {
+		logCheckinFailure("claim", sa, err)
 		return map[string]any{"success": false, "message": err.Error()}, nil
 	}
 	if resp.StatusCode >= 400 {
-		return map[string]any{"success": false, "message": fmt.Sprintf("http %d: %s", resp.StatusCode, truncateRedacted(string(resp.Body), 200))}, nil
+		err := fmt.Errorf("http %d: %s", resp.StatusCode, truncateRedacted(string(resp.Body), 200))
+		logCheckinFailure("claim", sa, err)
+		return map[string]any{"success": false, "message": err.Error()}, nil
 	}
 	var m map[string]any
 	if err := json.Unmarshal(resp.Body, &m); err != nil {
+		err := fmt.Errorf("claim parse: %w", err)
+		logCheckinFailure("claim", sa, err)
 		return nil, err
 	}
 	// CN claim 返回 {"grantId":..,"status":"CLAIMED","replayed":bool,
@@ -294,7 +344,9 @@ func performCheckinCall(sa *storedAuth, campaignID string) (map[string]any, erro
 	// status=CLAIMED 视为成功（replayed=true 表示本轮已领过）。
 	status, _ := m["status"].(string)
 	if status != "CLAIMED" {
-		return map[string]any{"success": false, "message": fmt.Sprintf("unexpected claim status: %v", m["status"])}, nil
+		err := fmt.Errorf("unexpected claim status: %v", m["status"])
+		logCheckinFailure("claim", sa, err)
+		return map[string]any{"success": false, "message": err.Error()}, nil
 	}
 	out := map[string]any{"success": true, "result": status}
 	if b, ok := m["benefit"].(map[string]any); ok {
