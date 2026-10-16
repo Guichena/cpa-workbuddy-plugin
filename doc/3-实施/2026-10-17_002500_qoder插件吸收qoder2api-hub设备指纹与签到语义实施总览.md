@@ -61,10 +61,10 @@
   - 周期内最小任务执行顺序：`TASK-01`
   - 进入条件：无（无外部前提）
   - 收口条件：`TASK-01` 实现 + 真实测试 + `6-review` 三项闭环
-  - 状态：**已完成**（本地门禁全过：单测全绿、双哨兵正交精确 FAIL、`gofmt` 空、`POLLUTION: PASS`、`STYLE: PASS`）；生产验证随发布执行
+  - 状态：**已完成**（本地门禁全过：单测全绿、双哨兵正交精确 FAIL、`gofmt` 空、`POLLUTION: PASS`、`STYLE: PASS`）；生产验证已完成（0.9.41 已发布，热重载成功，9 账号验收通过）
   - 完成标志：同账号在 token 刷新前后 machineId/machineToken/machineType 恒定，且不同账号互不相同
   - 证据：测试主文档 `doc/5-tests/2026-10-17_024000_qoderwork推理设备指纹稳定派生测试.md`、6-review `doc/6-review/2026-10-17_025000_qoderwork推理设备指纹稳定派生_6-review.md`
-  - 遗留：qoder-ai 同款缺陷（段落 md5 一致）未修，P2 待评估；生产上游接受新指纹未验证，P1 发布后立即验证
+  - 遗留：~~qoder-ai 同款缺陷（段落 md5 一致）未修，P2 待评估~~ → **已由 `CYCLE-04` 处置（2026-10-17）**；生产上游接受新指纹**已验证**（qoderwork 0.9.41 生产 `test-active` 返回业务码 112 通过鉴权）
   - 与前后周期衔接：为 `CYCLE-02` 提供稳定身份基础（`CYCLE-02` 已作废，故无下游依赖）
 - 周期 2：
   - 周期序号 / 期次定位：`CYCLE-02` 第二期 —— **⚠️ 已作废（2026-10-17 生产取证证伪）**
@@ -84,6 +84,21 @@
   - 与前后周期衔接：与 `CYCLE-01` 无依赖，可独立推进
   - 遗留：批量签到 toast 未细分两形态（P3，见 6-review §6）；生产验证待发布
   - 说明：本周期为取证过程中**新发现**的缺口，非原方案内容；`CONSTRAINT-01`（签到去重维度疑似非插件可控）仅登记备查，不立项
+
+- 周期 4（用户裁定纳入）：
+  - 周期序号 / 期次定位：`CYCLE-04` 第四期
+  - 周期目标：把 qoderwork 已验证的推理设备指纹稳定派生方案移植到 qoder-ai，消除同一缺陷
+  - 本周期包含的最小任务：`TASK-05`（qoder-ai 推理设备指纹按账号 UID 稳定派生）
+  - 周期内最小任务执行顺序：`TASK-05`
+  - 进入条件：用户 2026-10-17 明确要求「qoder-ai 同款指纹缺陷」
+  - 收口条件：`TASK-05` 实现 + 真实测试 + `6-review` 三项闭环
+  - 状态：**已完成**（本地门禁全过：单测全绿、双哨兵正交精确 FAIL、`gofmt` 空、`POLLUTION: PASS`、`STYLE: PASS`）；生产验证待发布
+  - 完成标志：qoder-ai 同账号在 token 刷新前后 machineId/machineToken/machineType 恒定，且与 qoderwork 命名空间隔离
+  - 证据：测试主文档 `doc/5-tests/2026-10-17_040000_qoder-ai推理设备指纹稳定派生测试.md`、6-review `doc/6-review/2026-10-17_041000_qoder-ai推理设备指纹稳定派生_6-review.md`
+  - 关键前提（已厘清）：qoder-ai 有两条独立设备标识链路——推理 COSY 链路（`sign.go` 的 `newCosySession`，**缺陷所在**）与活动 UMID 链路（`umid.go` 的 `resolveAccountUMID`，**已用真实远端桥稳定派生，无缺陷**）；本轮只改前者
+  - 与前后周期衔接：与 `CYCLE-01` 同构（唯一差异为命名空间前缀 `qoderai:` vs `qoderwork:`），可独立推进
+  - 遗留：生产上游接受新指纹未验证（P1，发布后立即验证）；工作树并行会话已把 qoder-ai bump 到 0.1.21（账号冷却阶梯化），版本号需在发布前协调
+
 - 总体真实测试安排：
   - 真实测试安排是否默认必需：是
   - 覆盖哪些最小任务：`TASK-01`、`TASK-02`
@@ -183,6 +198,29 @@
   - 下一任务依赖：无
   - 预计触达文件数：2（`billing.go`、`checkin.go`）
 
+- 最小任务 5：
+  - 任务名：qoder-ai 推理设备指纹按账号 UID 稳定派生
+  - 所属周期：`CYCLE-04`
+  - 周期内顺序：1
+  - 所属阶段：`PHASE-04`
+  - 本任务只做这一件事：把 `qoder-ai/sign.go` 的 `newCosySession` 中 `machineID`/`machineToken`/`machineType` 三处 `uuid.NewString()` 改为基于 uid 的确定性派生，命名空间前缀 `qoderai:`
+  - 垂直切片目标：同一账号跨 token 刷新 / 进程重启得到恒定设备标识，且与 qoderwork 命名空间隔离
+  - 输入条件：`cosyIdentity.UID` 已由 `cosy_session.go:40-50` 填充
+  - 实现产出：新增 `cosyFingerprintSeed` / `deriveMachineID` / `deriveMachineToken` / `deriveMachineType` 四个纯函数（落 `sign.go`），改造 `newCosySession`
+  - 真实测试是否必需：是
+  - 真实测试入口：`python scripts/cgo-shim-build.py qoder-ai`
+  - 真实测试依赖环境：Windows + Python 3（无 CGO）
+  - 真实测试样本 / 数据来源：固定 uid 字符串 + 第二个 uid 作隔离对照 + 跨插件命名空间对照
+  - 真实测试通过标准：6 个用例断言同 uid 幂等、跨 uid 隔离、形态兼容、种子回退、令牌变更不变、跨插件命名空间隔离
+  - 测试点：`TestDeriveMachineIdentity_*`（5 个）、`TestCosyFingerprintSeed_FallbackChain`
+  - `6-review` 风格回归点：`sign.go` 新增函数需带完整函数头注释，与同文件既有风格及 `qoderwork` 同款实现一致
+  - 任务完成条件：`AC-05-1` 单测全绿；`AC-05-2` 双哨兵正交变异精确 FAIL；`AC-05-3` `6-review` 输出 `STYLE: PASS`
+  - 任务停止 / 结束条件：`AC-05-1~3` 全满足即结束
+  - 阻断条件：无（`RISK-01` 沿用 `CYCLE-01` 的形态兼容设计规避）
+  - 前置依赖：无
+  - 下一任务依赖：无
+  - 预计触达文件数：2（`sign.go` + 1 测试文件）
+
 ## 6. 现状与落点
 
 - 涉及目录：`qoderwork/`
@@ -193,11 +231,16 @@
 
 ```text
 qoderwork/
-├── sign.go              # 改：newCosySession 三处标识改派生；新增 3 个派生纯函数
+├── sign.go              # 改：newCosySession 三处标识改派生；新增 4 个派生纯函数
 ├── cosy_session.go      # 改：newCosySession 调用点补 uid 入参
-├── billing.go           # 改（CYCLE-02）：performCheckinCall 失败分支解析 failureCode
-├── checkin.go           # 改（CYCLE-02）：透传可读失败原因
+├── billing.go           # 改（CYCLE-02 作废后转 CYCLE-03）：签到失败日志 + show_campaign 透传
+├── checkin.go           # 改（CYCLE-03）：区分活动未下发与账号不适用
+├── panel.html           # 改（CYCLE-03）：按钮四态
 └── sign_fingerprint_test.go  # 新增：指纹稳定性与隔离性用例
+
+qoder-ai/                # CYCLE-04 新增周期
+├── sign.go              # 改：newCosySession 三处标识改派生；新增 4 个派生纯函数（前缀 qoderai:）
+└── sign_fingerprint_test.go  # 新增：指纹稳定性、隔离性与跨插件命名空间用例
 ```
 
 ## 7. 方案选择
@@ -248,6 +291,7 @@ qoderwork/
 ## 追踪附录
 
 - `SRC -> DEC -> REQ/RULE -> AC -> CYCLE -> TASK -> TEST -> EVIDENCE`：
-  - `SRC-001`（用户请求：评估吸收 qoder2api-hub）→ `DEC-001`（只吸收 2 点）→ `REQ-QODER-ABSORB-QODER2API-20261017` → `AC-01-*`/`AC-02-*` → `CYCLE-01`/`CYCLE-02` → `TASK-01`/`TASK-02` → `TEST-01`/`TEST-02` → `doc/5-tests/`（待产出）
-  - `EXT-001`（指纹派生思路）→ `TASK-01`
-  - `EXT-002`（失败码语义）→ `TASK-02`、`GAP-01`
+  - `SRC-001`（用户请求：评估吸收 qoder2api-hub）→ `DEC-001`（只吸收 2 点）→ `REQ-QODER-ABSORB-QODER2API-20261017` → `AC-01-*`/`AC-02-*` → `CYCLE-01`/`CYCLE-02` → `TASK-01`/`TASK-02` → `TEST-01`/`TEST-02` → `doc/5-tests/2026-10-17_024000_*`（已产出）
+  - `SRC-002`（用户请求：qoder-ai 同款指纹缺陷）→ `DEC-002`（移植 qoderwork 已验证方案）→ `CYCLE-04` → `TASK-05` → `TEST-05-1~6` → `doc/5-tests/2026-10-17_040000_*`（已产出）
+  - `EXT-001`（指纹派生思路）→ `TASK-01`、`TASK-05`
+  - `EXT-002`（失败码语义）→ `TASK-02`、`GAP-01`（已证伪，`CYCLE-02` 作废）

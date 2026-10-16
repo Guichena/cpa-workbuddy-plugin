@@ -11,6 +11,8 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -115,23 +117,70 @@ func aesCBCEncrypt(plain, tempKey []byte) ([]byte, error) {
 	return out, nil
 }
 
-// newCosySession builds a fresh session for the given identity.
-func newCosySession(id cosyIdentity) (*cosySession, error) {
-	machineID := uuid.NewString()
-	seed := []byte(uuid.NewString() + uuid.NewString())
-	if len(seed) > 50 {
-		seed = seed[:50]
+// cosyFingerprintSeed 返回设备指纹派生种子：优先账号 UID，缺失时回退访问令牌。
+// [参数] id: 账号身份。
+// [返回] 非空种子字符串（两者皆空时为固定占位）。
+// 最近修改时间：2026-10-17 04:10:00 新增，用于稳定派生设备标识。
+func cosyFingerprintSeed(id cosyIdentity) string {
+	// 1. 优先 UID，其次访问令牌，均缺失时用占位保证不 panic
+	if uid := strings.TrimSpace(id.UID); uid != "" {
+		return uid
 	}
-	machineToken := base64.RawURLEncoding.EncodeToString(seed)
-	machineType := strings.ReplaceAll(uuid.NewString(), "-", "")[:18]
-	tempKey := strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
+	if tok := strings.TrimSpace(id.SecurityOauthToken); tok != "" {
+		return tok
+	}
+	return "anonymous"
+}
 
+// deriveMachineID 由账号种子稳定派生 UUID 形态的设备 ID（同一账号恒定）。
+// [参数] seed: 账号种子（见 cosyFingerprintSeed）。
+// [返回] UUID 字符串。
+// 最近修改时间：2026-10-17 04:10:00 新增，替换原随机 UUID 生成。
+func deriveMachineID(seed string) string {
+	// 1. 用 SHA1 命名空间 UUID 保持上游可能期望的 UUID 形态
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("qoderai:machine:"+seed)).String()
+}
+
+// deriveMachineToken 由账号种子稳定派生 machineToken（base64url 外观，43 字符）。
+// [参数] seed: 账号种子。
+// [返回] base64url 编码的 43 字符令牌。
+// 最近修改时间：2026-10-17 04:10:00 新增，替换原随机字节串。
+func deriveMachineToken(seed string) string {
+	// 1. SHA-512 取摘要后按 base64url 编码并去填充，与既有随机令牌长度对齐
+	sum := sha512.Sum512([]byte("qoderai:machinetoken:" + seed))
+	return base64.RawURLEncoding.EncodeToString(sum[:])[:43]
+}
+
+// deriveMachineType 由账号种子稳定派生 18 位十六进制 machineType。
+// [参数] seed: 账号种子。
+// [返回] 18 位十六进制字符串。
+// 最近修改时间：2026-10-17 04:10:00 新增，替换原随机 UUID 截断。
+func deriveMachineType(seed string) string {
+	// 1. SHA-256 十六进制取前 18 位，与既有 UUID 去横线截断长度一致
+	sum := sha256.Sum256([]byte("qoderai:machinetype:" + seed))
+	return hex.EncodeToString(sum[:])[:18]
+}
+
+// newCosySession 为给定身份构造一次 COSY 签名会话（设备标识按账号派生、会话密钥随机）。
+// [参数] id: 账号身份（UID 用于派生设备标识）。
+// [返回] 新建的会话指针；RSA/AES 失败时返回错误。
+// 最近修改时间：2026-10-17 04:10:00；改动原因：设备标识改按账号稳定派生，消除会话重建导致的指纹漂移。
+func newCosySession(id cosyIdentity) (*cosySession, error) {
+	// 1. 设备标识按账号稳定派生，保证同一账号跨会话恒定、多账号互相隔离
+	seed := cosyFingerprintSeed(id)
+	machineID := deriveMachineID(seed)
+	machineToken := deriveMachineToken(seed)
+	machineType := deriveMachineType(seed)
+
+	// 2. 会话密钥保持随机（非设备标识，仅用于加密身份载荷）
+	tempKey := strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
 	cosyKeyBytes, err := rsa.EncryptPKCS1v15(rand.Reader, serverPubKey, []byte(tempKey))
 	if err != nil {
 		return nil, fmt.Errorf("rsa encrypt: %w", err)
 	}
 	cosyKey := base64.StdEncoding.EncodeToString(cosyKeyBytes)
 
+	// 3. 组装身份体并按会话密钥加密为 info 字段
 	identityMap := map[string]string{
 		"name":                 id.Name,
 		"aid":                  id.AID,
@@ -150,6 +199,7 @@ func newCosySession(id cosyIdentity) (*cosySession, error) {
 	}
 	info := base64.StdEncoding.EncodeToString(infoBytes)
 
+	// 4. 组装会话结构返回
 	return &cosySession{
 		MachineID:    machineID,
 		MachineToken: machineToken,

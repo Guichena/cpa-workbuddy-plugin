@@ -1,5 +1,17 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.22
+
+### Fix - 推理链路设备指纹改为按账号 UID 稳定派生，消除会话重建导致的指纹漂移
+
+- 变更要点:
+  1. 根因：推理链路 COSY 会话（`newCosySession`）此前每次都用 `uuid.NewString()` 现生成 `machineID`/`machineToken`/`machineType`，而会话在 token 刷新时被 `invalidateCosySession` 主动作废重建（`keepalive.go`、`oauth.go` 三处调用，约每 4 小时一次），导致同一账号在服务端反复呈现为「新设备」，设备指纹持续漂移。与 qoderwork 0.9.41 修的是同一缺陷（两插件改动前 `newCosySession` 逐字节同构，段落 md5 一致）。
+  2. 新增 4 个纯派生函数：`cosyFingerprintSeed`（UID 优先 → 访问令牌 → 占位）、`deriveMachineID`（`uuid.NewSHA1` 保持 UUID 形态）、`deriveMachineToken`（SHA-512 + base64url 取 43 字符）、`deriveMachineType`（SHA-256 十六进制取 18 位）。命名空间前缀用 `qoderai:`，与 qoderwork 的 `qoderwork:` 隔离，保证同一 UID 在两插件下派生不同标识。
+  3. 会话密钥 `TempKey` 与 `Info` 保持随机——它们不属于设备标识，仅用于加密身份载荷，不参与派生。
+- 验证: 新增 `qoder-ai/sign_fingerprint_test.go` 6 个用例（同账号幂等、跨账号隔离、形态兼容、种子回退链、令牌刷新不变、跨插件命名空间隔离）；双哨兵正交变异精确失败（哨兵 1 退回随机 → 命中「幂等」+「令牌刷新不变」；哨兵 2 忽略 seed → 命中「跨账号隔离」+「种子回退链」，两方向互补证明判别力）；`cgo-shim-build.py qoder-ai` build/vet/test 全绿。
+- 边界说明: 只改**推理**链路的 COSY 设备标识；活动 API 的 UMID 链路（`umid.go`）本就通过真实远端桥按账号稳定派生，无同款缺陷，本轮不动。指纹由随机变稳定属上游可见的行为变更，生产接受度需发布后以账号级 `test-active` 验证。
+- 涉及文件: qoder-ai/sign.go、qoder-ai/sign_fingerprint_test.go、qoder-ai/main.go、qoder-ai/VERSION
+
 ## 0.1.21
 
 ### Fix - 账号故障冷却改为 30s 递增阶梯、上限 10 分钟
