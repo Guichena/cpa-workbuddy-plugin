@@ -92,9 +92,10 @@
   - 周期内最小任务执行顺序：`TASK-05`
   - 进入条件：用户 2026-10-17 明确要求「qoder-ai 同款指纹缺陷」
   - 收口条件：`TASK-05` 实现 + 真实测试 + `6-review` 三项闭环
-  - 状态：**已完成**（本地门禁全过：单测全绿、双哨兵正交精确 FAIL、`gofmt` 空、`POLLUTION: PASS`、`STYLE: PASS`）；生产验证待发布
+  - 状态：**已完成**（本地门禁全过：单测全绿、双哨兵正交精确 FAIL、`gofmt` 空、`POLLUTION: PASS`、`STYLE: PASS`）；**生产已发布并验收**（0.1.22 热重载成功、落盘 .so 哈希一致、3 账号 `test-active` 全 `ok:true`、零容器重启）
   - 完成标志：qoder-ai 同账号在 token 刷新前后 machineId/machineToken/machineType 恒定，且与 qoderwork 命名空间隔离
-  - 证据：测试主文档 `doc/5-tests/2026-10-17_040000_qoder-ai推理设备指纹稳定派生测试.md`、6-review `doc/6-review/2026-10-17_041000_qoder-ai推理设备指纹稳定派生_6-review.md`
+  - 证据：测试主文档 `doc/5-tests/2026-10-17_040000_qoder-ai推理设备指纹稳定派生测试.md`（§8 生产验收）、6-review `doc/6-review/2026-10-17_041000_qoder-ai推理设备指纹稳定派生_6-review.md`
+  - 发布提交链：`4ab4d83`(源码+测试+文档) → `117608f`(assets) → `8b33a61`(registry) → `79a29d9`(prune)
   - 关键前提（已厘清）：qoder-ai 有两条独立设备标识链路——推理 COSY 链路（`sign.go` 的 `newCosySession`，**缺陷所在**）与活动 UMID 链路（`umid.go` 的 `resolveAccountUMID`，**已用真实远端桥稳定派生，无缺陷**）；本轮只改前者
   - 与前后周期衔接：与 `CYCLE-01` 同构（唯一差异为命名空间前缀 `qoderai:` vs `qoderwork:`），可独立推进
   - 遗留：生产上游接受新指纹未验证（P1，发布后立即验证）；工作树并行会话已把 qoder-ai bump 到 0.1.21（账号冷却阶梯化），版本号需在发布前协调
