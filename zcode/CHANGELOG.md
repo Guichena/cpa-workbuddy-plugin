@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.32] - 2026-10-17
+
+### Fixed
+- **账号故障冷却由固定 15 秒改为 30s 递增阶梯、上限 10 分钟**：
+  - 现状：`failoverCooldown` 对所有失败一律返回固定 15 秒，无法区分「偶发单次抖动」与「账号持续不可用」；持续失败的账号每 15 秒被重新拉回路由、再次失败，形成「快速轮转但始终打不通」的抖动，既浪费配额也放大上游压力。
+  - 改造：`failover.go` 以 `failoverCooldownBase = 30s` / `failoverCooldownMax = 10min` / `failoverCooldownLadderCap = 20` 三常量替换原固定常量，新增 `failoverCooldownFor(count)` 按连续失败次数线性递增并在 10 分钟封顶；`noteAccountFailure` 改用该函数计算冷却窗口。偶发单次失败只冷 30 秒，持续失败逐步退到 10 分钟，一次成功即清零回落。阶梯时长按「先比较后相乘」计算，避免计数极大时整数溢出。
+  - 验证：新增 `TestFailoverCooldownFor_Ladder`（含封顶档位断言）与 `TestNoteAccountFailure_LadderCooldown`；`cgo-shim-build.py zcode` build/vet/test 全绿。
+
 ## [0.1.31] - 2026-10-15
 
 ### Changed

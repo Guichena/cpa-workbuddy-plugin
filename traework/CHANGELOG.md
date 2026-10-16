@@ -1,5 +1,18 @@
 # TraeWork Plugin Changelog
 
+## 0.2.14
+
+### Fix - 账号故障冷却改为 30s 递增阶梯、上限 10 分钟
+
+- 变更要点:
+  1. 根因：`failoverCooldownFor` 此前对所有失败一律返回固定 15 秒，无法区分「偶发单次抖动」与「账号持续不可用」。连续失败时账号每 15 秒就被重新拉回路由、再次失败，形成「快速轮转但始终打不通」的抖动，既浪费配额也放大上游压力。
+  2. 冷却窗口改为随连续失败次数线性递增：`30s × 连续失败次数`，在 10 分钟封顶（`failoverCooldownLadderCap = 10min / 30s = 20` 档）。偶发单次失败只冷 30 秒，持续失败的账号逐步退到 10 分钟，一次成功即清零回落。
+  3. 软失败与硬失败共用同一计数阶梯：429 无额度标记、软限流文案、零字节断流三类瞬时限流形态，此前只做固定冷却、不推进连续失败计数；现统一计入阶梯，与硬失败口径一致。
+  4. 阶梯时长按「先比较后相乘」计算，避免计数极大时整数溢出。
+  5. 回归用例补强：`TestRecordAccountFailure_LadderCapsAtMax` 覆盖封顶档位；软失败用例改为断言计数推进与阶梯时长，`test/traework/` 镜像用例同步。
+- 边界说明: 业务类 4xx（400 等）仍不计入阶梯。
+- 涉及文件: traework/accountFailover.go、traework/accountFailover_test.go、test/traework/account_failover_softfail_test.go、traework/policy.go、traework/executor.go、traework/anomaly_purge.go、traework/keepalive.go、traework/retry_config.go、traework/main.go、traework/VERSION
+
 ## 0.2.13
 
 ### Chore - 修正面板签到时刻文案漂移（后端调度本为每 4 小时）

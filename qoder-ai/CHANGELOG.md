@@ -1,5 +1,18 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.21
+
+### Fix - 账号故障冷却改为 30s 递增阶梯、上限 10 分钟
+
+- 变更要点:
+  1. 根因：`failoverCooldownFor` 此前对所有失败一律返回固定 15 秒，无法区分「偶发单次抖动」与「账号持续不可用」。连续失败时账号每 15 秒就被重新拉回路由、再次失败，形成「快速轮转但始终打不通」的抖动，既浪费配额也放大上游压力。
+  2. 冷却窗口改为随连续失败次数线性递增：`30s × 连续失败次数`，在 10 分钟封顶（`failoverCooldownLadderCap = 10min / 30s = 20` 档）。偶发单次失败只冷 30 秒，持续失败的账号逐步退到 10 分钟，一次成功即清零回落。
+  3. 软失败与硬失败共用同一计数阶梯：429 无额度标记、软限流文案、零字节断流三类瞬时限流形态，此前只做固定冷却、不推进连续失败计数；现统一计入阶梯，与硬失败口径一致。
+  4. 阶梯时长按「先比较后相乘」计算，避免计数极大时整数溢出。
+  5. 回归用例补强：`TestRecordAccountFailure_LadderCapsAtMax` 覆盖封顶档位；`TestTransientThrottle_Soft429LadderCooldown` 与 `TestTransientThrottle_ZeroByteStreamCountsOnLadder` 改为断言计数推进与阶梯时长。
+- 边界说明: 业务类 4xx（400 等）仍不计入阶梯。**排队帧红线保持不变**——Qoder 系排队帧（403:10605 `isQueued`）是上游容量状态而非账号故障，继续不计数、不冷却；110 每日调用上限的 24 小时 `daily_cooling` 持久冷却与本阶梯互不影响。
+- 涉及文件: qoder-ai/accountFailover.go、qoder-ai/accountFailover_test.go、qoder-ai/accountFailover_softfail_test.go、qoder-ai/policy.go、qoder-ai/stream.go、qoder-ai/anomaly_purge.go、qoder-ai/keepalive.go、qoder-ai/retry_config.go、qoder-ai/main.go、qoder-ai/VERSION
+
 ## 0.1.20
 
 ### Fix - 重建上游 messages 时保留工具调用结构，修复 agent 多轮往返中工具结果失去配对

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.5
+
+账号故障冷却由固定 15 秒改为 30s 递增阶梯、上限 10 分钟。
+
+**Fix**
+
+- `failover.go`：`failoverCooldown` 常量（固定 15 秒）替换为 `failoverCooldownBase = 30s` / `failoverCooldownMax = 10min` / `failoverCooldownLadderCap = 20`，新增 `failoverCooldownFor(count)` 按连续失败次数线性递增并在 10 分钟封顶。此前固定窗口让持续失败的账号每 15 秒被重新拉回路由、再次失败，形成「快速轮转但始终打不通」的抖动；现偶发单次失败只冷 30 秒，持续失败逐步退到 10 分钟，一次成功即清零回落。
+- `failover.go`：`noteAccountFailure` 改用 `failoverCooldownFor(entry.failCount)` 计算冷却窗口；阶梯时长按「先比较后相乘」计算，避免计数极大时整数溢出。
+
+**Test**
+
+- 新增 `TestFailoverCooldownFor_Ladder`（含封顶档位断言）与 `TestNoteAccountFailure_LadderCooldown`。
+- `cgo-shim-build.py copilot` build/vet/test 全绿。
+
 ## 0.1.4
 
 修复模型清单暴露账号无权模型的问题：面板与宿主此前显示 25 个模型，但用户逐个测试几乎全部 400，实际只有 10 个可用。
