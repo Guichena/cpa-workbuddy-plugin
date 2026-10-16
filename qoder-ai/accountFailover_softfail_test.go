@@ -6,37 +6,36 @@ import (
 	"time"
 )
 
-// 软失败拆分（0.9.11）：瞬时过载类失败（429 非 credit / soft rate limit 文案 /
-// 上游零字节断流）只做固定冷却 + 换号，不推进连续失败计数、不冻结异常池；
-// 硬失败（credit / 401/403/404/405 / 5xx / transport）维持原语义。
-// 背景：2026-09-06 生产实证，Trae 网关瞬时故障窗口内 4 个健康账号相继零字节
-// 断流，若按硬失败计数会把整池误冻结进异常池。
+// 软失败并入阶梯（2026-10-16）：瞬时过载类失败（429 非 credit / soft rate
+// limit 文案 / 上游零字节断流）与硬失败共用同一条计数与阶梯冷却路径，不再
+// 豁免计数。历史沿革：2026-09-06 生产实证网关瞬时故障窗口内 4 个健康账号
+// 相继零字节断流，当时为避免异常池误隔离整池而拆出「只冷却不计数」软通道；
+// 异常池已于 2026-09-08 移除，计数不再触发任何冻结，软失败重新并入阶梯的
+// 代价（抖动期间冷却更久）由「一次成功即清零」兜底。
 
-// TestTransientThrottle_Soft429DoesNotAdvanceCount 锁定软失败核心语义：
-// 连续 12 次 429 计数恒为 0、只有冷却生效。
-func TestTransientThrottle_Soft429DoesNotAdvanceCount(t *testing.T) {
+// TestTransientThrottle_Soft429LadderCooldown 锁定软失败新语义：
+// 连续 12 次 429 计数逐次递增，冷却沿 30s×count 阶梯增长。
+func TestTransientThrottle_Soft429LadderCooldown(t *testing.T) {
 	resetFailover(t)
 	for i := 0; i < 12; i++ {
 		if !recordAccountFailure("acc-soft", 429, "rate limit exceeded") {
 			t.Fatalf("429 iteration %d must count as a (soft) failure", i)
 		}
-		count, until, ok := failoverStateSnapshot("acc-soft")
+		count, _, ok := failoverStateSnapshot("acc-soft")
 		if !ok {
 			t.Fatalf("iteration %d: failover state must exist", i)
 		}
-		if count != 0 {
-			t.Fatalf("iteration %d: soft failure must not advance count, got %d", i, count)
+		if count != i+1 {
+			t.Fatalf("iteration %d: soft failure must advance count, want %d got %d", i, i+1, count)
 		}
-		if remain := time.Until(until); remain <= 0 || remain > 15*time.Second {
-			t.Fatalf("iteration %d: cooldown remain = %v, want (0, 15s]", i, remain)
-		}
+		assertCooldownNear(t, "acc-soft", failoverCooldownFor(i+1))
 	}
 }
 
-// TestTransientThrottle_ZeroByteStreamIsSoft 锁定零字节断流文案走软通道：
-// 泵的固定文案与 collect 错误文案都命中；200 无 marker 普通文本仍不记账
-// （门禁未放宽到任意 200 body）。
-func TestTransientThrottle_ZeroByteStreamIsSoft(t *testing.T) {
+// TestTransientThrottle_ZeroByteStreamCountsOnLadder 锁定零字节断流文案走
+// 可记账通道并进入阶梯：泵的固定文案与 collect 错误文案都命中；200 无
+// marker 普通文本仍不记账（门禁未放宽到任意 200 body）。
+func TestTransientThrottle_ZeroByteStreamCountsOnLadder(t *testing.T) {
 	resetFailover(t)
 	bodies := []string{
 		"upstream stream closed before first payload",
@@ -48,9 +47,10 @@ func TestTransientThrottle_ZeroByteStreamIsSoft(t *testing.T) {
 			t.Fatalf("zero-byte stream text must count as a (soft) failure: %q", body)
 		}
 		count, _, ok := failoverStateSnapshot(id)
-		if !ok || count != 0 {
-			t.Fatalf("zero-byte stream must not advance count (got count=%d ok=%v)", count, ok)
+		if !ok || count != 1 {
+			t.Fatalf("zero-byte stream must advance count to 1 (got count=%d ok=%v)", count, ok)
 		}
+		assertCooldownNear(t, id, 30*time.Second)
 		if !isAccountCoolingDown(id) {
 			t.Fatalf("zero-byte stream must trigger cooldown: %q", body)
 		}

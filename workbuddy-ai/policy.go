@@ -161,7 +161,11 @@ func isEmptyStreamBody(body string) bool {
 		strings.Contains(body, "invalid SSE response: missing output and done event")
 }
 
-// isTransientThrottle classifies failures that are transient upstream overload signals.
+// isTransientThrottle 判定失败是否属于上游瞬时过载信号：429 无额度标记、
+// 软限流文案或上游零字节断流。2026-10-16 起这类失败与硬失败共用
+// recordAccountFailure 的计数与阶梯冷却路径，不再单独豁免计数；本函数仅用于
+// 把「HTTP 200 承载的零字节断流文案」等不命中 isAccountFailure 状态码判据的
+// 失败纳入可记账范围。硬额度错误优先排除：429 + 额度标记属账号耗尽。
 func isTransientThrottle(status int, body string) bool {
 	if isHardCreditError(status, body) {
 		return false

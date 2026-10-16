@@ -673,7 +673,7 @@ func runTraeSyncStream(initialAuth *traeAuth, payload map[string]any, ctx traeSy
 //
 // When status is 200, the error came from an SSE error frame on an HTTP 200
 // response (event:error surface). Remap to 403 so isAccountFailure classifies
-// it as account-level and the 15s failover cooldown fires correctly.
+// it as account-level and the laddered failover cooldown fires correctly.
 func reconcileAfterExecutorError(authID string, status int, body string) {
 	if status == 200 {
 		status = 403

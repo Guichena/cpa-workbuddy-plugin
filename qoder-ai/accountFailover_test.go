@@ -36,33 +36,71 @@ func assertCooldownNear(t *testing.T, authID string, tier time.Duration) {
 	}
 }
 
-func TestFailoverCooldownFor_Fixed(t *testing.T) {
+// TestFailoverCooldownFor_Ladder 锁定阶梯时长契约：count 每增 1 冷却加一个基数，
+// 到 failoverCooldownLadderCap 后恒为上限。
+// 最近修改时间：2026-10-16 23:29:50；改动原因：固定 15s 改为 30s 递增阶梯、上限 10 分钟。
+func TestFailoverCooldownFor_Ladder(t *testing.T) {
 	cases := []struct {
 		count int
 		want  time.Duration
 	}{
 		{0, 0},
-		{1, 15 * time.Second},
-		{2, 15 * time.Second},
-		{3, 15 * time.Second},
-		{4, 15 * time.Second},
-		{99, 15 * time.Second},
+		{-1, 0},
+		{1, 30 * time.Second},
+		{2, 60 * time.Second},
+		{3, 90 * time.Second},
+		{4, 120 * time.Second},
+		{19, 570 * time.Second},
+		{20, 10 * time.Minute},
+		{21, 10 * time.Minute},
+		{99, 10 * time.Minute},
 	}
 	for _, tc := range cases {
 		if got := failoverCooldownFor(tc.count); got != tc.want {
 			t.Fatalf("failoverCooldownFor(%d) = %v, want %v", tc.count, got, tc.want)
 		}
 	}
+	if failoverCooldownLadderCap != 20 {
+		t.Fatalf("failoverCooldownLadderCap = %d, want 20", failoverCooldownLadderCap)
+	}
+	if failoverCooldownFor(failoverCooldownLadderCap-1) >= failoverCooldownMax {
+		t.Fatal("档位必须低于上限，否则封顶点与递增语义冲突")
+	}
 }
 
-func TestRecordAccountFailure_FixedCooldown(t *testing.T) {
+func TestRecordAccountFailure_LadderCooldown(t *testing.T) {
 	resetFailover(t)
-	// Every HARD failure — 1st, 2nd, 3rd, 4th — cools for exactly 15 seconds.
-	// (403 is a hard account-level failure; 429 became soft-only in 0.9.11,
-	// see accountFailover_softfail_test.go.)
-	for i := 1; i <= 4; i++ {
+	// 硬失败逐次递增：30s → 60s → 90s → 120s。
+	// (403 是硬账号级失败；429 见 accountFailover_softfail_test.go 的阶梯断言。)
+	wants := []time.Duration{
+		30 * time.Second,
+		60 * time.Second,
+		90 * time.Second,
+		120 * time.Second,
+	}
+	for i, want := range wants {
 		recordAccountFailure("acc-1", 403, "forbidden")
-		assertCooldownNear(t, "acc-1", 15*time.Second)
+		assertCooldownNear(t, "acc-1", want)
+		if count, _, _ := failoverStateSnapshot("acc-1"); count != i+1 {
+			t.Fatalf("iteration %d: count = %d, want %d", i, count, i+1)
+		}
+	}
+}
+
+// TestRecordAccountFailure_LadderCapsAtMax 锁定封顶：连续失败超过阶梯档位后
+// 冷却不再增长，计数继续递增（面板展示需要）。
+func TestRecordAccountFailure_LadderCapsAtMax(t *testing.T) {
+	resetFailover(t)
+	for i := 0; i < failoverCooldownLadderCap+3; i++ {
+		recordAccountFailure("acc-cap", 403, "forbidden")
+		assertCooldownNear(t, "acc-cap", failoverCooldownFor(i+1))
+	}
+	count, _, ok := failoverStateSnapshot("acc-cap")
+	if !ok {
+		t.Fatal("failover state must exist after repeated failures")
+	}
+	if count != failoverCooldownLadderCap+3 {
+		t.Fatalf("count = %d, want %d", count, failoverCooldownLadderCap+3)
 	}
 }
 
@@ -98,12 +136,12 @@ func TestRecordAccountFailure_Business4xxExcluded(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("count = %d after two 400s, want 0", count)
 	}
-	// 403 counts on top of nothing; another 403 also cools 15s (fixed).
-	// (429 is soft-only since 0.9.11 — see accountFailover_softfail_test.go.)
+	// 403 首次计入为 30s，第二次递增到 60s（阶梯）。
+	// (429 是软失败，见 accountFailover_softfail_test.go 的阶梯断言。)
 	recordAccountFailure("acc-1", 403, "forbidden")
-	assertCooldownNear(t, "acc-1", 15*time.Second)
+	assertCooldownNear(t, "acc-1", 30*time.Second)
 	recordAccountFailure("acc-1", 403, "forbidden")
-	assertCooldownNear(t, "acc-1", 15*time.Second)
+	assertCooldownNear(t, "acc-1", 60*time.Second)
 }
 
 // TestRecordAccountFailure_AccountLevel4xxCounted locks in the v0.12
@@ -203,15 +241,14 @@ func TestFailoverCooldownExpiry(t *testing.T) {
 	if !isAccountCoolingDown("acc-1") {
 		t.Fatal("account should be cooling down right after failure")
 	}
-	// Simulate the cooldown window elapsing: the counter persists but the
-	// account becomes routable again.
+	// 模拟冷却窗口到期：计数保留（count=1），账号重新可路由。
 	setFailoverCooldownUntil("acc-1", time.Now().Add(-time.Second))
 	if isAccountCoolingDown("acc-1") {
 		t.Fatal("account should be routable after cooldown expires")
 	}
-	// A new failure re-enters cooldown at the fixed 15s window.
+	// 再次失败沿阶梯递增：count=2 → 60s。
 	recordAccountFailure("acc-1", 403, "forbidden")
-	assertCooldownNear(t, "acc-1", 15*time.Second)
+	assertCooldownNear(t, "acc-1", 60*time.Second)
 }
 
 func TestFailoverDisabled(t *testing.T) {

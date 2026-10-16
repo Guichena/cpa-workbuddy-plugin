@@ -18,9 +18,32 @@ var (
 	failoverRecords = make(map[string]*failoverEntry)
 )
 
-// failoverCooldown 是单次账号故障后的固定冷却窗口（对齐既有插件成熟策略）。
-// 避免因瞬时并发满（429）动辄封禁数分钟导致整个插件无账号可用。
-const failoverCooldown = 15 * time.Second
+// failoverCooldownBase 是阶梯基数：每次连续失败使冷却窗口增加一个基数，
+// 首次失败即冷却一个基数（30s），第 n 次失败冷却 n × 30s。
+const failoverCooldownBase = 30 * time.Second
+
+// failoverCooldownMax 是阶梯上限：连续失败再多也不超过 10 分钟。
+const failoverCooldownMax = 10 * time.Minute
+
+// failoverCooldownLadderCap 是达到上限所需的连续失败次数（10min / 30s = 20）。
+// 先比较次数再相乘，避免 count 极大时的乘法溢出。
+const failoverCooldownLadderCap = int(failoverCooldownMax / failoverCooldownBase)
+
+// failoverCooldownFor 返回第 count 次连续失败对应的阶梯冷却时长。
+// 时长按 failoverCooldownBase 线性递增并在 failoverCooldownMax 封顶，
+// count <= 0 返回零值表示不冷却。
+// [参数] count: 当前连续失败次数，由 noteAccountFailure 递增、成功后清零。
+// [返回] 本次失败应施加的冷却时长。
+// 最近修改时间：2026-10-16 23:29:50；改动原因：固定 15s 改为 30s 递增阶梯、上限 10 分钟。
+func failoverCooldownFor(count int) time.Duration {
+	if count <= 0 {
+		return 0
+	}
+	if count >= failoverCooldownLadderCap {
+		return failoverCooldownMax
+	}
+	return failoverCooldownBase * time.Duration(count)
+}
 
 // isAccountCoolingDown 检查账号是否处于冷却期。
 func isAccountCoolingDown(authID string) bool {
@@ -38,7 +61,10 @@ func isAccountCoolingDown(authID string) bool {
 	return time.Now().Before(entry.cooldown)
 }
 
-// noteAccountFailure 记录账号故障并设置固定冷却。
+// noteAccountFailure 记录账号故障并按连续失败次数施加阶梯冷却。
+// [参数] authID: 账号唯一标识；statusCode: 上游 HTTP 状态码；errMsg: 错误文本。
+// [返回] 无。
+// 最近修改时间：2026-10-16 23:29:50；改动原因：固定 15s 改为 30s 递增阶梯、上限 10 分钟。
 func noteAccountFailure(authID string, statusCode int, errMsg string) {
 	authID = strings.TrimSpace(authID)
 	if authID == "" {
@@ -55,7 +81,7 @@ func noteAccountFailure(authID string, statusCode int, errMsg string) {
 
 	entry.failCount++
 	entry.lastError = errMsg
-	entry.cooldown = time.Now().Add(failoverCooldown)
+	entry.cooldown = time.Now().Add(failoverCooldownFor(entry.failCount))
 }
 
 // resetAccountFailover 成功调用后重置故障计数与冷却状态。

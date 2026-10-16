@@ -234,7 +234,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			// SSE error frame on HTTP 200 must enter failover cooldown
 			// regardless of whether we rotate or surface the error. Remap
 			// to 403 so isAccountFailure classifies it as account-level
-			// and the account gets its 15s cooldown.
+			// and the account gets its laddered cooldown.
 			noteAccountFailure(curAuthID, http.StatusForbidden, sseErr)
 			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, statusCode, sseErr, reasoningEffort, collector.ttftNS(started), curAccountLabel, sessionKey)
 			// 200 内业务错误帧与 HTTP 4xx 同责：零泄漏（emitted=false）且账号级
@@ -269,9 +269,9 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			// and closed it before the first payload (the host judges this
 			// empty_stream / Retryable and retries across accounts). Keep the
 			// stream close behavior unchanged — only fix the accounting: the
-			// attempt is a TRANSIENT-THROTTLE failure (fixed cooldown via
-			// noteAccountFailure; no consecutive-failure bump, no freeze),
-			// not a success.
+			// attempt is a TRANSIENT-THROTTLE failure that goes through
+			// noteAccountFailure onto the shared laddered cooldown (soft
+			// failures count toward the ladder too; no freeze), not a success.
 			const emptyStreamErr = "upstream stream closed before first payload"
 			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, statusCode, emptyStreamErr, reasoningEffort, collector.ttftNS(started), curAccountLabel, sessionKey)
 			noteAccountFailure(curAuthID, statusCode, emptyStreamErr)
@@ -296,8 +296,8 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 // isAccountFailure (5xx, 0, 402) are still surfaced as errors but do NOT
 // trigger a same-request account rotation; the failover-cooldown layer
 // handles those across requests. 429 is included here so the next attempt
-// can route around a per-account rate limit without waiting for the fixed
-// 15s cooldown to expire; cross-request cooldown continues to apply
+// can route around a per-account rate limit without waiting for the laddered
+// cooldown to expire; cross-request cooldown continues to apply
 // via isAccountFailure / recordAccountFailure on the failing account.
 func collectUpstreamStream(body []byte, sa *storedAuth, sseFramed bool, collector *sseUsageCollector) ([]pluginapi.ExecutorStreamChunk, int, error) {
 	budget := loadedRetryOn4xx()

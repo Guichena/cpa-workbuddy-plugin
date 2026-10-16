@@ -165,15 +165,18 @@ func isEmptyStreamBody(body string) bool {
 		strings.Contains(body, "invalid SSE response: missing output and done event")
 }
 
-// isTransientThrottle classifies failures that are transient upstream
-// overload signals: 429 without credit markers, soft rate-limit wording,
-// or a zero-byte upstream stream. These self-heal once the gateway
-// recovers, so they only warrant the fixed cooldown + account rotation —
-// they must NEVER advance the consecutive-failure counter (hard-counting
-// them used to quarantine healthy accounts in the anomaly pool during a
-// gateway blip; 2026-09-06 production evidence: one blip
-// zero-byte-failed 4 healthy accounts in a row). Hard credit errors are
-// excluded first: 429 + credit marker still means account exhaustion.
+// isTransientThrottle 判定失败是否属于上游瞬时过载信号：429 无额度标记、
+// 软限流文案，或上游零字节断流。这类失败仍会进入 recordAccountFailure 的
+// 计数与阶梯冷却路径——它的唯一作用是把「HTTP 200 承载的零字节断流文案」
+// 这类不命中 isAccountFailure 状态码判据的失败纳入可记账范围。
+// 硬额度错误优先排除：429 + 额度标记仍属账号耗尽，走 isHardCreditError。
+// 历史沿革：2026-09-06 曾因网关抖动连续零字节失败误隔离 4 个健康账号而把
+// 这类失败改为「只冷却不计数」；异常池于 2026-09-08 移除后计数不再触发
+// 冻结，2026-10-16 起软失败重新并入阶梯计数，代价是抖动期间账号会沿阶梯
+// 冷却更久，由「一次成功即清零」兜底回落。
+// [参数] status: 上游 HTTP 状态码；body: 上游响应正文。
+// [返回] true 表示属于可记账的瞬时过载类失败。
+// 最近修改时间：2026-10-16 23:29:50；改动原因：软失败并入阶梯计数，注释同步新语义。
 func isTransientThrottle(status int, body string) bool {
 	if isHardCreditError(status, body) {
 		return false

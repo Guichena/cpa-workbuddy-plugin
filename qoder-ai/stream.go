@@ -336,7 +336,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 		if sseErr != "" {
 			// SSE error frame on HTTP 200: the current account must enter
 			// failover cooldown. Remap to 403 so isAccountFailure classifies
-			// it as account-level and the account gets its 15s cooldown.
+			// it as account-level and the account gets its laddered cooldown.
 			if isDailyCountExceeded(statusCode, sseErr) {
 				_ = triggerDailyCooldown("", curAuthID)
 			}
@@ -374,9 +374,9 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			// and closed it before the first payload (the host judges this
 			// empty_stream / Retryable and retries across accounts). Keep the
 			// stream close behavior unchanged — only fix the accounting: the
-			// attempt is a TRANSIENT-THROTTLE failure (fixed cooldown via
-			// noteAccountFailure; no consecutive-failure bump, no freeze),
-			// not a success.
+			// attempt is a TRANSIENT-THROTTLE failure that goes through
+			// noteAccountFailure onto the shared laddered cooldown (soft
+			// failures count toward the ladder too; no freeze), not a success.
 			const emptyStreamErr = "upstream stream closed before first payload"
 			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, statusCode, emptyStreamErr, reasoningEffort, collector.ttftNS(started), curAccountLabel, sessionKey)
 			noteAccountFailure(curAuthID, statusCode, emptyStreamErr)

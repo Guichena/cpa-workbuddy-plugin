@@ -21,7 +21,7 @@
 //   - On a refresh rejection (refresh token dead) markSessionDead writes the
 //     re-login NOTE only — disabled:true is manual-toggle-only (user
 //     mandate 2026-09-08); routing failover keeps dead accounts out of
-//     rotation via the 15s cooldown without needing the disabled flag.
+//     rotation via the laddered cooldown without needing the disabled flag.
 package main
 
 import (

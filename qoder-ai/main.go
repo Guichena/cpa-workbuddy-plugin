@@ -821,7 +821,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 			noteAccountFailure(usedAuthID, 0, completionErr.Error())
 		} else if statusCode == 200 {
 			// SSE error frame on HTTP 200: remap to 403 so isAccountFailure
-			// correctly triggers the 15s failover cooldown.
+			// correctly triggers the laddered failover cooldown.
 			noteAccountFailure(usedAuthID, http.StatusForbidden, completionErr.Error())
 		}
 		return nil, completionErr

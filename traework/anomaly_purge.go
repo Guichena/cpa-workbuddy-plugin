@@ -1,6 +1,6 @@
 // anomaly_purge.go removes the legacy top-level `anomaly` flag from physical
 // auth files. The anomaly pool mechanism itself was removed (2026-09-08):
-// account failures now only apply the fixed 15s failover cooldown
+// account failures now only apply the laddered failover cooldown
 // (accountFailover.go) — no quarantine set, no daily refresh loop, no
 // freeze/unfreeze. Files written by older plugin versions may still carry
 // `anomaly: true`; nothing reads that key anymore, so it is dead weight.

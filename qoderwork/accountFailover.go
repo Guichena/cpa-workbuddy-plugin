@@ -1,21 +1,23 @@
-// accountFailover.go implements per-account fixed cooldown for routing.
+// accountFailover.go 实现按账号的阶梯冷却路由排除。
 //
-// When an upstream account fails (HTTP 429 / 402 / 5xx or a transport-level
-// error), the account enters a temporary cooldown window. While cooling down,
-// every new request routed by the scheduler skips that account, so sessions
-// fail over to a healthy account instead of piling more failures onto the
-// same exhausted one.
+// 上游账号失败（HTTP 429 / 402 / 5xx 或传输层错误）后进入冷却窗口，窗口期内
+// 调度器路由的新请求一律跳过该账号，让会话改落到健康账号，而不是继续往同一个
+// 已耗尽的账号上堆失败。
 //
-// The cooldown is a FIXED 15 seconds on every failure — no exponential
-// backoff. The consecutive-failure counter is still tracked for panel
-// display only; it no longer freezes accounts (the anomaly pool was
-// removed on 2026-09-08) and no longer lengthens the cooldown:
-// each failure cools the account for exactly failoverCooldown.
+// 冷却时长按连续失败次数阶梯递增：第 1 次 30s、第 2 次 60s、第 3 次 90s……
+// 封顶 10 分钟。瞬时过载类失败（429 无额度标记 / 软限流文案 / 上游零字节断流）
+// 与硬失败走同一条阶梯路径，不再单独豁免计数。连续失败计数同时用于面板
+// 「失败N次」展示；异常池隔离已于 2026-09-08 移除，计数不再触发任何冻结或停用。
 //
-// A successful request resets the counter and lifts the cooldown immediately.
-// Cooldown state is in-memory only: no auth files, no DB writes; a process
-// restart clears everything. The mechanism can be disabled wholesale via
-// plugin config `account_failover: false`.
+// Qoder 系专属：排队帧（isQueueFrame）仍保持「不计数不冷却」——它是上游容量
+// 状态而非账号故障；110 日限额（isDailyCountExceeded）另有 24 小时持久化冷却
+// （daily_cooling），不受本阶梯影响。
+//
+// 任意一次成功请求都会清零计数并立即解除冷却。冷却状态只存内存：不写 auth
+// 文件、不写 DB，进程重启即清空。可通过插件配置 `account_failover: false`
+// 整体关闭该机制。
+//
+// 最近修改时间：2026-10-16 23:29:50；改动原因：固定 15s 冷却改为 30s 递增阶梯、上限 10 分钟，软失败并入计数。
 package main
 
 import (
@@ -25,10 +27,16 @@ import (
 	"time"
 )
 
-// failoverCooldown is the fixed cooldown applied after any account failure.
-// No exponential backoff: every failure cools the account for exactly this
-// long, regardless of the consecutive-failure count.
-const failoverCooldown = 15 * time.Second
+// failoverCooldownBase 是阶梯基数：每次连续失败使冷却窗口增加一个基数，
+// 首次失败即冷却一个基数（30s），第 n 次失败冷却 n × 30s。
+const failoverCooldownBase = 30 * time.Second
+
+// failoverCooldownMax 是阶梯上限：连续失败再多也不超过 10 分钟。
+const failoverCooldownMax = 10 * time.Minute
+
+// failoverCooldownLadderCap 是达到上限所需的连续失败次数（10min / 30s = 20）。
+// 先比较次数再相乘，避免 count 极大时的乘法溢出。
+const failoverCooldownLadderCap = int(failoverCooldownMax / failoverCooldownBase)
 
 // failoverPruneInterval bounds how often stale (zero-count) failover states
 // are swept from memory. Aligned with the session-binding pruner.
@@ -75,15 +83,20 @@ func setFailoverEnabled(on bool) {
 	failoverEnabledMu.Unlock()
 }
 
-// failoverCooldownFor returns the cooldown duration for a failure. The
-// window is fixed at failoverCooldown regardless of the consecutive-failure
-// count; count <= 0 yields zero. count is still tracked separately (in
-// recordAccountFailure) for panel display only.
+// failoverCooldownFor 返回第 count 次连续失败对应的阶梯冷却时长。
+// 时长按 failoverCooldownBase 线性递增并在 failoverCooldownMax 封顶，
+// count <= 0 返回零值表示不冷却。
+// [参数] count: 当前连续失败次数，由 recordAccountFailure 递增、成功后清零。
+// [返回] 本次失败应施加的冷却时长。
+// 最近修改时间：2026-10-16 23:29:50；改动原因：固定 15s 改为 30s 递增阶梯、上限 10 分钟。
 func failoverCooldownFor(count int) time.Duration {
 	if count <= 0 {
 		return 0
 	}
-	return failoverCooldown
+	if count >= failoverCooldownLadderCap {
+		return failoverCooldownMax
+	}
+	return failoverCooldownBase * time.Duration(count)
 }
 
 // isAccountFailure reports whether an upstream response counts as an account
@@ -120,7 +133,7 @@ func isAccountFailure(status int, body string) bool {
 // cheapest way to recover inside a single request. The cross-request
 // cooldown still applies in parallel via isAccountFailure /
 // recordAccountFailure — i.e. a 429-triggered same-request rotation also
-// lifts the failed account's fixed cooldown so subsequent requests route
+// lifts the failed account's laddered cooldown so subsequent requests route
 // away from it. When the upstream limit is genuinely global (shared
 // IP/region quota across every qoderwork account), same-request rotation
 // burns the budget without progress; pickNextAuth still has to surface an
@@ -162,19 +175,6 @@ func normalizeFailoverKey(s string) string {
 	return s
 }
 
-// coolDownAccount sets only the fixed cooldown window for an account,
-// without touching the consecutive-failure counter.
-// Used by the transient-throttle (soft) failure path: those failures
-// self-heal when the upstream gateway recovers, so counting them would
-// quarantine healthy accounts during a gateway blip.
-func coolDownAccount(authID string) bool {
-	failoverMu.Lock()
-	defer failoverMu.Unlock()
-	until := time.Now().Add(failoverCooldown)
-	setCooldownRecordLocked(authID, until, 0, false)
-	return true
-}
-
 func setCooldownRecordLocked(authID string, until time.Time, count int, bumpCount bool) {
 	keys := []string{authID}
 	if norm := normalizeFailoverKey(authID); norm != "" && norm != authID {
@@ -195,21 +195,23 @@ func setCooldownRecordLocked(authID string, until time.Time, count int, bumpCoun
 	}
 }
 
-// recordAccountFailure increments the consecutive-failure counter for the
-// account and extends its cooldown window by the fixed failoverCooldown.
-// Returns true when the failure was counted (i.e. isAccountFailure).
-// Callers are expected to key on the same auth.ID the scheduler uses.
+// recordAccountFailure 递增账号连续失败计数并按阶梯延长冷却窗口。
+// 返回 true 表示该失败已计入。调用方须使用与调度器相同的 auth.ID 作为键。
 //
-// Transient-throttle failures (429 without credit markers, soft rate-limit
-// wording, upstream zero-byte stream — see isTransientThrottle) take the
-// SOFT path: cooldown only, never a counter bump. Hard
-// failures (credit / 401/403/404/405 / 5xx / transport) keep the original
-// semantics below.
+// 瞬时过载类失败（429 无额度标记、软限流文案、上游零字节断流，见
+// isTransientThrottle）与硬失败（额度耗尽 / 401/403/404/405 / 5xx / 传输错误）
+// 共用同一条计数与阶梯路径：软失败不再豁免计数，网关抖动会让账号沿阶梯
+// 逐次冷却更久，直到出现一次成功请求才清零回落到 30s。
 //
-// The consecutive-failure counter no longer freezes accounts: the anomaly
-// pool was removed on 2026-09-08, so a hard failure now only cools the
-// account for the fixed window and every other effect is panel-visible
-// state (success_count / failed_count on the physical auth file).
+// Qoder 系专属红线（不改）：排队帧 isQueueFrame 是上游容量状态而非账号故障，
+// 保持「不计数不冷却」；110 日限额 isDailyCountExceeded 走独立 24h 持久化冷却
+// （daily_cooling），不在本阶梯路径内。
+//
+// 异常池隔离已于 2026-09-08 移除：失败只延长冷却窗口，账号到期后自动重新
+// 进入路由，不冻结、不做每日刷新、不需要人工解冻。
+// [参数] authID: 账号唯一标识；status: 上游 HTTP 状态码；body: 上游响应正文。
+// [返回] true 表示失败已计入冷却阶梯，false 表示按判定不予记账。
+// 最近修改时间：2026-10-16 23:29:50；改动原因：软失败并入阶梯计数，移除 coolDownAccount 旁路。
 func recordAccountFailure(authID string, status int, body string) bool {
 	if !failoverActive() {
 		return false
@@ -224,9 +226,6 @@ func recordAccountFailure(authID string, status int, body string) bool {
 	}
 	if !isAccountFailure(status, body) && !isTransientThrottle(status, body) {
 		return false
-	}
-	if isTransientThrottle(status, body) {
-		return coolDownAccount(authID)
 	}
 	now := time.Now()
 	failoverMu.Lock()
