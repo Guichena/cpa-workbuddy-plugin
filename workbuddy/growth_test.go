@@ -497,10 +497,59 @@ func TestAcceptGrowthTasks_BatchesAt20(t *testing.T) {
 	}
 }
 
+// TestAcceptGrowthTasks_ReportsPerItemFailures 覆盖逐条 status 判定：上游在
+// HTTP 200 + code=0 下用 data.results[i].status 表达单条失败，只看状态码会把
+// 整批虚报为成功（生产账号 700fd592 连续 6 轮恒报 14 accepted 的根因，0.16.3）。
+// [参数] t：测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17 01:30:00 逐条读 results 判定接单结果（0.16.3）
+func TestAcceptGrowthTasks_ReportsPerItemFailures(t *testing.T) {
+	cleanup := newGrowthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"results":[
+			{"task_code":"t-ok","status":"ok"},
+			{"task_code":"t-bad","status":"error","message":"prerequisite not met: first_buddy"}
+		]}}`))
+	})
+	defer cleanup()
+
+	out, err := acceptGrowthTasks(&storedAuth{}, []string{"t-ok", "t-bad"})
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if out.Accepted != 1 {
+		t.Fatalf("Accepted = %d, want 1 (only t-ok)", out.Accepted)
+	}
+	if len(out.Errors) != 1 || !strings.Contains(out.Errors[0], "first_buddy") {
+		t.Fatalf("per-item failure reason must surface, got %v", out.Errors)
+	}
+}
+
+// TestAcceptGrowthTasks_EmptyResultsFallsBackToBatch 覆盖 results 缺失或为空时
+// 回退整批成功：无逐条信息即不误报失败（避免把契约省略当成失败）。
+// [参数] t：测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17 01:30:00 逐条读 results 判定接单结果（0.16.3）
+func TestAcceptGrowthTasks_EmptyResultsFallsBackToBatch(t *testing.T) {
+	cleanup := newGrowthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{}}`))
+	})
+	defer cleanup()
+
+	out, err := acceptGrowthTasks(&storedAuth{}, []string{"a", "b", "c"})
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if out.Accepted != 3 || len(out.Errors) != 0 {
+		t.Fatalf("missing results must fall back to batch success, got %+v", out)
+	}
+}
+
 // TestAcceptGrowthTasks_EmptyListNoRequest 覆盖空列表不发请求。
 // [参数] t：测试上下文。
 // [返回] 无。
-// 最近修改时间：2026-10-15 21:20:00 新增长任务域端点（TASK-1.3）
+// 最近修改时间：2026-10-17 01:30:00 返回值改为逐条汇总结构（0.16.3）
 func TestAcceptGrowthTasks_EmptyListNoRequest(t *testing.T) {
 	var calls int32
 	cleanup := newGrowthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -509,8 +558,8 @@ func TestAcceptGrowthTasks_EmptyListNoRequest(t *testing.T) {
 	defer cleanup()
 
 	out, err := acceptGrowthTasks(&storedAuth{}, nil)
-	if err != nil || out != nil {
-		t.Fatalf("expected nil,nil got %v,%v", out, err)
+	if err != nil || out.Accepted != 0 {
+		t.Fatalf("expected zero outcome, got %+v err=%v", out, err)
 	}
 	if calls != 0 {
 		t.Fatalf("expected 0 calls, got %d", calls)

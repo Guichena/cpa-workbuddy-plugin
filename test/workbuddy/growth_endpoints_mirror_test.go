@@ -53,6 +53,43 @@ func TestGrowthMirror_ErrorSnippetRedacted(t *testing.T) {
 	}
 }
 
+// TestGrowthMirror_AcceptAggregatesFailures 断言接单逐条失败按原因聚合且不虚报。
+// 上游在 HTTP 200 + code=0 下用 data.results[i].status 表达单条失败（典型
+// "prerequisite not met: first_buddy"）；聚合后每条原因只出一行并带条数，
+// 避免 14 项失败撑爆面板 toast 与日志（0.16.3 修复）。
+// [参数] t：测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17 01:40:00 逐条读 results 判定接单结果（0.16.3）
+func TestGrowthMirror_AcceptAggregatesFailures(t *testing.T) {
+	cleanup := newGrowthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"msg":"OK","data":{"results":[
+			{"task_code":"a","status":"ok"},
+			{"task_code":"b","status":"error","message":"prerequisite not met: first_buddy"},
+			{"task_code":"c","status":"error","message":"prerequisite not met: first_buddy"},
+			{"task_code":"d","status":"error","message":"task expired"}
+		]}}`))
+	})
+	defer cleanup()
+
+	out, err := acceptGrowthTasks(&storedAuth{}, []string{"a", "b", "c", "d"})
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if out.Accepted != 1 {
+		t.Fatalf("Accepted = %d, want 1", out.Accepted)
+	}
+	if len(out.Errors) != 2 {
+		t.Fatalf("failures must aggregate by reason into 2 lines, got %v", out.Errors)
+	}
+	if !strings.Contains(out.Errors[0], "2 项失败") || !strings.Contains(out.Errors[0], "first_buddy") {
+		t.Fatalf("first_buddy reason should aggregate 2 items, got %q", out.Errors[0])
+	}
+	if !strings.Contains(out.Errors[1], "1 项失败") || !strings.Contains(out.Errors[1], "task expired") {
+		t.Fatalf("task expired should be its own line, got %q", out.Errors[1])
+	}
+}
+
 // TestGrowthMirror_QuotedConfigKeys 断言宿主引号键形态经归一化后可按裸键匹配。
 // 宿主管理 API 写回配置时保留 YAML 引号样式，下发插件的 config_yaml 会带引号；
 // 该用例锁定 normalizeConfigKeyLine 的边界：单双引号键、冒号后无空格、非键行与

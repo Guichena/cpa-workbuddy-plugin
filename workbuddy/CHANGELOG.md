@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.16.3
+
+### Fix - 修正成长中心接单失败被虚报为成功 + 错误原因可见化
+
+- 变更要点:
+  1. 修正计数失真缺陷：`acceptGrowthTasks` 此前只校验 HTTP 状态码与 envelope `code`，**不读上游 `data.results` 逐条 `status`**，把「发出的任务码数量」当成「接单成功数」上报。上游对前置未满足的任务返回 HTTP 200 + code=0，把单条失败写在 `data.results[i].status=error`（典型 `prerequisite not met: first_buddy (no buddy instance found)`）。生产实证：账号 `700fd592` 连续 6 轮（10-16 04:00 → 10-17 00:00）恒报 `14 accepted, 0 claimed`，数值完全不变——接单从未真正成功却被每轮记为 14 项成功。
+  2. 返回值改为结构化汇总 `growthAcceptOutcome{Accepted, Errors}`：逐条判定 `status`，失败原因**按 message 聚合**（附条数）后再上浮，避免 14 条逐项铺开撑爆面板 toast 与日志；原因文本统一经 `truncateRedacted` 脱敏截断。`results` 缺失或为空时回退整批成功，不把契约省略当成失败。
+  3. 调用方 `growthRunTasks` 改用真实成功数记账（`out.Accepted`），逐条失败原因一并计入本段 `Errors`。
+  4. 错误原因可见化：定时 tick 在既有汇总行后逐条打印 `[workbuddy] growth error for <uid>: <原因>`，使「任务未完成」可自查；面板摘要行在有失败原因时显示「N 项失败」而非「今日已领完」，不再把失败掩盖成「无事可做」。
+  5. 回归用例补强：新增 `TestAcceptGrowthTasks_ReportsPerItemFailures`（逐条失败只计成功项且原因上浮）、`TestAcceptGrowthTasks_EmptyResultsFallsBackToBatch`（results 缺失回退整批）、镜像 `TestGrowthMirror_AcceptAggregatesFailures`（同因合并带条数、异因各自成行）。
+- 验证: `cgo-shim-build.py workbuddy` build/vet/test 全绿；变异自测（临时把 `results` 判定退回整批计成功）确认两条新断言均 FAIL（`Accepted = 2, want 1` 与 `Accepted = 4, want 1`），回滚后复验全绿；面板内联 JS 经 `node` 语法校验通过。
+- 边界说明: 任务「未完成」本身含上游业务前置——EXT-1 与插件均只有 `/tasks`、`/tasks/accept`、`/tasks/{code}/claim` 三个端点，**不存在「完成任务」端点**，任务 `completed` 依赖用户在客户端真实操作；本修复只修正插件对自身动作结果的陈述真实性，不改变上游任务状态机。
+- 涉及文件: workbuddy/growth.go、workbuddy/checkin.go、workbuddy/panel.html、workbuddy/growth_test.go、test/workbuddy/growth_endpoints_mirror_test.go、workbuddy/main.go、workbuddy/VERSION
+
 ## 0.16.2
 
 ### Fix - 修正能量余额被误当收益显示 + 成长中心默认自动开启

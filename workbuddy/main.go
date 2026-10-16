@@ -335,7 +335,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.16.2"
+var version = "0.16.3"
 
 func wbRegistration() registration {
 	return registration{
@@ -807,7 +807,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 			noteAccountFailure(usedAuthID, 0, completionErr.Error())
 		} else if statusCode == 200 {
 			// SSE error frame on HTTP 200: remap to 403 so isAccountFailure
-			// correctly triggers the 15s failover cooldown.
+			// correctly triggers the laddered failover cooldown.
 			noteAccountFailure(usedAuthID, http.StatusForbidden, completionErr.Error())
 		}
 		return nil, completionErr
@@ -874,7 +874,7 @@ func handleExecStream(raw []byte) ([]byte, error) {
 			// collectUpstreamStream; only transport-level failures and HTTP-200
 			// SSE error frames need the failover note here. Override 200 to 403
 			// so isAccountFailure classifies it as an account-level failure and
-			// the account enters its 15s cooldown.
+			// the account enters its laddered cooldown.
 			if statusCode == 0 {
 				noteAccountFailure(req.AuthID, 0, errCollect.Error())
 			} else if statusCode < 400 {

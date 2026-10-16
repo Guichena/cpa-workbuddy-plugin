@@ -198,6 +198,10 @@ func processAutoCheckinAccount(f pluginapi.HostAuthFileEntry, doCheckin bool) {
 			gr := runGrowthForAccount(sa, f.AuthIndex)
 			log.Printf("[workbuddy] growth for %s: +%d credits, +%d energy, %d accepted, %d claimed, %d errors",
 				sa.Account.UID, gr.CreditsGained, gr.EnergyGained, gr.TasksAccepted, gr.TasksClaimed, len(gr.Errors))
+			// 错误原因一并落日志：只打条数时「任务未完成」无法自查（0.16.3）
+			for _, e := range gr.Errors {
+				log.Printf("[workbuddy] growth error for %s: %s", sa.Account.UID, e)
+			}
 		}
 		return
 	}

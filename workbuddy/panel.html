@@ -1102,16 +1102,20 @@ async function growthOne(idx, btn){
     const energy=Number(res.energy_gained)||0;
     const balance=Number(res.energy_balance)||0;
     const tasks=(Number(res.tasks_accepted)||0)+(Number(res.tasks_claimed)||0);
+    const errs=(res.errors||[]);
     let text;
     if(credits||energy||tasks){
       text=`+${credits} 积分 / +${energy} 能量 / ${tasks} 任务`;
+    }else if(errs.length){
+      // 有失败原因时不得显示「今日已领完」，否则用户误以为无任务可做（0.16.3）
+      text=`${errs.length} 项失败`;
     }else{
       text="今日已领完";
     }
     if(balance)text+=`（能量余额 ${balance}）`;
     if(line)line.textContent="成长中心："+text;
-    if(res.errors&&res.errors.length){
-      toast("成长中心部分失败","warn",res.errors.join("; "));
+    if(errs.length){
+      toast("成长中心部分失败","warn",errs.join("; "));
     }else{
       toast("成长中心完成","ok",text);
     }

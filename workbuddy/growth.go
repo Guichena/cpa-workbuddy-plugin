@@ -20,6 +20,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -318,29 +319,80 @@ func fetchGrowthTasks(sa *storedAuth) ([]growthTask, error) {
 	return payload.Tasks, nil
 }
 
+// growthAcceptOutcome 汇总一次批量接单的真实结果：逐条读上游 data.results 的
+// status 判定成败，Errors 按失败原因聚合（含条数），避免逐项铺开撑爆面板与日志。
+type growthAcceptOutcome struct {
+	Accepted int
+	Errors   []string
+}
+
 // acceptGrowthTasks 批量接单，按 growthAcceptBatchSize 自动分批。
-// [参数] sa：账号凭据；codes：任务码列表（空列表直接返回 nil 不发请求）。
-// [返回] 逐批结果合并后的响应 map 列表；任一批失败即中止并返回错误。
-// 最近修改时间：2026-10-15 21:20:00 新增长任务域端点（TASK-1.3）
-func acceptGrowthTasks(sa *storedAuth, codes []string) ([]map[string]any, error) {
+//
+// 上游对「前置未满足」的任务返回 HTTP 200 + code=0，但把单条失败写在
+// data.results[i].status=error（典型 message 为 "prerequisite not met:
+// first_buddy (no buddy instance found)"）。只看状态码会把这类失败全部虚报为
+// 接单成功，生产账号 700fd592 连续 6 轮恒报 14 accepted 即由此而来（0.16.3）。
+// results 缺失或为空时无法逐条判定，回退按整批成功计数。
+// [参数] sa：账号凭据；codes：任务码列表（空列表直接返回零值不发请求）。
+// [返回] 逐条汇总结果；任一批传输/业务失败即中止并返回错误（已得计数保留）。
+// 最近修改时间：2026-10-17 01:30:00 逐条读 results 判定接单结果（0.16.3）
+func acceptGrowthTasks(sa *storedAuth, codes []string) (growthAcceptOutcome, error) {
+	var out growthAcceptOutcome
 	// 1. 空列表直接返回，避免发无意义的写请求
 	if len(codes) == 0 {
-		return nil, nil
+		return out, nil
 	}
-	// 2. 按 growthAcceptBatchSize 切批，逐批接单；任一批失败即中止并回传已得结果
-	var out []map[string]any
+	// 2. 逐批接单；按失败原因计数，最后统一聚合成可读错误行
+	failByReason := map[string]int{}
 	for start := 0; start < len(codes); start += growthAcceptBatchSize {
 		end := start + growthAcceptBatchSize
 		if end > len(codes) {
 			end = len(codes)
 		}
-		m, err := growthPostMap(sa, growthPathTasksAccept, map[string]any{"task_codes": codes[start:end]})
+		batch := codes[start:end]
+		m, err := growthPostMap(sa, growthPathTasksAccept, map[string]any{"task_codes": batch})
 		if err != nil {
 			return out, err
 		}
-		out = append(out, m)
+		// 3. 逐条读 results：缺失或空时无逐条信息，回退整批成功
+		results, ok := m["results"].([]any)
+		if !ok || len(results) == 0 {
+			out.Accepted += len(batch)
+			continue
+		}
+		for _, raw := range results {
+			item, _ := raw.(map[string]any)
+			if jsonStr(item, "status") == "error" {
+				failByReason[jsonStr(item, "message")]++
+				continue
+			}
+			out.Accepted++
+		}
+	}
+	// 4. 聚合失败原因：同因合并成一行，附失败条数。原因来自上游 message，
+	//    统一脱敏截断后再落日志与面板，避免回显凭据或撑爆输出（0.16.3）
+	for _, reason := range sortedKeys(failByReason) {
+		n := failByReason[reason]
+		label := reason
+		if label == "" {
+			label = "上游未给出原因"
+		}
+		out.Errors = append(out.Errors, fmt.Sprintf("tasks_accept: %d 项失败：%s", n, truncateRedacted(label, 120)))
 	}
 	return out, nil
+}
+
+// sortedKeys 返回 map 的键按字典序排列，保证聚合错误行顺序稳定可断言。
+// [参数] m：计数 map。
+// [返回] 字典序键切片。
+// 最近修改时间：2026-10-17 01:30:00 逐条读 results 判定接单结果（0.16.3）
+func sortedKeys(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // claimGrowthTask 领取单个已完成任务的奖励。
@@ -712,10 +764,13 @@ func growthRunTasks(sa *storedAuth, res *growthResult) {
 		}
 	}
 	if len(pending) > 0 {
-		if _, acceptErr := acceptGrowthTasks(sa, pending); acceptErr != nil {
+		out, acceptErr := acceptGrowthTasks(sa, pending)
+		// 逐条失败原因一并计入本段错误，避免上游拒绝被静默吞掉（0.16.3）
+		res.Errors = append(res.Errors, out.Errors...)
+		if acceptErr != nil {
 			res.Errors = append(res.Errors, "tasks_accept: "+acceptErr.Error())
-		} else {
-			res.TasksAccepted += len(pending)
+		} else if out.Accepted > 0 {
+			res.TasksAccepted += out.Accepted
 			res.Segments = append(res.Segments, "tasks_accept")
 		}
 	}
