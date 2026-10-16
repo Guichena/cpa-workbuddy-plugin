@@ -61,8 +61,11 @@
   - 周期内最小任务执行顺序：`TASK-01`
   - 进入条件：无（无外部前提）
   - 收口条件：`TASK-01` 实现 + 真实测试 + `6-review` 三项闭环
+  - 状态：**已完成**（本地门禁全过：单测全绿、双哨兵正交精确 FAIL、`gofmt` 空、`POLLUTION: PASS`、`STYLE: PASS`）；生产验证随发布执行
   - 完成标志：同账号在 token 刷新前后 machineId/machineToken/machineType 恒定，且不同账号互不相同
-  - 与前后周期衔接：为 `CYCLE-02` 提供稳定身份基础（若 `CYCLE-02` 需按身份去重，稳定指纹是其前提）
+  - 证据：测试主文档 `doc/5-tests/2026-10-17_024000_qoderwork推理设备指纹稳定派生测试.md`、6-review `doc/6-review/2026-10-17_025000_qoderwork推理设备指纹稳定派生_6-review.md`
+  - 遗留：qoder-ai 同款缺陷（段落 md5 一致）未修，P2 待评估；生产上游接受新指纹未验证，P1 发布后立即验证
+  - 与前后周期衔接：为 `CYCLE-02` 提供稳定身份基础（`CYCLE-02` 已作废，故无下游依赖）
 - 周期 2：
   - 周期序号 / 期次定位：`CYCLE-02` 第二期 —— **⚠️ 已作废（2026-10-17 生产取证证伪）**
   - 作废原因：GAP-01 闭合结论为否定——CN 场景不会返回 `SAME_PERSON_ALREADY_CLAIMED`，服务端改在**活动列表阶段**直接隐藏 `CLAIM_BENEFIT` 活动（6/9 账号列表无该条目），插件侧 `pickCheckinCampaign` 返回 `active=false` 根本不会发起 claim。原计划的失败语义分支在 CN **永不触发**，属死代码。

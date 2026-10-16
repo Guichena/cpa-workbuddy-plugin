@@ -1,5 +1,18 @@
 # QoderWork Plugin Changelog
 
+## 0.9.41
+
+### Feat - 推理设备指纹按账号稳定派生，并补齐签到链路可观测性与面板文案区分
+
+- 变更要点:
+  1. 推理设备标识（`cosy-machineid` / `cosy-machinetoken` / `cosy-machinetype`）由「每次会话随机 UUID」改为「按账号 UID 稳定派生」：同一账号跨 token 刷新与进程重启保持恒定，多账号互相隔离。原实现每次 `newCosySession` 都生成随机值，而 `invalidateCosySession` 在 token 刷新（约每 4 小时）与登录换号时触发会话重建，导致设备标识周期性漂移。派生值刻意复刻原随机值形态（UUID / 43 字符 base64url / 18 位十六进制），以对冲上游可能的格式校验。会话密钥 `TempKey` 保持随机（非设备标识）。
+  2. 签到链路失败可观测性：`fetchCheckinStatus` / `performCheckinCall` 的 7 个失败分支补 `logCheckinFailure`，日志含操作名、账号标识（UID 优先、昵称回退）与失败原因，形态对齐 workbuddy 的 `billing ... failed`。此前签到失败零日志，排障须绕行上游直探。
+  3. 面板区分「活动未下发」与「账号不适用」：`checkinSummary` 新增 `show_campaign` 透传上游 `showCampaign`；签到按钮由二态扩为四态（已签到/签到/未下发/不可签）并补 title 说明；toast 透传后端区分文案。此前两种成因显示同一句「不可签」，易误判为插件缺陷。
+- 验证: 新增 `sign_fingerprint_test.go`（5 例：幂等/隔离/形态兼容/种子回退/令牌刷新不变）、`billing_log_test.go`（4 例）、`checkin_summary_test.go`（4 例）；面板回归脚本扩场景 5/6 共 10 断言。三组哨兵变异均精确 FAIL 目标用例后恢复全绿（指纹侧双哨兵正交：退回随机命中「幂等+令牌不变」、忽略 seed 命中「隔离」）；`cgo-shim-build.py qoderwork` build/vet/test 全绿。
+- 边界说明: 设备指纹变更属**上游可见的行为变更**（同账号 machineId 与 0.9.40 不同），本地无法验证上游风控反应，需发布后做单账号真实推理验证。本改动**不影响签到成功率**——签到链路不发机器头（仅 `Cosy-ClientType` + `User-Agent`），两条链路请求头互不相同。
+- 依据: 生产只读取证发现 9 个 qoderwork 账号中 6 个的 `CLAIM_BENEFIT` 活动被服务端在**列表阶段**隐藏（非领取时拒绝），故原计划的「同人去重失败语义」在 CN 不可达、予以作废（见 `doc/4-bugs/2026-10-17_010000_*`）。
+- 涉及文件: qoderwork/sign.go、qoderwork/sign_fingerprint_test.go、qoderwork/billing.go、qoderwork/billing_log_test.go、qoderwork/checkin.go、qoderwork/checkin_summary_test.go、qoderwork/management.go、qoderwork/panel.html、qoderwork/main.go、qoderwork/VERSION、qoderwork/CHANGELOG.md、test/qoderwork/panel_test_model_repro.mjs
+
 ## 0.9.40
 
 ### Fix - 重建上游 messages 时保留工具调用结构，修复 agent 多轮往返中工具结果失去配对
