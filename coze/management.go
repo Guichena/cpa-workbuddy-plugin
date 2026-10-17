@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -343,12 +344,16 @@ func handleLoginStartFromPanel() ([]byte, error) {
 	loginSessions[state] = &loginSession{startedAt: time.Now()}
 	loginSessionsMu.Unlock()
 
-	// 用 marshalNoHTMLEscape：json.Marshal 默认转义会把脚本里的 `=>`、`'`
-	// 变成 `=&gt;`、`&#39;`，面板复制到的脚本无法执行。
+	// 脚本以 base64 返回：宿主在回写 ManagementResponse.Body 时会再做一次
+	// JSON 序列化并开启 HTML 转义（实测：错误文案里的 `<`、`'` 会变成
+	// `&lt;`、`&#39;`），任何含 `=>`、`'` 的 JS 都会被实体化而无法执行。
+	// base64 不含 HTML 特殊字符，绕开该行为；面板端解码后再展示。
+	script := buildAuthScript(state)
 	payload, _ := marshalNoHTMLEscape(map[string]any{
 		"ok":         true,
 		"state":      state,
-		"script":     buildAuthScript(state),
+		"script":     base64.StdEncoding.EncodeToString([]byte(script)),
+		"encoding":   "base64",
 		"expires_in": int(loginStateTTL.Seconds()),
 	})
 	return makeHTTPResponse(http.StatusOK, payload)

@@ -267,6 +267,13 @@ async function refresh() {
 
 let currentScript = "";
 
+function decodeBase64Utf8(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
 async function genScript() {
   const btn = document.getElementById("genScript");
   btn.disabled = true;
@@ -277,8 +284,11 @@ async function genScript() {
       showMsg("生成失败：" + ((data && data.error) || "响应缺少 state 或 script"), "err");
       return;
     }
-    currentScript = data.script;
-    document.getElementById("scriptBox").textContent = data.script;
+    // 宿主回写响应时会对 body 做一次带 HTML 转义的 JSON 序列化，
+    // 含 `=>` / `'` 的脚本会被实体化；服务端以 base64 下发，这里解码还原。
+    const script = data.encoding === "base64" ? decodeBase64Utf8(data.script) : data.script;
+    currentScript = script;
+    document.getElementById("scriptBox").textContent = script;
     document.getElementById("copyScript").disabled = false;
     showMsg("脚本已生成，请在 15 分钟内到扣子页面执行。", "ok");
   } catch (e) {

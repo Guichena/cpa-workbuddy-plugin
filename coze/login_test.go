@@ -513,21 +513,20 @@ func TestHandleLoginCallback_ReplayIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestLoginStartFromPanel_ScriptNotEscaped 验证面板授权入口的脚本不被实体化。
+// TestLoginStartFromPanel_ScriptBase64 验证面板授权入口以 base64 下发脚本。
 //
-// 这是生产实测发现的真实缺陷：handleLoginStartFromPanel 用 json.Marshal
-// 生成 payload（默认 HTML 转义），导致脚本里的 `=>`、`'` 变成实体，
-// 面板复制后无法执行。此前的信封级用例覆盖不到这条路径。
+// 生产实测：宿主回写 ManagementResponse.Body 时会再做一次带 HTML 转义的
+// JSON 序列化（错误文案里的 `<`、`'` 实测变成 `&lt;`、`&#39;`），插件侧
+// 关掉自己的转义也无济于事。因此脚本必须以 base64 下发，面板端解码。
 // [参数] t: 测试上下文。
 // [返回] 无。
-// 最近修改时间：2026-10-18；改动原因：新增，面板授权入口转义回归用例。
-func TestLoginStartFromPanel_ScriptNotEscaped(t *testing.T) {
+// 最近修改时间：2026-10-18；改动原因：新增，base64 下发契约用例。
+func TestLoginStartFromPanel_ScriptBase64(t *testing.T) {
 	raw, errStart := handleLoginStartFromPanel()
 	if errStart != nil {
 		t.Fatalf("生成授权会话失败：%v", errStart)
 	}
 
-	// 信封里的 Body 是 []byte，JSON 序列化为 base64；先解出真正的响应体。
 	var env struct {
 		OK     bool `json:"ok"`
 		Result struct {
@@ -543,16 +542,14 @@ func TestLoginStartFromPanel_ScriptNotEscaped(t *testing.T) {
 	}
 	body := string(decoded)
 
-	for _, entity := range []string{"&gt;", "&#39;", "&amp;"} {
-		if strings.Contains(body, entity) {
-			t.Fatalf("响应不得包含 HTML 实体 %q，实际 %s", entity, body)
+	if !strings.Contains(body, `"encoding":"base64"`) {
+		t.Fatalf("响应应声明 encoding=base64，实际 %s", body)
+	}
+	// 原始 body 里不得出现任何 JS 片段——出现即说明未编码，会被宿主转义。
+	for _, fragment := range []string{"=>", "'include'", "async()"} {
+		if strings.Contains(body, fragment) {
+			t.Fatalf("响应体不应包含明文脚本片段 %q，实际 %s", fragment, body)
 		}
-	}
-	if !strings.Contains(body, "=>") {
-		t.Fatalf("脚本中的 => 应原样保留，实际 %s", body)
-	}
-	if !strings.Contains(body, "credentials:'include'") {
-		t.Fatalf("脚本单引号应原样保留，实际 %s", body)
 	}
 }
 
