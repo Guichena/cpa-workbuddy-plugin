@@ -20,17 +20,32 @@
 - 状态：活跃维护中。9 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
   - `zcode-provider`: **0.1.31**（面板额度改为逐模型独立进度条（GLM-5.3 / GLM-5.3-Flash 各一条）并移除「过期」等冗余信息；0.1.30 面板额度改用 `billing/balance` 取真实已用/剩余 + 领取失败文案友好化；0.1.29 修复面板无感验证 captcha 配置缺陷；0.1.28 面板内无感验证领取 Start Plan + OAuth 默认中国区）
   - `cursor-provider`: **0.1.6**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
-  - `qoderwork-provider`: **0.9.40**（0.9.40 重建上游 messages 时保留工具调用结构修复 agent 多轮往返工具结果失配对；0.9.38 签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.9.37 tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷）
-  - `qoder-ai-provider`: **0.1.20**（0.1.20 重建上游 messages 时保留工具调用结构修复 agent 多轮往返工具结果失配对；0.1.18 签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.1.17 tools 对齐修复；0.1.15 max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册）
+  - `qoderwork-provider`: **0.9.44**（0.9.44 流式中途断流零泄漏换号重试 + 断流信封补 `http_status=502` + 冷却落盘失败可观测与内存兜底；0.9.40 重建上游 messages 时保留工具调用结构修复 agent 多轮往返工具结果失配对；0.9.38 签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.9.37 tools 对齐修复；0.9.35 max_tokens 统一 32768 最低输出底线；0.9.34 上游 110 日调用上限 24 小时持久化冷却 + 路由/换号排除 + 面板解冷）
+  - `qoder-ai-provider`: **0.1.24**（0.1.24 流式中途断流零泄漏换号重试 + 断流信封补 `http_status=502`；0.1.20 重建上游 messages 时保留工具调用结构修复 agent 多轮往返工具结果失配对；0.1.18 签到节奏恢复每 4 小时六槽 + 移除冗余门控；0.1.17 tools 对齐修复；0.1.15 max_tokens 统一 32768 最低输出底线；0.1.14 上游 110 日调用上限 24 小时持久化冷却 + 补齐 /clear-cooldown 路由注册）
   - `traework-provider`: **0.2.13**（面板签到时刻文案漂移修正为 00/04/08/12/16/20；0.2.12 定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.2.11 max_tokens 32768 底线 + payload 层同步，探活改全量模型按序测试）
-  - `workbuddy-provider`: **0.15.10**（面板签到时刻文案漂移修正为 00/04/08/12/16/20；0.15.9 定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.15.8 max_tokens 32768 底线，探活改全量模型按序测试）
-  - `workbuddy-ai-provider`: **0.1.15**（定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.1.14 max_tokens 32768 底线，探活改全量模型按序测试）
-  - `copilot-provider`: **0.1.1**（0.1.1 宿主 OAuth 弹窗改开插件桥接页展示设备码；0.1.0 首发：Device Flow 登录 + 内部令牌 80% 提前保活 + VS Code Copilot Chat 指纹模拟 + 动态模型发现 + 多账号池换号重试 + 流式/非流式转发 + 额度与面板）
+  - `workbuddy-provider`: **0.16.5**（0.16.5 流式中途断流零泄漏换号重试 + 断流信封补 `http_status=502`；0.16.4 账号故障冷却改为 30s 递增阶梯、上限 10 分钟；0.16.3 成长中心接单失败不再虚报成功 + 错误原因可见化；0.16.0 成长中心全自动领奖 7 类玩法，`growth_auto` 默认关闭）
+  - `workbuddy-ai-provider`: **0.1.16**（0.1.16 授权后自动补注册地等新能力；0.1.15 定时探活降频至 4 小时 + 失败也刷新节流时间戳；0.1.14 max_tokens 32768 底线，探活改全量模型按序测试）
+  - `copilot-provider`: **0.1.2**（0.1.2 调度器对齐宿主候选集语义修复越界缺陷，已发布 `0054c28`→`ba471b0`→`bca1264`→`78b4069` 并生产验收：热重载前 5 分钟 50/50 请求告警、热重载后 0/57；0.1.1 宿主 OAuth 弹窗改开插件桥接页展示设备码；0.1.0 首发：Device Flow 登录 + 内部令牌 80% 提前保活 + VS Code Copilot Chat 指纹模拟 + 动态模型发现 + 多账号池换号重试 + 流式/非流式转发 + 额度与面板）
   - `workbuddy-token-usage`: **0.2.8**（0.2.8 让退役实例的 feed 导入协程在连续 3 轮关闭句柄后自行退出；0.2.7 修复宿主配置重载换句柄窗口导致的用量记录丢失；0.2.6 移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细与维度汇总展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
-- 当前时间：2026-10-15 (GMT+8)
+- 当前时间：2026-10-17 (GMT+8)
 
 ## 活动会话进展摘要
+
+- 当前会话（2026-10-17）：**qoder 三插件流式断流换号与冷却落盘修复（CYCLE-01 + CYCLE-02 全部闭环）**：
+  - 需求背景：生产会话 `5fa71566` 中 `qwen-3.8-flash` 请求（ID `202610171157242386880308268d9d6KQb4LXIN`）上游断流后未换号。根因：插件断流分支无换号路径（主）+ 断流信封无状态码（次）+ 24h 冷却 92 次触发零落盘（独立缺陷）。
+  - **已实施 5 个任务**：qoderwork / workbuddy / qoder-ai 三插件新增 `isStreamReadError` + `shouldRotateOnStreamReadError` 纯函数；异步与同步断流分支接入分级换号（`emitted` 零泄漏守卫）；信封补 `http_status=502`（已泄漏时抑制）；qoderwork 冷却落盘失败补日志 + 内存冷却提前到 host RPC 之前 + watchdog 刷新合并保留未落盘条目。
+  - **验证**：三插件 cgo-shim 全绿（qoderwork 10.05s / workbuddy 26.14s / qoder-ai 10.14s）；8 次哨兵反证均精确命中单例；5 份 `doc/6-review/` 记录均为 `STYLE: PASS`。
+  - **已发布并生产部署（2026-10-17 22:40）**：qoderwork 0.9.44 / workbuddy 0.16.5 / qoder-ai 0.1.24；提交链 `d035e5e`(fix 23 文件) → `a47d5ad`(CI FreeBSD 14.4 镜像修复) → `f467b4d`(assets 24) → `6535ca5`(registry) → `d8faa83`(prune 0.14GB)。远端 21/21 artifacts ALL PASS 无残留；三插件 `plugin hot reloaded` 且 `active_version` 命中目标版本、落盘 `.so` sha256 与本地 zip 逐字节一致、panel/accounts 全 200，**零容器重启**（容器 Up 2 days）。
+  - **CI 阻断修复（既有缺陷，非本轮引入）**：`go-cross/cgo-actions@v1` 内硬编码下载 FreeBSD `14.3-RELEASE/base.txz`，该版本已从 `download.freebsd.org/releases` 下线（404），既有 patch 指向的 `archive.freebsd.org/old-releases` 同样 404，导致全部 10 插件 freebsd-amd64 构建失败并连带 `Release` job 被 skipped。已改为在 wget 包装层把 `14.3-RELEASE` 改写为仍可用的 `14.4-RELEASE`。
+  - **生产验收边界**：热重载后 15 分钟窗口内无断流事件，端到端「断流 → 换号 → 第二次成功」未能实证；已改为确认新符号 `shouldRotateOnStreamReadError` / `after partial output` / `daily cooling persist failed` 已进入三插件生产二进制（qoderwork 另含 `mergeActiveDailyCooling`），服务 `/v1/models` 200、无 error/panic 日志。后续需在真实断流发生时观察日志。
+  - 文档：`doc/4-bugs/2026-10-17_202500_qoderwork流式中途断流不换号且24h冷却未落盘根因诊断.md`、`doc/3-实施/2026-10-17_203500_qoder三插件流式断流换号与冷却落盘修复实施总览.md`（§14 记录执行结果与偏差）。
+- 上一会话（2026-10-15）：**跨插件同步第二轮复检（只读审计）+ 两份计划文档更新**：
+  - 需求背景：用户「已经改了很多版本了，再次检查，还有哪些需要同步的，更新计划」。本轮以文件级 md5 对比 + 机制分布 grep + 版本矩阵复核对全部 9 插件做跨维度审计。
+  - **审计结论**：原同步目标（批次 A~D）全部闭环且被后续演进自然覆盖；5 个 Scheduler 插件 `handleSchedulerPick` 同构，copilot 已随 0.1.2（`0054c28`）补齐 `candidateDisabled`。
+  - **新登记 G1~G4**：G1（修复，建议优先）zcode `handleSchedulerPick` 越界缺陷——与 copilot 已诊断缺陷同款（忽略 `req.Candidates` 直接返回 `pickActiveAuth().AuthID`，ID 不带 `.json`），当前因调度器在任者是 copilot 而潜伏；G2（评估）http_status 通道推广；G3（需求）copilot 用量上报；G4（低优先级）token-usage-tracker 补 `traework` 显示映射分支。
+  - **文档更新**：`doc/3-实施/2026-10-10_235000_*同步workbuddy路由能力实施总览.md`（新增「〇之二、第二轮复检」节：原目标复核 + 7 条新事实 + 版本矩阵 + G1~G4 登记）与 `doc/3-实施/2026-10-11_043000_九大插件全景架构与演进计划总览.md`（八大→九大插件、copilot 行新增、矩阵重写、G1~G4 路线图）。
+  - 未决：G1 修复是否立即实施待用户裁定；copilot 0.1.2 与五插件冷却全灭语义统一改动待提交（并行会话在途）。
 
 - 当前会话（2026-10-15）：**qoder 双插件重建上游 messages 保留工具调用结构（qoderwork 0.9.40 / qoder-ai 0.1.20），全链路发布生产**：
   - 需求背景：会话 `3ed4dd9f-109e-404e-8757-81b6d46d7ce1` 用 `qwen-3.8-flash` 时「推理老是突然推理一点点就结束、要不停继续提问」。根因诊断（`doc/4-bugs/2026-10-15_193641_*`）：主因是模板 `baseprompt.json` agent 会话上下文（无条件上行），放大器是插件重建 messages 只搬 `role`+`content`、丢掉 `assistant.tool_calls` 与 `tool.tool_call_id`。
@@ -60,15 +75,7 @@
   - 门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板回归 PASS；哨兵变异（回退为单条汇总条）精确 FAIL 2 项后恢复全绿；`gofmt -l` LF 归一后空；`POLLUTION: PASS`；`STYLE: PASS`（`doc/6-review/2026-10-15_034500_*`）。
   - 文档：测试主文档 `doc/5-tests/2026-10-15_034500_zcode面板额度逐模型进度条测试.md`、6-review `doc/6-review/2026-10-15_034500_zcode面板额度逐模型进度条_6-review.md`。
 
-- 上一会话（2026-10-15）：**zcode-provider 面板额度改用 `billing/balance` 取真实用量 + 领取失败文案友好化（0.1.30），全链路发布生产**：
-  - 需求背景：用户报两个生产问题——① 面板点「🎁 领取额度」toast 显示 `claim failed: no permission`；② 生产多个账号额度已被消耗，但面板额度从不刷新、恒显示最满（绿色进度条 100%）。
-  - **问题②根因**：额度数据源 `GET /api/v1/zcode-plan/billing/current` **只返回授予量 `grant_units`，没有任何已用/剩余字段**；面板 `quotaHTML` 还硬编码 `width:100%`。真实用量在 `GET /api/v1/zcode-plan/billing/balance?app_version=<v>`（`data.balances[]` 含 `total_units`/`used_units`/`remaining_units`/`available_units`），该端点**强制要求设备三头** `X-Platform` / `X-Device-Mid` / `X-ZCode-App-Version`，缺任一 → `400 code 3001 parameter error`——这正是此前误判「balance 不可用」的原因。
-  - **问题①根因**：上游 `billing/preview` 当前对全部账号返回 `plans:[]`（未下发可领取计划），claim 走 fallback planId 被上游业务层拒为英文 `no permission`，属**上游活动态非插件缺陷**。
-  - **0.1.30 实施（10 文件）**：① `quota.go` — `fetchAccountQuota` 改为**主走 balance**（携带设备三头 + `app_version`）取真实已用/剩余，失败回退 current；快照新增 `total_used`/`total_remain`/`has_usage`/`source` 与逐 entitlement 用量字段；新增 `fetchQuotaFromEndpoint(jwt, endpoint, withUsage)` / `balanceEndpoint()` / `balanceURLForTest`。② `panel.html` — `quotaHTML` 按「剩余/授予」渲染进度条（≤30% 转黄、≤10% 转红），卡片与汇总区展示「已用/剩余」，无用量通道时标注「每日授予额度（暂未取到用量）」并以半透明满格条区分。③ `management.go` — 新增 `friendlyClaimError()` 把 `no permission`/`1003`/`1001` 翻译为可读中文。④ 测试 `quota_test.go` 新增 `TestFetchAccountQuota_ParsesBalanceUsage` / `TestFriendlyClaimError`，`TestFetchAccountQuota_ParsesPlan` 改为验证 balance→current 回退。
-  - **发布闭环**：提交 `a49101a`(fix 10 文件) → CI `38607038707` success → `1b80e6f`(assets 7/7 sha256 OK) → `6fd166d`(registry)；远端 raw URL 全部 200；生产热重载 `active_version=0.1.30 retired_version=0.1.29`，**零容器重启**。
-  - **生产验证**：`/credits` 返回 `source=balance has_usage=True` 且用量真实（`zcode-1185ceb16c25ae48` used=5000221 remain=2999779；`zcode-d7a0cb4afa8f77c0` used=5000019 remain=2999981）；逐 entitlement 明细 `GLM-5.3 used=19 remaining=2999981` / `GLM-5.3-Flash used=5000000 remaining=0`，确认关联正确；两种 device-mid 返回相同数据，证明设备中间层不影响用量。
-  - 门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；哨兵变异（禁用用量解析）精确 FAIL 后恢复全绿；`gofmt -l` LF 归一后空；`POLLUTION: PASS`；`STYLE: PASS`（`doc/6-review/2026-10-15_025500_*`）。
-  - 文档：Bug 主文档 `doc/4-bugs/2026-10-15_023000_zcode面板额度永远显示满额根因诊断.md`、测试主文档 `doc/5-tests/2026-10-15_024500_zcode面板额度真实用量修复测试.md`；知识库《Z.ai-ZCode-OAuth授权契约》新增第七节 billing/balance 用量契约。
+- 会话（2026-10-15，已压缩）：**zcode-provider 0.1.30 面板额度改用 `billing/balance` 取真实用量**：根因是 `billing/current` 只返回授予量、无已用/剩余，且面板进度条硬编码 100%；改走 balance（强制设备三头 `X-Platform`/`X-Device-Mid`/`X-ZCode-App-Version`）+ `friendlyClaimError` 文案友好化；发布链 `a49101a`→`1b80e6f`(assets)→`6fd166d`(registry)，生产热重载零重启，`/credits` 返回 `source=balance has_usage=True` 且用量真实。Bug 文档 `doc/4-bugs/2026-10-15_023000_zcode面板额度永远显示满额根因诊断.md`。
 
 - 会话（2026-10-14/15）：**zcode-provider 默认中国区 + 面板内无感验证领取额度（0.1.28 新增 → 0.1.29 修复配置缺陷），全链路发布生产**：
   - 需求背景：用户要求「默认中国区，OAuth 登录页也默认中国区授权」，并「通过逆向工程激活额度，不用手动去 zcode 客户端登录激活」；经确认范围收敛为「只做无感验证（不做交互滑块）」+「先预研可行性」。
@@ -106,20 +113,7 @@
     4. **生产热重载**：四插件 `plugin-store install` 均 `restart_required=false`、日志确认 `plugin hot reloaded`（workbuddy 0.15.8→0.15.9、workbuddy-ai 0.1.14→0.1.15、traework 0.2.11→0.2.12、zcode 0.1.22→0.1.24 直上），落盘 `.so` sha256 与本地 zip 逐字节一致，accounts/panel 全 200，**零容器重启**。
   - 门禁：四插件 `cgo-shim-build.py` build/vet/test 全绿 + 哨兵反证测试真实进编译。
 
-- 会话（2026-10-14）：**zcode-provider 0.1.22：纠正「激活开通」错误承诺，改为如实的 Start Plan 领取指引并全链路发布生产**：
-  - 需求背景：用户拍板只做「📖 领取指引」形态——授权登录本身就已完成账号绑定，每日额度的领取是官方在 ZCode 客户端内的独立一步，插件不该承诺「点击即下发额度」。
-  - 根因实证（推翻上一轮「激活」语义）：官方每日 800 万 Start Plan 并非授权登录时自动下发，而是由 ZCode 桌面客户端内的服务端活动弹窗引导用户**手动领取**（`POST /api/v1/zcode-plan/billing/claim`），该接口强制校验阿里云人机验证头（`X-Aliyun-Captcha-Verify-Param`，`captcha.enabled=true`，sceneId `11xygtvd`）；无头 / 伪造验证头 / 换 token 一律 `400 3007 captcha verify failed`，网页端与插件端均无领取入口。另实测推翻旧结论：`authorize` 层不做 redirect_uri 白名单（三臂候选均 307 通过）。
-  - 实施（v0.1.22，仅 5 个 zcode 文件）：
-    1. 卡片未领取态徽标「未激活」→「未领取」，按钮「⚡ 激活开通」→「📖 领取指引」（`data-action="guide"`）；
-    2. 新增 `guideModal` 领取指引弹窗（官方领取四步 + 「刷新额度」复查），移除失效的 `activateAccount` 一键下发交互；
-    3. `handleActivatePoll` 与 OAuth 弹窗成功文案统一为「授权登录成功」语义，`quotaHTML` 未领取文案同步；
-    4. 面板脚本语法、事件链（action↔handler）静态校验全通过；`python scripts/cgo-shim-build.py zcode` build/vet/test 全绿。
-  - 发布与生产闭环：
-    1. **提交链**：`9655225`(fix 5 文件) → CI run `38439920222` 64/64 success → `d859616`(8 assets) → `2d6d7f8`(registry) → `0cd3060`(prune 0.1.21)；
-    2. **远端验证**：0.1.22 七平台 artifacts sha256+size 7/7 ALL PASS；远端 0.1.22 raw URL 200、0.1.21 已 404；
-    3. **生产热重载**：`plugin-store/zcode-provider/install?version=0.1.22` → `status=installed, restart_required=false`；宿主日志 `plugin hot reloaded active_version=0.1.22 retired_version=0.1.21`，**零容器重启**（容器 Up 4 hours）；落盘 `.so` sha256 `d5d10e85…` 与本地 linux_amd64 zip 逐字节一致；
-    4. **生产验收**：`/v0/resource/plugins/zcode-provider/panel` 200（70,280 字节）且新文案生效（`领取指引`×7、`guideModal`×7、旧文案 `激活开通`/`activateAccount` 均为 0）；accounts 200（3 账号）。
-  - 说明：上一轮 0.1.21 已由并行会话发布完毕（registry/GitHub release/release-assets 三处一致），故本轮直接发 0.1.22，无版本冲突。
+- 会话（2026-10-14，已压缩）：**zcode-provider 0.1.22 领取指引**：纠正「激活开通」错误承诺，改为如实 Start Plan 领取指引（`guideModal`），提交链 `9655225`→`d859616`(assets)→`2d6d7f8`(registry)→`0cd3060`(prune 0.1.21)；根因实证：额度领取须官方客户端内手动完成（claim 接口强制阿里云人机验证头，无头一律 `400 3007`），`authorize` 层不做 redirect_uri 白名单（三臂 307 通过）。
 
 - 当前会话（2026-10-15）：**copilot-provider 0.1.1：宿主 OAuth 弹窗改开插件桥接页展示设备码，全链路发布生产**：
   - 需求背景：用户在管理台点「登录」后，GitHub 授权页 8 个空白框需手输设备码，但宿主 OAuth 弹窗**不显示设备码**（附截图）。根因：宿主 `ServePluginAuthURL`（`auth_files_oauth_callback.go:218`）把插件 start 响应的 `Metadata` 只写进宿主 session store、**不回传前端**，硬编码返回 `{status,url,state}`；宿主内置 provider 是把 `user_code` 放响应顶层才显示，插件无法照做。用户采纳「选项 B：桥接页」方案。
@@ -167,7 +161,7 @@
 {
   "version": 5,
   "registry_schema": "task_plan_projection_registry",
-  "registry_updated_at": "2026-10-15T07:20:00Z",
+  "registry_updated_at": "2026-10-17T13:26:54.757596Z",
   "projections": [
     {
       "projection_id": "SESSION/30608b3616fa2311bfb720a2776c09ac96b2738601ec3752b03a252c810cdb70",
@@ -237,82 +231,6 @@
           "id": "TASK-004",
           "step": "[TASK-004] 发布与生产部署验证：commit/push/CI/资产入库/registry/热重载验收",
           "status": "pending"
-        }
-      ]
-    },
-    {
-      "projection_id": "SESSION/20e8ec46dba59302295da066dda5bf5a2a66b4529a4bae4bb9cdc4698f67c8d1",
-      "session_id": "01a11ba7-3193-7ab0-9618-11075ecaba63",
-      "projection_origin": "synthesized",
-      "synthesis_mode": "exact",
-      "state": "inactive",
-      "plan_key": "IMPL-TOKEN-USAGE-PERF-ICON-20261008",
-      "source_document": "doc/3-实施/2026-10-08_Token用量面板性能优化与插件图标修复实施总览.md",
-      "plan_fingerprint": "e41673af031195fb8992a957a1a20efa15ce3eac1bf8bc3dee3e5f2c8de406cc",
-      "updated_at": "2026-10-08T17:23:47.766782Z",
-      "steps": [
-        {
-          "id": "TASK-001",
-          "step": "[TASK-001] 后端移除 SSE 通道（路由、函数、通知序列、测试同步）",
-          "status": "completed"
-        },
-        {
-          "id": "TASK-002",
-          "step": "[TASK-002] 面板前端改造（去自动刷新、新增 last_1_hour、本地化）",
-          "status": "completed"
-        },
-        {
-          "id": "TASK-003",
-          "step": "[TASK-003] 图标资产与注册（新图标入库、Logo URL、registry logo）",
-          "status": "completed"
-        },
-        {
-          "id": "TASK-004",
-          "step": "[TASK-004] 版本与文档收口（VERSION/main.go bump、6-review、测试文档）",
-          "status": "completed"
-        },
-        {
-          "id": "TASK-005",
-          "step": "[TASK-005] 发布与生产部署验证",
-          "status": "completed"
-        }
-      ]
-    },
-    {
-      "projection_id": "SESSION/6d9b35f8481be4fb66fbe631557cd5e155caef128cb55e64f7b4d110746dca96",
-      "session_id": "01a11b9b-eb7d-7830-afed-7c8dd64c6629",
-      "projection_origin": "synthesized",
-      "synthesis_mode": "exact",
-      "state": "inactive",
-      "plan_key": "IMPL-WBAI-CHECKIN-20261008",
-      "source_document": "doc/3-实施/2026-10-08_WorkBuddyAI国际版签到改造实施总览.md",
-      "plan_fingerprint": "6cd82fd431385b7bf05b43a41d7600cfc93bd4126cc463516ef891fb986687b5",
-      "updated_at": "2026-10-08T20:50:04.091579Z",
-      "steps": [
-        {
-          "id": "TASK-001",
-          "step": "[TASK-001] 后端签到数据链路：新增 checkin.go，扩展缓存 3 路与面板回填",
-          "status": "completed"
-        },
-        {
-          "id": "TASK-002",
-          "step": "[TASK-002] 后端控制面与调度：/checkin 路由、配置开关、调度器合并",
-          "status": "completed"
-        },
-        {
-          "id": "TASK-003",
-          "step": "[TASK-003] 面板签到改造与 vm 回归脚本",
-          "status": "completed"
-        },
-        {
-          "id": "TASK-004",
-          "step": "[TASK-004] 文档与版本收口：bump 0.1.8、6-review",
-          "status": "completed"
-        },
-        {
-          "id": "TASK-005",
-          "step": "[TASK-005] 发布与生产部署验收",
-          "status": "completed"
         }
       ]
     },
@@ -408,50 +326,95 @@
       ]
     },
     {
-      "projection_id": "SESSION/eccae029046a47a1a6f9f417e5d06b29queueframefailover000000000000000000",
-      "session_id": "eccae029-046a-47a1-a6f9-f417e5d06b29",
-      "projection_origin": "synthesized",
-      "synthesis_mode": "exact",
-      "state": "active",
-      "plan_key": "FIX-QODER-QUEUE-FRAME-CLASSIFY-20261015",
-      "source_document": "doc/4-bugs/2026-10-15_160000_Qoder排队帧被误判账号级故障且跨provider状态码通道缺失根因诊断.md",
-      "plan_fingerprint": "queue-frame-classify-and-status-channel-20261015",
-      "updated_at": "2026-10-15T09:40:00Z",
+      "projection_id": "SESSION/4c4dab02fd732c0d17940754bc3095a8a25815699011645d49b517efc9cac1bb",
+      "session_id": "75082e35-bf34-49e3-8ec9-d8c884098190",
+      "projection_origin": "persisted",
+      "synthesis_mode": "none",
+      "state": "inactive",
+      "plan_key": "FIX-QODER-STREAM-READ-FAILOVER-20261017",
+      "source_document": "doc/3-实施/2026-10-17_203500_qoder三插件流式断流换号与冷却落盘修复实施总览.md",
+      "plan_fingerprint": "f9fba8f7e10ccf53f10814cc188a002c7c92165a7c6c4561909339e3c52a3b70",
+      "updated_at": "2026-10-17T13:26:54Z",
       "steps": [
         {
           "id": "TASK-001",
-          "step": "[TASK-001] Bug 单落盘：排队帧误判账号级 + 跨 provider 通道缺失",
+          "step": "[TASK-001] qoderwork 零泄漏断流换号：断流分支接入换号决策与重建请求",
           "status": "completed"
         },
         {
           "id": "TASK-002",
-          "step": "[TASK-002] 第1步：排队帧不再误判为账号级故障",
+          "step": "[TASK-002] qoderwork 断流错误信封补 http_status=502",
           "status": "completed"
         },
         {
           "id": "TASK-003",
-          "step": "[TASK-003] 第2步：envelopeError 补 http_status 打通宿主状态码通道",
+          "step": "[TASK-003] qoderwork 冷却落盘失败补日志并保留内存冷却兜底",
           "status": "completed"
         },
         {
           "id": "TASK-004",
-          "step": "[TASK-004] 宿主侧改动计划：异步流错误通道透传状态码",
+          "step": "[TASK-004] workbuddy 断流换号并新增信封状态码通道",
           "status": "completed"
         },
         {
           "id": "TASK-005",
-          "step": "[TASK-005] 真实测试：单测 + 必失败哨兵 + cgo-shim 全绿",
-          "status": "completed"
-        },
-        {
-          "id": "TASK-006",
-          "step": "[TASK-006] 6-review + 发布 + 生产热重载验收",
+          "step": "[TASK-005] qoder-ai 断流换号与信封状态码扩展",
           "status": "completed"
         }
       ]
     }
   ],
-  "quarantined_projections": []
+  "quarantined_projections": [
+    {
+      "reason_code": "invalid_projection",
+      "affected_session_id": "eccae029-046a-47a1-a6f9-f417e5d06b29",
+      "source_version": 5,
+      "source_index": 6,
+      "raw_entry": {
+        "projection_id": "SESSION/eccae029046a47a1a6f9f417e5d06b29queueframefailover000000000000000000",
+        "session_id": "eccae029-046a-47a1-a6f9-f417e5d06b29",
+        "projection_origin": "synthesized",
+        "synthesis_mode": "exact",
+        "state": "active",
+        "plan_key": "FIX-QODER-QUEUE-FRAME-CLASSIFY-20261015",
+        "source_document": "doc/4-bugs/2026-10-15_160000_Qoder排队帧被误判账号级故障且跨provider状态码通道缺失根因诊断.md",
+        "plan_fingerprint": "queue-frame-classify-and-status-channel-20261015",
+        "updated_at": "2026-10-15T09:40:00Z",
+        "steps": [
+          {
+            "id": "TASK-001",
+            "step": "[TASK-001] Bug 单落盘：排队帧误判账号级 + 跨 provider 通道缺失",
+            "status": "completed"
+          },
+          {
+            "id": "TASK-002",
+            "step": "[TASK-002] 第1步：排队帧不再误判为账号级故障",
+            "status": "completed"
+          },
+          {
+            "id": "TASK-003",
+            "step": "[TASK-003] 第2步：envelopeError 补 http_status 打通宿主状态码通道",
+            "status": "completed"
+          },
+          {
+            "id": "TASK-004",
+            "step": "[TASK-004] 宿主侧改动计划：异步流错误通道透传状态码",
+            "status": "completed"
+          },
+          {
+            "id": "TASK-005",
+            "step": "[TASK-005] 真实测试：单测 + 必失败哨兵 + cgo-shim 全绿",
+            "status": "completed"
+          },
+          {
+            "id": "TASK-006",
+            "step": "[TASK-006] 6-review + 发布 + 生产热重载验收",
+            "status": "completed"
+          }
+        ]
+      }
+    }
+  ]
 }
 ```
 <!-- END TASK PLAN PROJECTION -->
