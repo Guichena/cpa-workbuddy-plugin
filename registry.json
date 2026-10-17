@@ -713,27 +713,6 @@
           }
         ]
       }
-    },
-    {
-      "id": "coze-provider",
-      "name": "Coze Provider",
-      "description": "Coze (扣子) account provider for CLIProxyAPI: one-shot same-origin authorization script that trades a login token for session cookies, login-state validation, triple-keyed cookie persistence with rolling token renewal, and a dedicated management panel.",
-      "author": "luode0320",
-      "version": "0.1.0",
-      "repository": "https://github.com/luode0320/cpa-workbuddy-plugin",
-      "logo": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/assets/icons/Coze.png",
-      "homepage": "https://github.com/luode0320/cpa-workbuddy-plugin/tree/main/coze",
-      "license": "MIT",
-      "tags": [
-        "Provider",
-        "Coze",
-        "Authorization",
-        "Management"
-      ],
-      "install": {
-        "type": "direct",
-        "artifacts": []
-      }
     }
   ]
 }
