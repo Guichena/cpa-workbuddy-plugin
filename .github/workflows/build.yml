@@ -853,14 +853,11 @@ jobs:
             qwenwork-provider)     DISPLAY="QwenWork Provider" ;;
           esac
           TITLE="${DISPLAY:-$PLUGIN} v${VERSION}"
-          if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-              git tag -a "${TAG}" -m "Release ${PLUGIN} ${TAG}"
-              git push origin "${TAG}"
-            fi
-          fi
+          # tag 由 gh release create 自动创建（指向当前提交）。
+          # 不在这里 git tag + git push：默认 GITHUB_TOKEN 没有 workflows 权限，
+          # 只要当前提交改过 .github/workflows/ 就会 push 被拒
+          # （refusing to allow a GitHub App to create or update workflow ...）。
+          # 已有 release 时走 upload 分支，同样不需要手动建 tag。
           NOTES=$(cat <<EOF
           ## ${DISPLAY:-$PLUGIN} CPA plugin v${VERSION}
 
