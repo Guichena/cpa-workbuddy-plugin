@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.2 (2026-10-18)
+
+### 修复
+
+- **面板授权脚本仍被 HTML 实体化**（0.1.1 修复不完整）：0.1.1 只改了
+  `okEnvelope`，但 `handleLoginStartFromPanel` 在更早一层用 `json.Marshal`
+  生成 payload，转义发生在那一步，信封层再关转义也无济于事。改为
+  `marshalNoHTMLEscape`。生产复验：0.1.1 的 `login-start` 仍含 26 处
+  `&#39;` / 2 处 `&gt;` / 0 处 `=>`。
+- 补 `TestLoginStartFromPanel_ScriptNotEscaped` 直接打真实入口（此前只有
+  信封级用例，覆盖不到这条路径）。
+
 ## 0.1.1 (2026-10-18)
 
 ### 修复

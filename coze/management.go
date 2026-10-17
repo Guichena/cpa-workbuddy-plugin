@@ -343,7 +343,9 @@ func handleLoginStartFromPanel() ([]byte, error) {
 	loginSessions[state] = &loginSession{startedAt: time.Now()}
 	loginSessionsMu.Unlock()
 
-	payload, _ := json.Marshal(map[string]any{
+	// 用 marshalNoHTMLEscape：json.Marshal 默认转义会把脚本里的 `=>`、`'`
+	// 变成 `=&gt;`、`&#39;`，面板复制到的脚本无法执行。
+	payload, _ := marshalNoHTMLEscape(map[string]any{
 		"ok":         true,
 		"state":      state,
 		"script":     buildAuthScript(state),
