@@ -1,5 +1,19 @@
 # QoderWork Plugin Changelog
 
+## 0.9.43
+
+### Feat - 面板布局对齐 WorkBuddy：容器加宽、卡片放大
+
+- 变更要点:
+  1. 容器宽度：`.wrap` 由 `max-width:1100px;padding:24px 16px` 调整为 `max-width:1400px;padding:24px 20px`，与 WorkBuddy 面板同值。CPA 管理台内嵌（约 1264px 视口）时两侧空白由各 82px 收窄至 0。
+  2. 卡片尺寸：`.grid` 由 `repeat(auto-fill,minmax(320px,1fr));gap:14px` 调整为 `repeat(auto-fill,minmax(360px,1fr));gap:16px`。1264 视口下卡片宽度由 345px 增至 395px，1600 视口下由 345px 增至 441px，与 WorkBuddy 逐像素一致。
+  3. 窄屏保护：不采用固定三列，因 QoderWork 卡片徽标最多 5 个，760px 视口下固定三列会把卡片压到 227px 并撑破徽标行（实测页面横向滚动至 820px）；`auto-fill` + 360px 下限让窄屏自动降为 2 列 / 1 列。
+  4. 按钮行兜底：`.actions` 增加 `flex-wrap:wrap`，六个操作按钮在极窄容器下换行而非横向溢出。
+- 验证: `cgo-shim-build.py qoderwork` build/vet/test 全绿；agent-browser + Chromium 实测 760/900/1050/1264/1400/1600/1920 七个视口均无页面与卡片横向溢出；两个内联 `<script>` 块 `new Function()` 编译通过。
+- 边界说明: 纯 CSS 改动，不涉及账号、积分、签到、路由与冷却逻辑；未在真实 CPA 管理台内嵌环境验证，需发布后在管理台确认实际 iframe 宽度下的效果。
+- 依据: 用户反馈——QoderWork 面板两侧空白过多，要求参考 WorkBuddy 面板加宽并放大账号卡片。
+- 涉及文件: qoderwork/panel.html、qoderwork/main.go、qoderwork/VERSION、qoderwork/CHANGELOG.md
+
 ## 0.9.42
 
 ### Fix - 0 积分不再等同不可用：退出路由排除与自动禁用，仅保留冷却机制
