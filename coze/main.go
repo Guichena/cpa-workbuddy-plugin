@@ -65,7 +65,7 @@ const (
 
 var (
 	// version 当前插件版本号。
-	version      = "0.1.3"
+	version      = "0.2.0"
 	hostAPI      *C.cliproxy_host_api
 	hostAPIMu    sync.RWMutex
 	activeConfig atomic.Value
@@ -237,12 +237,13 @@ type registrationCapability struct {
 
 // cozeRegistration 返回插件注册元数据与能力声明。
 //
-// CYCLE-00 只落地认证链路：声明 auth_provider + management_api，
-// 不声明 executor / model_provider —— 对话链路（CYCLE-01）尚未实现，
-// 提前声明会让宿主把推理请求路由进来并全部失败。
+// 声明 model_provider 以对外暴露扣子模型目录（对话 / 生图 / 生视频等），
+// 但不声明 executor —— 对话链路（CYCLE-01）尚未实现，提前声明会让宿主
+// 把推理请求路由进来并全部失败。模型目录与推理能力是两件事：
+// 前者只影响模型选择器，后者才决定请求去向。
 // [参数] 无。
 // [返回] 注册结构。
-// 最近修改时间：2026-10-18；改动原因：新增，声明扣子插件认证与面板能力。
+// 最近修改时间：2026-10-18；改动原因：新增模型目录能力，仍不声明 executor。
 func cozeRegistration() registration {
 	return registration{
 		SchemaVersion: pluginabi.SchemaVersion,
@@ -258,7 +259,7 @@ func cozeRegistration() registration {
 			},
 		},
 		Capabilities: registrationCapability{
-			ModelProvider: false,
+			ModelProvider: true,
 			AuthProvider:  true,
 			Executor:      false,
 			Scheduler:     false,
@@ -294,6 +295,12 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 
 	case pluginabi.MethodAuthRefresh:
 		return handleRefreshAuth(request)
+
+	case pluginabi.MethodModelRegister, pluginabi.MethodModelStatic:
+		return modelStatic(request)
+
+	case pluginabi.MethodModelForAuth:
+		return modelForAuth(request)
 
 	case pluginabi.MethodManagementRegister:
 		var regReq pluginapi.ManagementRegistrationRequest

@@ -74,6 +74,8 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/enable", Description: "启用一个扣子账号。"},
 			{Method: http.MethodPost, Path: base + "/disable", Description: "禁用一个扣子账号。"},
 			{Method: http.MethodPost, Path: base + "/renew", Description: "对指定账号执行一轮续期（body: {auth_id}）。"},
+			{Method: http.MethodGet, Path: base + "/models", Description: "列出指定账号可测试的模型（query: auth_id）。"},
+			{Method: http.MethodPost, Path: base + "/test-active", Description: "对单个账号发起一次登录态与模型可见性探活（body: {auth_id, model?}）。"},
 		},
 		Resources: []resourceRoute{
 			{Path: "/panel", Menu: "Coze", Description: "扣子 Provider 管理面板：授权登录、账号管理与续期。"},
@@ -171,9 +173,30 @@ func handleManagement(raw []byte) ([]byte, error) {
 	case method == http.MethodPost && subPath == "/renew":
 		return handleRenewAccount(req.Body)
 
+	case method == http.MethodGet && subPath == "/models":
+		return makeJSONResponse(handleModelsQuery(req))
+
+	case method == http.MethodPost && subPath == "/test-active":
+		return makeJSONResponse(handleTestActive(req))
+
 	default:
 		return makeHTTPResponse(http.StatusNotFound, []byte(`{"error":"not_found"}`))
 	}
+}
+
+// makeJSONResponse 把载荷编码为 UTF-8 JSON 并以 200 返回。
+//
+// 与 makeHTTPResponse 的区别只在入参形态：本函数接收 map 载荷，供
+// /models、/test-active 这类纯数据接口使用，避免每个调用点重复 Marshal。
+// [参数] payload: 响应载荷。
+// [返回] 管理响应信封与错误。
+// 最近修改时间：2026-10-18；改动原因：新增，简化数据型路由的响应构造。
+func makeJSONResponse(payload map[string]any) ([]byte, error) {
+	body, errMarshal := marshalNoHTMLEscape(payload)
+	if errMarshal != nil {
+		return makeHTTPResponse(http.StatusInternalServerError, []byte(`{"error":"响应编码失败"}`))
+	}
+	return makeHTTPResponse(http.StatusOK, body)
 }
 
 // makeHTTPResponse 包装管理 API 的 JSON 响应信封。

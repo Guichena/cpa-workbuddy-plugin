@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.0 (2026-10-18)
+
+### 新增
+
+- **模型动态发现**：声明 `model_provider` 能力并实现 `model.static` /
+  `model.for_auth`。目录来自两个上游端点——`POST /v1/model/list`（按
+  `model_type` 逐类拉取 `llm` / `image_generation` / `video_generation` /
+  `tts` / `asr` / `embedding`）与
+  `POST /api/coze_claw/resource/get_multimodal_model_catalog`（生视频完整族
+  只在这里）。实测单账号 9 个模型：对话 3 / 图像 2 / 视频 1 / 嵌入 1 / 语音 2。
+  管理台 `auth-files` 的「支持的模型」弹窗从此不再显示「该凭证暂无可用模型」。
+- **面板「测试模型」**：新增 `GET /models`（按账号的模型下拉数据源，失败时
+  回落内置清单并在 `notice` 说明原因）与 `POST /test-active`（认证层探活：
+  校验登录态 + 模型可见性 + 账号归属）。真实推理链路需 `claw_id` /
+  `session_id`，属 CYCLE-01。
+- **面板按 workbuddy 风格重做**：账号卡（状态徽章 / 身份字段 / 操作按钮组）、
+  顶部筛选标签与计数、账号汇总卡、搜索、全部启用/禁用、删除二次确认、
+  右上角滑入通知、跟随宿主主题（含暗色）。
+- 账号时间统一按 `Asia/Shanghai` 展示为 `YYYY-MM-DD HH:mm:ss`。
+
+### 变更
+
+- 面板移除「授权扣子账号」引导区：授权统一走宿主「添加账号」弹窗（OAuth
+  桥接页），面板只承担账号运维。
+- `model.static` 不再在宿主启动期发起网络请求，只返回内置种子目录；
+  真实目录由 `model.for_auth` 按账号、按需提供——模型注册在宿主认证加载
+  路径中同步执行，启动期打上游会拖慢宿主。
+- 模型发现改为并发拉取各类型端点，单请求 8 秒超时；缓存按账号分桶，
+  多账号不再互相覆盖。
+
 ## 0.1.3 (2026-10-18)
 
 ### 修复

@@ -5,33 +5,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>扣子 Provider 面板</title>
 <style>
-/* Theme tokens aligned with CPA management panel (key-policy / themes.scss):
-   default :root = light (paper); data-theme=white | dark; embedded iframe syncs parent. */
+/* 主题令牌对齐 CPA 主面板：默认浅色；data-theme=white | dark；嵌入态跟随父页。 */
 :root{
   --bg:#faf9f5;--card:#ffffff;--border:#e3e1db;--fg:#2d2a26;--mut:#6d6760;
   --acc:#4c8dff;--on-acc:#ffffff;--ok:#10b981;--warn:#e0aa14;--err:#c65746;
-  --surface:#f0eee8;--btn-sec:#eef1f6;--btn-sec-hover:#e4e8ef;
+  --surface:#f0eee8;--surface-muted:#e9e6df;--btn-sec:#eef1f6;--btn-sec-hover:#e4e8ef;
   --input-bg:#ffffff;--placeholder:rgba(109,103,96,.55);
   --ok-soft:rgba(16,185,129,.10);--ok-border:rgba(16,185,129,.30);
   --warn-soft:rgba(224,170,20,.12);--warn-border:rgba(224,170,20,.32);
   --err-soft:rgba(198,87,70,.10);--err-border:rgba(198,87,70,.30);
-  --radius-md:12px;--radius-lg:16px;--acc-ring:rgba(76,141,255,.18);
+  --mut-soft:rgba(109,103,96,.12);--mut-border:rgba(109,103,96,.28);
+  --scrim:rgba(45,42,38,.35);--toast-shadow:0 10px 28px rgba(0,0,0,.12),0 0 0 1px rgba(0,0,0,.04);
+  --modal-shadow:0 24px 56px rgba(0,0,0,.18),0 0 0 1px rgba(0,0,0,.04);
+  --acc-ring:rgba(76,141,255,.18);--radius-md:12px;--radius-lg:16px;
   color-scheme:light
 }
 :root[data-theme="white"]{
   --bg:#f5f5f5;--card:#ffffff;--border:#e6e6e6;--fg:#1f1f1f;--mut:#707070;
-  --surface:#fafafa;--btn-sec:#f0f0f0;--btn-sec-hover:#e8e8e8;
+  --surface:#fafafa;--surface-muted:#efefef;--btn-sec:#f0f0f0;--btn-sec-hover:#e8e8e8;
   --input-bg:#ffffff;--placeholder:rgba(112,112,112,.55);
+  --scrim:rgba(0,0,0,.32);--toast-shadow:0 10px 28px rgba(0,0,0,.10),0 0 0 1px rgba(0,0,0,.04);
+  --modal-shadow:0 24px 56px rgba(0,0,0,.16),0 0 0 1px rgba(0,0,0,.04);
   color-scheme:light
 }
 :root[data-theme="dark"]{
   --bg:#1e1d1b;--card:#26241f;--border:#3a3833;--fg:#ede9e3;--mut:#9a948c;
   --acc:#4c8dff;--on-acc:#ffffff;--ok:#34d399;--warn:#f0c050;--err:#e07a6a;
-  --surface:#2f2d28;--btn-sec:#35332e;--btn-sec-hover:#3f3c36;
+  --surface:#2f2d28;--surface-muted:#35332e;--btn-sec:#35332e;--btn-sec-hover:#3f3c36;
   --input-bg:#1e1d1b;--placeholder:rgba(154,148,140,.55);
   --ok-soft:rgba(52,211,153,.12);--ok-border:rgba(52,211,153,.38);
   --warn-soft:rgba(240,192,80,.14);--warn-border:rgba(240,192,80,.38);
   --err-soft:rgba(224,122,106,.12);--err-border:rgba(224,122,106,.38);
+  --mut-soft:rgba(154,148,140,.16);--mut-border:rgba(154,148,140,.32);
+  --scrim:rgba(0,0,0,.55);--toast-shadow:0 10px 28px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.03);
+  --modal-shadow:0 24px 56px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.04);
   --acc-ring:rgba(76,141,255,.28);
   color-scheme:dark
 }
@@ -45,84 +52,198 @@ button{background:var(--acc);color:var(--on-acc);border:0;border-radius:8px;padd
 button.sec{background:var(--btn-sec);color:var(--fg)}
 button.sec:hover{background:var(--btn-sec-hover)}
 button:disabled{opacity:.5;cursor:default}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px}
-.card h2{font-size:14px;margin:0 0 10px;display:flex;align-items:center;gap:8px;justify-content:space-between}
-.card .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin:4px 0;gap:8px}
-.card .row .v{color:var(--fg);text-align:right;word-break:break-all}
-.empty{background:var(--card);border:1px dashed var(--border);border-radius:var(--radius-md);padding:28px;text-align:center;color:var(--mut);font-size:13px}
-.msg{margin-top:14px;padding:10px 14px;border-radius:8px;font-size:13px;display:none}
-.msg.ok{display:block;background:var(--ok-soft);border:1px solid var(--ok-border);color:var(--ok)}
-.msg.err{display:block;background:var(--err-soft);border:1px solid var(--err-border);color:var(--err)}
-.auth{background:var(--card);border:1px solid var(--warn-border);border-radius:var(--radius-md);padding:14px 16px;margin-bottom:16px;display:none}
-.auth .hint{color:var(--mut);font-size:12px;margin-bottom:8px;line-height:1.6}
-.auth .row{display:flex;gap:8px}
-.auth input{flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:7px 11px;color:var(--fg);font-size:13px;outline:none}
-.auth input:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
-.login{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;margin-bottom:16px}
-.login h2{font-size:14px;margin:0 0 6px}
-.login ol{margin:6px 0 12px;padding-left:20px;color:var(--mut);font-size:12px;line-height:1.9}
-.login pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font:12px/1.6 ui-monospace,Consolas,monospace;color:var(--fg);white-space:pre-wrap;word-break:break-all;margin:0;max-height:220px;overflow:auto}
-.login .row{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
-.login .hint{color:var(--mut);font-size:12px;line-height:1.7;margin-top:10px}
-.login .hint code{background:var(--surface);border-radius:4px;padding:1px 5px}
-.badge{font-size:11px;padding:2px 7px;border-radius:999px;white-space:nowrap}
-.badge.on{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border)}
-.badge.off{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
+button.danger{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
+button.danger:hover{background:var(--err);color:#fff}
+.bar .search{max-width:220px;flex:0 1 220px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--fg);font-size:13px;outline:none}
+.bar .search:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
+.bar .search::placeholder{color:var(--placeholder)}
+.filter-bar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.ftag{background:var(--surface);border:1px solid var(--border);color:var(--mut);border-radius:99px;padding:5px 14px;font-size:12px;cursor:pointer;font-weight:600}
+.ftag.active{background:var(--acc);color:var(--on-acc);border-color:var(--acc)}
+.ftag .cnt{font-size:10px;opacity:.75;margin-left:4px}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.card,.summary{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-md)}
+.card{padding:16px}
+.card h2{font-size:15px;margin:0 0 2px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card-del{background:transparent;color:var(--mut);border:0;padding:2px 7px;font-size:16px;line-height:1;border-radius:6px;cursor:pointer;flex:none}
+.card-del:hover{background:var(--err-soft);color:var(--err)}
+.uid{color:var(--mut);font-size:11px;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px dashed var(--border);font-size:12px}
+.row .k{color:var(--mut);flex:none}
+.row .v{font-weight:600;text-align:right;word-break:break-all}
+.badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:99px;white-space:nowrap}
+.badge.ok{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border)}
 .badge.warn{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
-.card .acts{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
-.card .acts button{padding:5px 10px;font-size:12px}
+.badge.off{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border)}
+.actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+.actions button{padding:6px 12px;font-size:12px}
+.summary{padding:16px;margin-bottom:14px}
+.summary-hd{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.summary-title{font-weight:700;font-size:14px}
+.summary-meta{color:var(--mut);font-size:12px}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.summary-item{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.summary-item .k{color:var(--mut);font-size:11px;margin-bottom:4px}
+.summary-item .v{font-size:18px;font-weight:700}
+.summary-item .v.ok{color:var(--ok)}
+.summary-item .v.warn{color:var(--warn)}
+.summary-item .v.muted{color:var(--mut)}
+.loading{color:var(--mut);text-align:center;padding:40px}
+.empty{background:var(--card);border:1px dashed var(--border);border-radius:var(--radius-md);padding:28px;text-align:center;color:var(--mut);font-size:13px}
+.modal-mask{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:9000;padding:16px;backdrop-filter:blur(2px)}
+.modal-mask.show{display:flex}
+.modal{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-lg);width:min(560px,100%);max-height:min(90vh,640px);display:flex;flex-direction:column;box-shadow:var(--modal-shadow)}
+.modal-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)}
+.modal-hd h2{font-size:15px;margin:0;font-weight:600}
+.modal-x{background:transparent;color:var(--mut);padding:4px 10px;font-size:18px;line-height:1}
+.modal-x:hover{color:var(--fg);background:var(--surface-muted)}
+.modal-bd{padding:16px;overflow:auto}
+.modal-bd .hint{color:var(--mut);font-size:12px;margin:0 0 10px;line-height:1.6}
+.modal-bd .hint code{background:var(--surface);color:var(--fg);padding:1px 5px;border-radius:4px;font-size:11px}
+.modal-ft{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--surface);border-radius:0 0 var(--radius-lg) var(--radius-lg)}
+.model-list{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto;border:1px dashed var(--border);border-radius:8px;padding:6px}
+.model-item{display:block;width:100%;text-align:left;background:var(--btn-sec);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;cursor:pointer;word-break:break-all}
+.model-item:hover{background:var(--btn-sec-hover);border-color:var(--acc)}
+.model-item:disabled{opacity:.5;cursor:default}
+.model-item .m-name{font-family:ui-monospace,monospace}
+.model-item .m-meta{color:var(--mut);font-size:11px;margin-top:2px}
+.test-result{margin-top:12px;border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;display:none}
+.test-result.show{display:block}
+.test-result .r-hd{font-weight:600;margin-bottom:6px}
+.test-result .r-hd.ok{color:var(--ok)}
+.test-result .r-hd.err{color:var(--err)}
+.test-result .r-item{color:var(--mut);word-break:break-all;line-height:1.6}
+.toasts{position:fixed;top:16px;right:16px;display:flex;flex-direction:column;gap:10px;z-index:9999;max-width:360px}
+.toast{background:var(--card);border:1px solid var(--border);border-left:4px solid var(--acc);border-radius:var(--radius-md);padding:14px 18px;font-size:13px;box-shadow:var(--toast-shadow);transform:translateX(120%);opacity:0;transition:transform .3s cubic-bezier(.2,.9,.3,1.1),opacity .25s;cursor:pointer;word-break:break-all}
+.toast.show{transform:translateX(0);opacity:1}
+.toast.ok{border-left-color:var(--ok);background:var(--ok-soft)}
+.toast.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+.toast.err{border-left-color:var(--err);background:var(--err-soft)}
+.toast .t{font-weight:600;margin-bottom:3px}
+.toast .d{color:var(--mut);font-size:12px;line-height:1.45}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:5px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:1100px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.grid{grid-template-columns:1fr}}
 </style>
+<script>
+/* 首屏前同步主题：嵌入态跟随父页 data-theme，独立打开时跟随系统偏好。 */
+(function(){
+  var ATTR="data-theme";
+  function embedded(){try{return window.self!==window.top}catch(e){return false}}
+  function apply(t){
+    var el=document.documentElement;
+    if(t==="white"||t==="dark")el.setAttribute(ATTR,t);
+    else el.removeAttribute(ATTR);
+  }
+  function parentTheme(){
+    if(!embedded())return null;
+    try{
+      var raw=window.parent.document.documentElement.getAttribute(ATTR);
+      if(raw==="white"||raw==="dark")return raw;
+      return "light";
+    }catch(e){return null}
+  }
+  function systemTheme(){
+    try{return window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}catch(e){return "light"}
+  }
+  function sync(){apply(parentTheme()||systemTheme())}
+  sync();
+  window.__cozeThemeSync=function(){
+    sync();
+    if(!embedded()){
+      try{
+        var mq=window.matchMedia("(prefers-color-scheme: dark)");
+        var on=function(){sync()};
+        if(mq.addEventListener)mq.addEventListener("change",on);
+        else if(mq.addListener)mq.addListener(on);
+      }catch(e){}
+      return;
+    }
+    try{
+      var parentEl=window.parent.document.documentElement;
+      new MutationObserver(sync).observe(parentEl,{attributes:true,attributeFilter:[ATTR]});
+    }catch(e){}
+  };
+})();
+</script>
 </head>
 <body>
 <div class="wrap">
-  <h1>扣子 Provider</h1>
-  <div class="sub">通过官方登录授权接入扣子账号。授权文件由插件生成并落盘，支持自动续期。</div>
+  <h1>扣子账号面板</h1>
+  <div class="sub">登录态续期 · 模型可见性探活 · 多账号启停</div>
 
-  <div class="auth" id="authBox">
-    <div class="hint">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
-    <div class="row">
-      <input type="password" id="keyInput" placeholder="management key" autocomplete="off">
+  <div id="authBox" class="summary" style="display:none">
+    <div class="summary-meta" style="margin-bottom:8px">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
+    <div style="display:flex;gap:8px">
+      <input id="keyInput" type="password" placeholder="management key" autocomplete="off" style="flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--fg)">
       <button id="keySave">连接</button>
     </div>
   </div>
 
-  <div class="login">
-    <h2>授权扣子账号</h2>
-    <ol>
-      <li>点击「生成授权脚本」，本页会给出一次性脚本（15 分钟内有效）。</li>
-      <li>点击「打开扣子」，在打开的 <code>https://www.coze.cn</code> 按官方页面完成登录（手机号 / 抖音 / 飞书 / 火山任一）。</li>
-      <li>在扣子页面按 <code>F12</code> 打开开发者工具 → <code>Console</code>，粘贴脚本并回车。</li>
-      <li>页面会跳回本插件并自动完成授权，账号随即出现在下方列表。</li>
-    </ol>
-    <div class="row">
-      <button id="genScript">生成授权脚本</button>
-      <button id="openCoze" class="sec">打开扣子</button>
-      <button id="copyScript" class="sec" disabled>复制脚本</button>
-    </div>
-    <pre id="scriptBox">尚未生成授权脚本。</pre>
-    <div class="hint">脚本只做一件事：在扣子页面内调用令牌接口取 <code>x-tt-token</code>，再把令牌交给本插件兑换会话。它<b>不读取、也不上传</b>你的浏览器 Cookie。</div>
-  </div>
-
   <div class="bar">
-    <button id="refresh" class="sec">刷新账号</button>
-    <span class="sub" id="count" style="margin:0"></span>
+    <button class="sec" id="btnRefresh">刷新账号</button>
+    <button class="sec" id="btnEnableAll" title="启用全部已禁用账号">全部启用</button>
+    <button class="sec" id="btnDisableAll" title="禁用全部账号（不再参与路由）">全部禁用</button>
+    <input id="searchInput" class="search" type="search" placeholder="搜索昵称 / 手机 / 账号标识" autocomplete="off">
   </div>
 
-  <div id="list"></div>
-  <div class="msg" id="msg"></div>
+  <div class="filter-bar" id="filterBar">
+    <button type="button" class="ftag active" data-filter="all">全部 <span class="cnt" id="cntAll">0</span></button>
+    <button type="button" class="ftag" data-filter="ok" title="登录态有效且未禁用">可用 <span class="cnt" id="cntOk">0</span></button>
+    <button type="button" class="ftag" data-filter="expired" title="会话 Cookie 已过期，需要重新授权">待重新授权 <span class="cnt" id="cntExpired">0</span></button>
+    <button type="button" class="ftag" data-filter="disabled" title="已禁用，不参与路由">已禁用 <span class="cnt" id="cntDisabled">0</span></button>
+  </div>
+
+  <div class="summary" id="summaryBox" style="display:none"></div>
+  <div id="grid" class="grid"><div class="loading">加载中…</div></div>
+  <div class="empty" id="empty" style="display:none">暂无扣子账号。请在 CPA 主面板的「添加账号」中通过扣子授权接入。</div>
 </div>
+
+<div class="modal-mask" id="testModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="testModalTitle">
+    <div class="modal-hd">
+      <h2 id="testModalTitle">测试模型</h2>
+      <button type="button" class="modal-x" id="testModalClose" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p class="hint" id="testModalHint">选择要测试的模型</p>
+      <p class="hint" style="color:var(--warn)">当前为认证层探活：校验登录态与模型可见性，不产生推理请求。对话链路将在后续周期接入。</p>
+      <div class="model-list" id="testModelList"><div class="loading">加载模型中…</div></div>
+      <div class="test-result" id="testResult"></div>
+    </div>
+    <div class="modal-ft">
+      <button type="button" class="sec" id="testModalFootClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="deleteModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+    <div class="modal-hd">
+      <h2 id="deleteModalTitle">删除账号</h2>
+      <button type="button" class="modal-x" id="deleteModalClose" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p class="hint" id="deleteModalHint">确定要删除该账号吗？</p>
+      <p class="hint" style="color:var(--err)">此操作会永久删除该账号的认证文件，且不可恢复。</p>
+    </div>
+    <div class="modal-ft">
+      <button type="button" class="sec" id="deleteCancel">取消</button>
+      <button type="button" class="danger" id="deleteConfirm">删除</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
 
 <script>
 const API = "/v0/management/plugins/coze-provider";
 
-/* ---------- management key acquisition (3 fallbacks, zero config) ----------
-   1) CPA main panel localStorage "cli-proxy-auth" (XOR+base64, same-origin
-      iframe embed) — same approach as the sibling provider panels.
-   2) ?key= URL param (cleaned from history after read, kept in sessionStorage).
-   3) Manual input (sessionStorage only, never persisted).
-   宿主对 /v0/management/* 统一做鉴权：不带 Authorization 时直接返回
-   401 {"error":"missing management key"}，面板必须自行补齐该请求头。
+/* ---------- 管理密钥获取（三级回退，零配置） ----------
+   1) CPA 主面板 localStorage "cli-proxy-auth"（XOR + base64，同源 iframe 嵌入）；
+   2) ?key= URL 参数（读取后立即从地址栏抹掉，存入 sessionStorage）；
+   3) 手工输入（仅存 sessionStorage，不持久化到磁盘）。
 */
 const ENC_PREFIX = "enc::v1::";
 const SECRET_SALT = "cli-proxy-api-webui::secure-storage";
@@ -159,8 +280,8 @@ function readUrlKey(){
   }
   return m;
 }
-// readUrlKey() 会立刻把 key 从 URL 上抹掉，而 readPanelKey() 依赖父窗口的
-// localStorage；若解析后不落盘，首次调用之后 getKey() 将永远返回空。
+// 把解析到的 key 固化到 sessionStorage：readUrlKey 会立刻把 key 从 URL 抹掉，
+// 而 readPanelKey 依赖父窗口 localStorage，不落盘会导致首次调用后永远取不到。
 function persistKey(k){
   if(!k) return k;
   try{ sessionStorage.setItem(SS_KEY,k); }catch(e){}
@@ -184,186 +305,393 @@ function saveKey(){
   if(!v)return;
   try{ sessionStorage.setItem(SS_KEY,v); }catch(e){}
   document.getElementById("authBox").style.display="none";
-  refresh();
+  load();
 }
 /* --------------------------------------------------------------------------- */
 
-async function api(path, opts) {
-  const key = getKey();
-  if (!key) {
-    showAuth();
-    throw new Error("需要管理密钥，请在 CPA 主面板中打开本页，或在下方输入框填入");
+let lastAccounts=[];
+let currentFilter="all";
+let currentSearch="";
+let pendingDeleteID="";
+let pendingTestID="";
+let authFailCount=0;
+let authFailUntil=0;
+
+function esc(s){
+  return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+// 统一北京时间展示：RFC3339 / ISO 输入 → "YYYY-MM-DD HH:mm:ss"（Asia/Shanghai）。
+// 上游落盘的是带 +08:00 的 RFC3339，但宿主机时区不保证，统一按上海时区换算。
+function fmtCST(s){
+  if(!s) return "";
+  const d=new Date(s);
+  if(isNaN(d.getTime())) return String(s);
+  return d.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}).replaceAll("/","-");
+}
+
+function toast(title, kind="ok", detail=""){
+  const box=document.getElementById("toasts");
+  const el=document.createElement("div");
+  el.className="toast "+kind;
+  el.innerHTML='<div class="t"></div>'+(detail?'<div class="d"></div>':'');
+  el.querySelector(".t").textContent=title;
+  if(detail)el.querySelector(".d").textContent=detail;
+  box.appendChild(el);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>el.classList.add("show")));
+  const kill=()=>{el.classList.remove("show");setTimeout(()=>el.remove(),300)};
+  el.onclick=kill;
+  setTimeout(kill, kind==="err"?6000:4000);
+  while(box.children.length>5)box.firstChild.remove();
+}
+
+function busy(btn, on){
+  if(!btn)return;
+  if(on){btn.dataset.orig=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>处理中…'}
+  else{btn.disabled=false;if(btn.dataset.orig)btn.innerHTML=btn.dataset.orig}
+}
+
+// 统一的请求入口：401/403 累计到阈值才清 key，避免单次瞬时失败把面板打回鉴权态。
+async function api(path, opts={}){
+  const silent=!!opts.__silent;
+  const fetchOpts={...opts};
+  delete fetchOpts.__silent;
+  const k=getKey();
+  if(!k){
+    if(!silent)showAuth();
+    throw new Error("需要管理密钥");
   }
-  const headers = Object.assign(
-    { "Content-Type": "application/json" },
-    authHeaders(key),
-    (opts && opts.headers) || {}
-  );
-  const res = await fetch(API + path, Object.assign({}, opts, { headers, cache: "no-store" }));
-  if (res.status === 401 || res.status === 403) {
-    try { sessionStorage.removeItem(SS_KEY); } catch (e) { /* 隐私模式下不可写时忽略 */ }
-    showAuth();
-    throw new Error("管理密钥无效或已失效，请重新填写");
+  if(Date.now()<authFailUntil){
+    throw new Error("认证多次失败，请稍后重试（防 IP 封禁）");
   }
-  let data = null;
-  try { data = await res.json(); } catch (e) { data = { error: "响应解析失败" }; }
-  return data;
+  const r=await fetch(API+path,{...fetchOpts,credentials:"omit",cache:"no-store",headers:{...(opts.headers||{}),...authHeaders(k)}});
+  if(r.status===401||r.status===403){
+    if(silent) throw new Error("management key 无效或缺失");
+    authFailCount++;
+    if(authFailCount>=3){
+      try{ sessionStorage.removeItem(SS_KEY); }catch(e){}
+      authFailUntil=Date.now()+60000;
+      authFailCount=0;
+      showAuth();
+      throw new Error("认证多次失败，请检查管理密钥后 60s 再试");
+    }
+    throw new Error("management key 无效或缺失（将自动重试）");
+  }
+  authFailCount=0;
+  const text=await r.text();
+  if(!text) return {error:"empty response (HTTP "+r.status+")"};
+  try{return JSON.parse(text)}catch(e){return {error:"bad JSON (HTTP "+r.status+"): "+text.slice(0,200)}}
 }
 
-function showMsg(text, kind) {
-  const el = document.getElementById("msg");
-  el.className = "msg " + (kind || "");
-  el.textContent = text;
+function stateBadge(a){
+  if(a.disabled) return '<span class="badge off">已禁用</span>';
+  if(a.auth_state==="expired") return '<span class="badge warn">待重新授权</span>';
+  return '<span class="badge ok">可用</span>';
 }
 
-function esc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
-  });
+function accountMatches(a){
+  if(currentFilter==="ok") return !a.disabled && a.auth_state!=="expired";
+  if(currentFilter==="expired") return !a.disabled && a.auth_state==="expired";
+  if(currentFilter==="disabled") return !!a.disabled;
+  return true;
 }
 
-function stateBadge(a) {
-  if (a.disabled) return '<span class="badge off">已禁用</span>';
-  if (a.auth_state === "expired") return '<span class="badge warn">待重新授权</span>';
-  return '<span class="badge on">已授权</span>';
+function accountHaystack(a){
+  return [a.label,a.screen_name,a.mobile,a.sec_user_id,a.auth_id].filter(Boolean).join(" ").toLowerCase();
 }
 
-function renderAccounts(accounts) {
-  const list = document.getElementById("list");
-  document.getElementById("count").textContent = "共 " + accounts.length + " 个账号";
-  if (!accounts.length) {
-    list.innerHTML = '<div class="empty">暂无账号。请按上方步骤完成一次授权登录。</div>';
+function visibleAccounts(){
+  const q=(currentSearch||"").toLowerCase();
+  return (lastAccounts||[]).filter(a=>accountMatches(a)&&(!q||accountHaystack(a).includes(q)));
+}
+
+// 账号卡：昵称 + 状态徽章 + 删除入口；正文给身份与时间，底部给操作按钮。
+function card(a){
+  const id=esc(a.auth_id);
+  const title=a.label||a.screen_name||a.auth_id||"未命名";
+  const rows=[];
+  if(a.screen_name) rows.push('<div class="row"><span class="k">昵称</span><span class="v">'+esc(a.screen_name)+'</span></div>');
+  if(a.mobile) rows.push('<div class="row"><span class="k">手机</span><span class="v">'+esc(a.mobile)+'</span></div>');
+  if(a.sec_user_id) rows.push('<div class="row"><span class="k">账号标识</span><span class="v">'+esc(a.sec_user_id)+'</span></div>');
+  if(a.login_at) rows.push('<div class="row"><span class="k">授权时间</span><span class="v">'+esc(fmtCST(a.login_at))+'</span></div>');
+  if(a.last_renew_at) rows.push('<div class="row"><span class="k">最近续期</span><span class="v">'+esc(fmtCST(a.last_renew_at))+'</span></div>');
+  if(a.created_at) rows.push('<div class="row"><span class="k">创建时间</span><span class="v">'+esc(fmtCST(a.created_at))+'</span></div>');
+  const toggleAct=a.disabled?"enable":"disable";
+  const toggleText=a.disabled?"启用":"禁用";
+  return '<div class="card" data-auth="'+id+'" data-state="'+(a.disabled?"disabled":(a.auth_state==="expired"?"expired":"ok"))+'" data-hay="'+esc(accountHaystack(a))+'">'+
+    '<h2><span>'+esc(title)+'</span><span style="display:flex;gap:6px;align-items:center">'+stateBadge(a)+
+    '<button type="button" class="card-del" data-act="delete" data-id="'+id+'" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>'+
+    '<div class="uid" title="'+id+'">'+id+'</div>'+
+    rows.join("")+
+    '<div class="actions">'+
+    '<button data-act="test" data-id="'+id+'" title="校验登录态与模型可见性">测试</button>'+
+    '<button class="sec" data-act="renew" data-id="'+id+'" title="立即刷新会话 Cookie">续期</button>'+
+    '<button class="sec" data-act="'+toggleAct+'" data-id="'+id+'">'+toggleText+'</button>'+
+    '</div></div>';
+}
+
+function updateCounts(){
+  const all=lastAccounts||[];
+  const ok=all.filter(a=>!a.disabled&&a.auth_state!=="expired").length;
+  const expired=all.filter(a=>!a.disabled&&a.auth_state==="expired").length;
+  const disabled=all.filter(a=>!!a.disabled).length;
+  document.getElementById("cntAll").textContent=String(all.length);
+  document.getElementById("cntOk").textContent=String(ok);
+  document.getElementById("cntExpired").textContent=String(expired);
+  document.getElementById("cntDisabled").textContent=String(disabled);
+  return {all:all.length, ok, expired, disabled};
+}
+
+function renderSummary(counts){
+  const box=document.getElementById("summaryBox");
+  if(!box)return;
+  if(!counts.all){box.style.display="none";box.innerHTML="";return}
+  box.style.display="block";
+  box.innerHTML='<div class="summary-hd"><div class="summary-title">账号汇总</div>'+
+    '<div class="summary-meta">共 '+counts.all+' 个账号 · 当前筛选 '+visibleAccounts().length+' 个</div></div>'+
+    '<div class="summary-grid">'+
+    '<div class="summary-item"><div class="k">账号总数</div><div class="v">'+counts.all+'</div></div>'+
+    '<div class="summary-item"><div class="k">可用</div><div class="v ok">'+counts.ok+'</div></div>'+
+    '<div class="summary-item"><div class="k">待重新授权</div><div class="v warn">'+counts.expired+'</div></div>'+
+    '<div class="summary-item"><div class="k">已禁用</div><div class="v muted">'+counts.disabled+'</div></div>'+
+    '</div>';
+}
+
+function render(){
+  const grid=document.getElementById("grid");
+  const empty=document.getElementById("empty");
+  const counts=updateCounts();
+  renderSummary(counts);
+  const list=visibleAccounts();
+  if(!lastAccounts.length){
+    grid.innerHTML="";
+    grid.style.display="none";
+    empty.style.display="block";
     return;
   }
-  list.innerHTML = accounts.map(function (a) {
-    const id = esc(a.auth_id);
-    return '<div class="card"><h2><span>' + esc(a.label || a.auth_id || "未命名") + '</span>' + stateBadge(a) + '</h2>' +
-      (a.screen_name ? '<div class="row"><span>昵称</span><span class="v">' + esc(a.screen_name) + '</span></div>' : '') +
-      (a.mobile ? '<div class="row"><span>手机</span><span class="v">' + esc(a.mobile) + '</span></div>' : '') +
-      '<div class="row"><span>账号标识</span><span class="v">' + esc(a.sec_user_id || a.auth_id) + '</span></div>' +
-      (a.login_at ? '<div class="row"><span>授权时间</span><span class="v">' + esc(a.login_at) + '</span></div>' : '') +
-      (a.last_renew_at ? '<div class="row"><span>最近续期</span><span class="v">' + esc(a.last_renew_at) + '</span></div>' : '') +
-      '<div class="acts">' +
-      '<button data-act="renew" data-id="' + id + '">续期</button>' +
-      '<button class="sec" data-act="' + (a.disabled ? "enable" : "disable") + '" data-id="' + id + '">' + (a.disabled ? "启用" : "禁用") + '</button>' +
-      '<button class="sec" data-act="delete" data-id="' + id + '">删除</button>' +
-      '</div></div>';
-  }).join("");
-}
-
-async function refresh() {
-  const btn = document.getElementById("refresh");
-  btn.disabled = true;
-  try {
-    const data = await api("/accounts");
-    if (data && data.error) { showMsg("加载账号失败：" + data.error, "err"); return; }
-    renderAccounts((data && data.accounts) || []);
-  } catch (e) {
-    showMsg("加载账号失败：" + e.message, "err");
-  } finally {
-    btn.disabled = false;
+  empty.style.display="none";
+  grid.style.display="";
+  if(!list.length){
+    grid.innerHTML='<div class="empty" style="grid-column:1/-1">没有符合当前筛选条件的账号</div>';
+    return;
   }
+  grid.innerHTML=list.map(card).join("");
 }
 
-let currentScript = "";
-
-function decodeBase64Utf8(b64) {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder("utf-8").decode(bytes);
-}
-
-async function genScript() {
-  const btn = document.getElementById("genScript");
-  btn.disabled = true;
-  showMsg("正在生成授权脚本…", "");
-  try {
-    const data = await api("/login-start", { method: "POST", body: "{}" });
-    if (!data || !data.state || !data.script) {
-      showMsg("生成失败：" + ((data && data.error) || "响应缺少 state 或 script"), "err");
+async function load(){
+  const btn=document.getElementById("btnRefresh");
+  busy(btn,true);
+  try{
+    const d=await api("/accounts");
+    if(d&&d.error){
+      if(!lastAccounts.length) document.getElementById("grid").innerHTML='<div class="loading">'+esc(d.error)+'</div>';
+      else toast("加载账号失败，已保留上次数据","err",String(d.error));
       return;
     }
-    // 宿主回写响应时会对 body 做一次带 HTML 转义的 JSON 序列化，
-    // 含 `=>` / `'` 的脚本会被实体化；服务端以 base64 下发，这里解码还原。
-    const script = data.encoding === "base64" ? decodeBase64Utf8(data.script) : data.script;
-    currentScript = script;
-    document.getElementById("scriptBox").textContent = script;
-    document.getElementById("copyScript").disabled = false;
-    showMsg("脚本已生成，请在 15 分钟内到扣子页面执行。", "ok");
-  } catch (e) {
-    showMsg("生成失败：" + e.message, "err");
-  } finally {
-    btn.disabled = false;
+    lastAccounts=(d&&d.accounts)||[];
+    render();
+  }catch(e){
+    const msg=e&&e.message?e.message:String(e);
+    if(!lastAccounts.length) document.getElementById("grid").innerHTML='<div class="loading">'+esc(msg)+'</div>';
+    else toast("加载账号失败，已保留上次数据","err",msg);
+  }finally{
+    busy(btn,false);
   }
 }
 
-function copyScript() {
-  if (!currentScript) return;
-  const done = function () { showMsg("已复制，请到扣子页面的 Console 粘贴执行。", "ok"); };
-  const fail = function () { showMsg("自动复制失败，请手动选中脚本文本复制。", "err"); };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(currentScript).then(done).catch(fail);
-  } else {
-    fail();
-  }
+function findAccount(id){
+  return (lastAccounts||[]).find(a=>a.auth_id===id)||null;
 }
 
-async function act(kind, id) {
-  if (kind === "delete" && !confirm("确认删除该账号？")) return;
-  try {
+async function act(kind, id, btn){
+  if(kind==="delete"){openDeleteModal(id);return}
+  if(kind==="test"){openTestModal(id);return}
+  busy(btn,true);
+  try{
     let data;
-    if (kind === "renew") {
-      showMsg("正在续期…", "");
-      data = await api("/renew", { method: "POST", body: JSON.stringify({ auth_id: id }) });
-    } else {
-      data = await api("/" + kind, { method: "POST", body: JSON.stringify({ auth_id: id }) });
+    if(kind==="renew"){
+      data=await api("/renew",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_id:id})});
+    }else{
+      data=await api("/"+kind,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_id:id})});
     }
-    if (data && data.ok) {
-      showMsg(kind === "renew" ? ("续期完成" + (data.note ? "：" + data.note : "")) : "操作成功", "ok");
-      refresh();
-    } else {
-      showMsg("操作失败：" + ((data && data.error) || "未知错误"), "err");
+    if(data&&data.ok){
+      if(kind==="renew"){
+        toast("续期完成","ok",data.note||data.message||"");
+      }else{
+        toast(kind==="enable"?"已启用账号":"已禁用账号","ok",(findAccount(id)||{}).label||id);
+      }
+      await load();
+    }else{
+      toast("操作失败","err",(data&&data.error)||"未知错误");
     }
-  } catch (e) {
-    showMsg("操作失败：" + e.message, "err");
+  }catch(e){
+    toast("操作失败","err",e.message||String(e));
+  }finally{
+    busy(btn,false);
   }
 }
 
-document.getElementById("keySave").addEventListener("click", saveKey);
-document.getElementById("refresh").addEventListener("click", refresh);
-document.getElementById("genScript").addEventListener("click", genScript);
-document.getElementById("copyScript").addEventListener("click", copyScript);
-document.getElementById("openCoze").addEventListener("click", function () {
-  window.open("https://www.coze.cn", "_blank", "noopener");
-});
-document.getElementById("list").addEventListener("click", function (ev) {
-  const t = ev.target;
-  if (!t || !t.getAttribute) return;
-  const act_ = t.getAttribute("data-act");
-  const id = t.getAttribute("data-id");
-  if (act_ && id) act(act_, id);
-});
-
-/* theme sync：宿主在主面板切换主题时通过 postMessage 下发，嵌入态跟随。 */
-(function () {
-  function applyTheme(t) {
-    if (t === "dark" || t === "white" || t === "light") {
-      document.documentElement.setAttribute("data-theme", t === "light" ? "" : t);
-    }
+/* ---------- 批量启停 ---------- */
+async function setAll(disabled){
+  const targets=(lastAccounts||[]).filter(a=>!!a.disabled!==disabled);
+  if(!targets.length){toast(disabled?"没有需要禁用的账号":"没有需要启用的账号","warn");return}
+  let ok=0,fail=0;
+  for(const a of targets){
+    try{
+      const d=await api("/"+(disabled?"disable":"enable"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_id:a.auth_id})});
+      if(d&&d.ok)ok++;else fail++;
+    }catch(e){fail++}
   }
-  try {
-    const parentTheme = window.parent && window.parent.document
-      ? window.parent.document.documentElement.getAttribute("data-theme")
-      : null;
-    if (parentTheme) applyTheme(parentTheme);
-  } catch (e) { /* 跨域嵌入时读不到父文档，保持默认主题 */ }
-  window.addEventListener("message", function (ev) {
-    if (ev && ev.data && typeof ev.data === "object" && ev.data.theme) applyTheme(ev.data.theme);
-  });
-})();
+  if(fail)toast((disabled?"批量禁用":"批量启用")+"："+ok+" 成功 / "+fail+" 失败","err");
+  else toast((disabled?"批量禁用":"批量启用")+"完成","ok",ok+" 个账号");
+  await load();
+}
 
-refresh();
+/* ---------- 测试弹窗：先拉模型目录，点模型再探活 ---------- */
+function openTestModal(id){
+  pendingTestID=id;
+  const a=findAccount(id);
+  const who=a?(a.label||a.screen_name||a.auth_id):id;
+  document.getElementById("testModalHint").innerHTML='选择要测试的模型：<b>'+esc(who)+'</b>';
+  const res=document.getElementById("testResult");
+  res.className="test-result";
+  res.innerHTML="";
+  const list=document.getElementById("testModelList");
+  list.innerHTML='<div class="loading">加载模型中…</div>';
+  document.getElementById("testModal").classList.add("show");
+  loadTestModels(id);
+}
+function closeTestModal(){
+  pendingTestID="";
+  document.getElementById("testModal").classList.remove("show");
+}
+async function loadTestModels(id){
+  const list=document.getElementById("testModelList");
+  try{
+    const d=await api("/models?auth_id="+encodeURIComponent(id));
+    // 用户可能已关闭弹窗或切换账号，丢弃过期响应避免错投。
+    if(pendingTestID!==id)return;
+    if(d&&d.error){list.innerHTML='<div class="hint" style="color:var(--err)">'+esc(d.error)+'</div>';return}
+    const models=(d&&Array.isArray(d.models))?d.models:[];
+    if(!models.length){list.innerHTML='<div class="hint">该账号暂无可测试模型</div>';return}
+    const notice=d.notice?'<div class="hint" style="color:var(--warn)">'+esc(d.notice)+'</div>':"";
+    list.innerHTML=notice+models.map(m=>{
+      const name=esc(m.display_name||m.name||m.id);
+      const meta=esc((m.type||"")+" · "+(m.id||""));
+      return '<button type="button" class="model-item" data-model="'+esc(m.id)+'"><div class="m-name">'+name+'</div><div class="m-meta">'+meta+'</div></button>';
+    }).join("");
+  }catch(e){
+    list.innerHTML='<div class="hint" style="color:var(--err)">'+esc(e.message||String(e))+'</div>';
+  }
+}
+async function runTestModel(btn){
+  const id=pendingTestID;
+  const model=btn&&btn.dataset?btn.dataset.model:"";
+  if(!id||!model)return;
+  const list=document.getElementById("testModelList");
+  const buttons=list?list.querySelectorAll("button.model-item"):[];
+  buttons.forEach(b=>{b.disabled=true});
+  const res=document.getElementById("testResult");
+  res.className="test-result show";
+  res.innerHTML='<div class="r-hd">测试中…</div>';
+  try{
+    const d=await api("/test-active",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_id:id,model:model})});
+    const ok=!!(d&&d.ok);
+    res.className="test-result show";
+    res.innerHTML='<div class="r-hd '+(ok?"ok":"err")+'">'+(ok?"测试通过":"测试失败")+'</div>'+
+      '<div class="r-item">'+esc(model)+'<br>'+esc(ok?(d.message||"登录态有效"):(d.error||"未知错误"))+
+      (d&&d.elapsed_ms!=null?'<br>耗时 '+esc(d.elapsed_ms)+' ms':"")+'</div>';
+    if(ok)toast("测试通过","ok",d.message||model);
+    else toast("测试失败","err",d.error||"未知错误");
+  }catch(e){
+    res.className="test-result show";
+    res.innerHTML='<div class="r-hd err">测试失败</div><div class="r-item">'+esc(e.message||String(e))+'</div>';
+    toast("测试失败","err",e.message||String(e));
+  }finally{
+    buttons.forEach(b=>{b.disabled=false});
+  }
+}
+
+/* ---------- 删除（二次确认） ---------- */
+function openDeleteModal(id){
+  pendingDeleteID=id;
+  const a=findAccount(id);
+  const who=a?(a.label||a.screen_name||a.auth_id):id;
+  busy(document.getElementById("deleteConfirm"),false);
+  document.getElementById("deleteModalHint").innerHTML='确定要删除账号 <b>'+esc(who)+'</b> 吗？';
+  document.getElementById("deleteModal").classList.add("show");
+}
+function closeDeleteModal(){
+  pendingDeleteID="";
+  document.getElementById("deleteModal").classList.remove("show");
+}
+async function confirmDelete(){
+  const id=pendingDeleteID;
+  if(!id)return;
+  const btn=document.getElementById("deleteConfirm");
+  busy(btn,true);
+  try{
+    const d=await api("/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_id:id})});
+    if(d&&d.ok){
+      toast("已删除账号","ok",id);
+      busy(btn,false);
+      closeDeleteModal();
+      lastAccounts=(lastAccounts||[]).filter(a=>a.auth_id!==id);
+      render();
+    }else{
+      toast("删除失败","err",(d&&d.error)||"未知错误");
+      busy(btn,false);
+    }
+  }catch(e){
+    toast("删除失败","err",e.message||String(e));
+    busy(btn,false);
+  }
+}
+
+/* ---------- 事件绑定 ---------- */
+document.getElementById("keySave").addEventListener("click",saveKey);
+document.getElementById("keyInput").addEventListener("keydown",e=>{if(e.key==="Enter")saveKey()});
+document.getElementById("btnRefresh").addEventListener("click",()=>load());
+document.getElementById("btnEnableAll").addEventListener("click",()=>setAll(false));
+document.getElementById("btnDisableAll").addEventListener("click",()=>setAll(true));
+document.getElementById("searchInput").addEventListener("input",e=>{currentSearch=String(e.target.value||"").trim();render()});
+document.getElementById("filterBar").addEventListener("click",e=>{
+  const btn=e.target.closest?e.target.closest(".ftag"):null;
+  if(!btn)return;
+  currentFilter=btn.dataset.filter||"all";
+  document.querySelectorAll(".ftag").forEach(b=>b.classList.toggle("active",b===btn));
+  render();
+});
+document.getElementById("grid").addEventListener("click",e=>{
+  const btn=e.target.closest?e.target.closest("[data-act]"):null;
+  if(!btn)return;
+  act(btn.dataset.act,btn.dataset.id,btn);
+});
+document.getElementById("testModelList").addEventListener("click",e=>{
+  const btn=e.target.closest?e.target.closest("button.model-item"):null;
+  if(btn)runTestModel(btn);
+});
+document.getElementById("testModalClose").addEventListener("click",closeTestModal);
+document.getElementById("testModalFootClose").addEventListener("click",closeTestModal);
+document.getElementById("testModal").addEventListener("click",e=>{if(e.target===document.getElementById("testModal"))closeTestModal()});
+document.getElementById("deleteModalClose").addEventListener("click",closeDeleteModal);
+document.getElementById("deleteCancel").addEventListener("click",closeDeleteModal);
+document.getElementById("deleteConfirm").addEventListener("click",confirmDelete);
+document.getElementById("deleteModal").addEventListener("click",e=>{if(e.target===document.getElementById("deleteModal"))closeDeleteModal()});
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape")return;
+  if(document.getElementById("testModal").classList.contains("show"))closeTestModal();
+  if(document.getElementById("deleteModal").classList.contains("show"))closeDeleteModal();
+});
+
+/* 启动：先同步主题监听，再按是否已有密钥决定直接加载还是显示鉴权框。 */
+if(window.__cozeThemeSync)window.__cozeThemeSync();
+if(getKey()){
+  load();
+}else{
+  showAuth();
+  document.getElementById("grid").innerHTML='<div class="loading">请先填写 management key</div>';
+}
 </script>
 </body>
 </html>

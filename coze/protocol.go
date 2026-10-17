@@ -46,6 +46,24 @@ const (
 	//
 	// 该端点无论成败都返回 HTTP 200，必须读 data.error_code 判定。
 	authErrorCodeSessionExpired = 401
+
+	// modelListPath 是模型目录端点。
+	//
+	// 契约（2026-10-18 真实账号实测）：POST，body 里 model_type 必须是
+	// **字符串**且只能取枚举值，传数字会返回 InvalidRequest：
+	//   - "llm"              → 3 条对话模型（doubao-seed-2-0-pro/lite/mini）
+	//   - "image_generation" → 2 条生图模型
+	//   - "video_generation" → 1 条生视频模型
+	//   - "tts" / "asr" / "embedding" 各 1 条
+	// 未知枚举值不报错，只返回空列表——因此逐类型探测是安全的。
+	modelListPath = "/v1/model/list"
+
+	// multimodalCatalogPath 是多模态模型目录端点。
+	//
+	// 比 modelListPath 更完整：返回能力分组（image_gen / generate_video），
+	// 每组带 default_model_name 与模型列表。生视频模型（Seedance 2.5/2.0、
+	// MiniMax H3）只在这里出现，model_list 的 video_generation 只有 1 条。
+	multimodalCatalogPath = "/api/coze_claw/resource/get_multimodal_model_catalog"
 )
 
 // tokenBeatURL 返回令牌端点的完整 URL。
@@ -65,6 +83,22 @@ func tokenBeatURL() string {
 // 最近修改时间：2026-10-18；改动原因：新增，端点集中出口。
 func accountInfoURL() string {
 	return cozeSiteHost + accountInfoPath
+}
+
+// modelListURL 返回模型目录端点的完整 URL。
+// [参数] 无。
+// [返回] 完整 URL。
+// 最近修改时间：2026-10-18；改动原因：新增，模型发现端点出口。
+func modelListURL() string {
+	return cozeSiteHost + modelListPath
+}
+
+// multimodalCatalogURL 返回多模态模型目录端点的完整 URL。
+// [参数] 无。
+// [返回] 完整 URL。
+// 最近修改时间：2026-10-18；改动原因：新增，生视频模型来源。
+func multimodalCatalogURL() string {
+	return cozeSiteHost + multimodalCatalogPath
 }
 
 // tokenBeatResponse 是令牌端点响应体。
