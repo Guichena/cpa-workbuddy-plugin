@@ -1,0 +1,302 @@
+// credits_handler.go implements the management endpoints that read or mutate
+// account state: credential restore, active account selection, account delete,
+// and quota queries.
+//
+// QwenWork 没有 PAT / jobToken 体系，唯一凭据来源是 Device Flow 登录，
+// 因此导入路径只有「备份恢复」（/import-cred），不存在 PAT 换票入口。
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+)
+
+// handleImportCred restores one credential JSON previously produced by
+// GET /export (the panel splits a wrapper file into per-account credentials
+// and posts each one here). The payload is persisted as-is after a
+// parseStored structural check, so a backup taken on another machine can be
+// restored offline. The credential is the raw physical auth file (nested
+// form), so saving it verbatim preserves fields a rebuild could drop.
+//
+// [参数] req: 管理请求，body 为 {cred: <凭据 JSON>}。
+// [返回] 恢复结果 map；缺字段或解析失败时返回 {success:false,error}。
+// 最近修改时间：2026-10-18 00:20:00；改动原因：QwenWork 移除 PAT 体系后独立成文件。
+func handleImportCred(req pluginapi.ManagementRequest) map[string]any {
+	var body struct {
+		Cred json.RawMessage `json:"cred"`
+	}
+	_ = json.Unmarshal(req.Body, &body)
+	if len(body.Cred) == 0 {
+		return map[string]any{"success": false, "error": "missing cred field"}
+	}
+	sa, err := parseStored(body.Cred)
+	if err != nil || sa == nil {
+		return map[string]any{"success": false, "error": "credential parse: " + errString(err)}
+	}
+	if strings.TrimSpace(sa.Account.UID) == "" {
+		return map[string]any{"success": false, "error": "credential has empty uid"}
+	}
+	auth := toAuthData(sa)
+	saveReq := pluginapi.HostAuthSaveRequest{
+		Name: auth.FileName,
+		JSON: body.Cred,
+	}
+	saveBody, _ := json.Marshal(saveReq)
+	rawResp, err := hostCall(pluginabi.MethodHostAuthSave, saveBody)
+	if err != nil {
+		return map[string]any{"success": false, "error": "host.auth.save: " + err.Error()}
+	}
+	var env envelope
+	if err := json.Unmarshal(rawResp, &env); err != nil || !env.OK {
+		msg := "host.auth.save failed"
+		if env.Error != nil && env.Error.Message != "" {
+			msg = env.Error.Message
+		}
+		return map[string]any{"success": false, "error": msg}
+	}
+	var saveResp pluginapi.HostAuthSaveResponse
+	_ = json.Unmarshal(env.Result, &saveResp)
+	return map[string]any{
+		"success":  true,
+		"name":     saveResp.Name,
+		"path":     saveResp.Path,
+		"uid":      sa.Account.UID,
+		"nickname": sa.Account.Nickname,
+		"file":     auth.FileName,
+	}
+}
+
+// handleSelectAuth sets the panel-selected account used for chat routing.
+//
+// [参数] req: 管理请求，body 为 {auth_index}。
+// [返回] 选中结果 map；账号不存在或已禁用时返回 error。
+// 最近修改时间：2026-10-18 00:20:00；改动原因：从 qoderwork 同步并改注释。
+func handleSelectAuth(req pluginapi.ManagementRequest) map[string]any {
+	var body struct {
+		AuthIndex string `json:"auth_index"`
+	}
+	_ = json.Unmarshal(req.Body, &body)
+	authIndex := strings.TrimSpace(body.AuthIndex)
+	if authIndex == "" {
+		return map[string]any{"error": "auth_index is required", "active_auth": getActiveAuthID()}
+	}
+	files, err := hostAuthList()
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	for _, f := range files {
+		if f.AuthIndex != authIndex {
+			continue
+		}
+		if f.Disabled {
+			return map[string]any{"error": "账号已禁用，无法选中", "auth_index": authIndex}
+		}
+		sa, err := hostAuthGet(f.AuthIndex)
+		if err != nil {
+			return map[string]any{"error": err.Error(), "auth_index": authIndex}
+		}
+		setActiveAuthID(f.ID)
+		return map[string]any{
+			"ok":          true,
+			"active_auth": f.ID,
+			"nickname":    sa.Account.Nickname,
+			"uid":         sa.Account.UID,
+		}
+	}
+	return map[string]any{"error": "account not found", "auth_index": authIndex}
+}
+
+// handleDeleteAuth 删除一个 QwenWork 账号及其物理认证文件。
+//
+// 严格校验链，绝不信任前端传入的任意路径或身份：
+// auth_index 非空 → 账号存在 → 文件名归属（isQoderworkAuthFileName）→ 内容
+// 解析 → phys.AuthIndex 一致 → 路径非空 → isSafeAuthPath + isPathUnder →
+// deleteAuthFileInDir 物理删除；任一不满足即拒绝。
+//
+// [参数] req: 管理请求，body 为 {auth_index}。
+// [返回] 删除结果 map；任一校验失败返回 error。
+// 最近修改时间：2026-10-18 00:20:00；改动原因：从 qoderwork 同步并去掉 region 字段。
+func handleDeleteAuth(req pluginapi.ManagementRequest) map[string]any {
+	var body struct {
+		AuthIndex string `json:"auth_index"`
+	}
+	_ = json.Unmarshal(req.Body, &body)
+	authIndex := strings.TrimSpace(body.AuthIndex)
+	if authIndex == "" {
+		return map[string]any{"error": "auth_index is required"}
+	}
+	files, err := hostAuthList()
+	if err != nil {
+		return map[string]any{"error": "host.auth.list: " + err.Error()}
+	}
+	for _, f := range files {
+		if f.AuthIndex != authIndex {
+			continue
+		}
+		// hostAuthList already prefix-filters on qwenwork-*, but double-check
+		// the concrete name so a legacy or mis-shaped entry can't slip through.
+		if !isQoderworkAuthFileName(f.Name) {
+			return map[string]any{"error": "不是 QwenWork 认证文件", "auth_index": authIndex}
+		}
+		sa, phys, err := hostAuthGetBundle(authIndex)
+		if err != nil {
+			return map[string]any{"error": "host.auth.get: " + err.Error(), "auth_index": authIndex}
+		}
+		if sa == nil {
+			return map[string]any{"error": "认证内容解析失败", "auth_index": authIndex}
+		}
+		if phys == nil || strings.TrimSpace(phys.AuthIndex) != authIndex {
+			return map[string]any{"error": "认证索引不一致", "auth_index": authIndex}
+		}
+		path := strings.TrimSpace(phys.Path)
+		if path == "" {
+			return map[string]any{"error": "认证文件路径缺失，无法安全删除", "auth_index": authIndex}
+		}
+		if !isSafeAuthPath(path) || !isPathUnder(path, filepath.Dir(path)) {
+			return map[string]any{"error": "认证文件路径不安全，已拒绝删除", "auth_index": authIndex}
+		}
+		nickname := sa.Account.Nickname
+		uid := sa.Account.UID
+		// Physical delete confined to the auth directory.
+		if err := deleteAuthFileInDir(path, filepath.Dir(path)); err != nil {
+			return map[string]any{"error": "删除认证文件失败: " + err.Error(), "auth_index": authIndex}
+		}
+		// Also remove legacy qwenwork.json if this UID was dual-named historically.
+		if strings.TrimSpace(uid) != "" {
+			if dir := filepath.Dir(path); dir != "" {
+				legacy := filepath.Join(dir, authFileName)
+				if isLegacyAuthName(filepath.Base(legacy)) {
+					_ = deleteAuthFileInDir(legacy, dir)
+				}
+			}
+		}
+		clearDeletedAccountState(f.ID, authIndex, uid)
+		return map[string]any{
+			"ok":         true,
+			"auth_index": authIndex,
+			"nickname":   nickname,
+			"uid":        uid,
+			"deleted":    f.Name,
+		}
+	}
+	return map[string]any{"error": "account not found", "auth_index": authIndex}
+}
+
+// handleCreditsQuery returns real-time credits for one or all accounts.
+// Pass ?auth_index=<idx> to query a single account; omit for all.
+// Single-account mode returns full account info (nickname, credits, exhausted)
+// so the panel can update one card without reloading the whole dashboard.
+//
+// [参数] req: 管理请求，Query 可含 auth_index 与 track。
+// [返回] {accounts: [...]}；单账号时含额度、计划与冷却状态。
+// 最近修改时间：2026-10-18 00:20:00；改动原因：QwenWork 无签到，改为只合并额度缓存。
+func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
+	authIndex := ""
+	if vals := req.Query["auth_index"]; len(vals) > 0 {
+		authIndex = strings.TrimSpace(vals[0])
+	}
+	track := ""
+	if vals := req.Query["track"]; len(vals) > 0 {
+		track = strings.TrimSpace(vals[0])
+	}
+	files, err := hostAuthList()
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	// Single-account: return one full account row (like dashboard entry).
+	if authIndex != "" {
+		for _, f := range files {
+			if f.AuthIndex != authIndex {
+				continue
+			}
+			sa, err := hostAuthGet(f.AuthIndex)
+			if err != nil {
+				return map[string]any{"accounts": []map[string]any{{
+					"auth_index": authIndex, "error": "load auth: " + err.Error(),
+				}}}
+			}
+			// track=1: enqueue the throttled async refresh and return
+			// immediately; the panel polls GET /refresh/status for the result.
+			if track == "1" || track == "true" {
+				globalRefresh.EnqueueOne(f.AuthIndex, f.ID, "credits")
+				return map[string]any{
+					"queued":     true,
+					"auth_index": authIndex,
+					"status":     globalRefresh.Snapshot(),
+				}
+			}
+			cr, err := fetchUserResource(sa)
+			acct := map[string]any{
+				"auth_index": authIndex,
+				"nickname":   sa.Account.Nickname,
+				"uid":        sa.Account.UID,
+				"name":       f.Name,
+				"label":      f.Label,
+				"disabled":   f.Disabled,
+				"selected":   getActiveAuthID() == f.ID,
+			}
+			if isAccountDailyCooling(f.ID) {
+				acct["daily_cooling"] = true
+				until := getAccountDailyCoolingUntil(f.ID)
+				acct["daily_cooling_until"] = until.Unix()
+				remain := time.Until(until)
+				if remain > 0 {
+					h := int(remain.Hours())
+					m := int(remain.Minutes()) % 60
+					acct["daily_cooling_remain"] = fmt.Sprintf("%02d:%02d", h, m)
+				}
+			} else {
+				acct["daily_cooling"] = false
+			}
+			if err != nil {
+				acct["error"] = err.Error()
+			} else {
+				acct["credits"] = cr
+				acct["exhausted"] = isCreditsExhausted(cr)
+				acct["low_credits"] = isCreditsLowForRouting(cr)
+				// Also fetch plan so the badge updates on lazy load.
+				acct["plan"] = fetchPaymentType(sa)
+				// Update cache so subsequent dashboard loads see fresh data.
+				now := time.Now()
+				if cr != nil {
+					cr.FetchedAt = now.UTC().Format(time.RFC3339)
+				}
+				plan, _ := acct["plan"].(string)
+				accountCache.Store(f.ID, &accountCacheEntry{credits: cr, plan: plan, fetched: now})
+			}
+			return map[string]any{"accounts": []map[string]any{acct}}
+		}
+		return map[string]any{"error": "account not found"}
+	}
+	// All accounts: return simplified list.
+	type acctCredits struct {
+		AuthIndex string          `json:"auth_index"`
+		Nickname  string          `json:"nickname"`
+		UID       string          `json:"uid"`
+		Credits   *creditsSummary `json:"credits,omitempty"`
+		Error     string          `json:"error,omitempty"`
+	}
+	var out []acctCredits
+	for _, f := range files {
+		sa, err := hostAuthGet(f.AuthIndex)
+		if err != nil {
+			out = append(out, acctCredits{AuthIndex: f.AuthIndex, Error: "load auth: " + err.Error()})
+			continue
+		}
+		cr, err := fetchUserResource(sa)
+		ac := acctCredits{AuthIndex: f.AuthIndex, Nickname: sa.Account.Nickname, UID: sa.Account.UID}
+		if err != nil {
+			ac.Error = err.Error()
+		} else {
+			ac.Credits = cr
+		}
+		out = append(out, ac)
+	}
+	return map[string]any{"accounts": out}
+}
