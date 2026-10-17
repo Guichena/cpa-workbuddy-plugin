@@ -32,6 +32,14 @@
 
 ## 活动会话进展摘要
 
+- 当前会话（2026-10-18）：**qwenwork CYCLE-02 多账号调度：修复账号身份 key 失配（P0）**：
+  - 需求：用户「启动 CYCLE-02 多账号调度」，范围为账号池 / 调度三模式+会话粘性 / 冷却阶梯+换号重试。
+  - **核心缺陷（克隆遗留，P0）**：执行器把 `auth.accessToken` 当账号身份，而调度候选、冷却表、会话绑定、积分缓存全按宿主 `auth.ID`（`qwenwork-<uid>.json`，由 [authIDForPath](file:///C:/Users/luode/go/pkg/mod/github.com/router-for-me/!c!l!i!proxy!a!p!i/v7@v7.2.129/internal/pluginhost/auth_callbacks.go#L504) 从相对路径派生）索引。实测 token 是 552 字符 JWT ⇒ 冷却写到永远查不到的键 ⇒ 故障账号永不退出轮转，多账号调度退化为单账号。
+  - **修复 6 项**：① 新增 `accountIdentity()`，执行器与流式路径统一用宿主 `auth.ID`（流式补 `initialAuthID` 参数）；② `scheduler_mode: off` 解析补全（原被静默当 session）；③ keepalive 令牌刷新改 `foldCredentialIntoDoc` 折叠式直写，保住 `disabled`/`manual_disable`/`exhausted_disable`/计数/`daily_cooling_until`；④ `markSessionDead` 改直写；⑤ `hostAuthIndexForPhys` 补 Name/规范名两级匹配；⑥ 删除 `labelForAuth` 恒假分支。
+  - **验证**：新增 10 个单测；四次变异反证全部精确命中（身份退回 token / 删 off 解析 / 折叠改重建 / 同关两处冷却闸门 → 分别 2/1/2/4 个用例 FAIL）；真实 `.so` ctypes 探针 `test/qwenwork/multiaccount_probe.py` 9/9 PASS（含探针自身判别力变异验证）；WSL 真实 cgo 构建 + test + vet 全绿；gofmt 空；版本 0.1.0→**0.2.0**。
+  - **未验证（诚实标注）**：真实双账号端到端切换。本机仅 1 个真实账号，且失败路径需先过真实 MaaS 签发（`sharedHTTPClient` 直连，不经宿主桥），桩驱动无法不联网注入 401；该链路由「同键一致性单测 + 调度侧冷却排除单测」组合覆盖。
+  - **有意保留**：`clientUA = "qoderwork/1.3.1"` 是实测通过的 UA（探针同值），非残留；`isDailyCountExceeded` 的 110 判定实测四形态不误伤，留作防御。
+  - 文档：实施总览 § CYCLE-02 执行结果、`doc/5-tests/2026-10-18_021000_*`、`doc/6-review/2026-10-18_021000_*`（STYLE: PASS）。
 - 当前会话（2026-10-18）：**qwenwork-provider 0.1.0 立项实现并全链路发布**：
   - 需求背景：用户发现千问办公（qwenwork.cn，与 Qoder 不同产品）并希望做成 CPA 插件；先分析开源与插件库（无现成项目）→ 选方案 A 做真实登录验证 → 参照 workbuddy 插件功能实现。
   - **协议链路（真机实证）**：Device Flow + PKCE（`gateway.qwenwork.cn`，`clientId=e883ade2-…`，`redirect=qwenwork-cn://`）换宿主 token（JWT 7d）→ `POST /api/desktop-sessions`（**返回 201 非 200**）签发 `sk-mm-v1.*` 短票据（TTL 2h）→ 裸 Bearer 打 `{base_url}/v1/chat/completions`；轮换走 `POST {base}/v1/access-tokens/exchange`。MaaS 无 `/v1/models`（404），真实目录在 `GET /api/desktop/chat-modes`（`schema_version=2`，仅 flash / pro / qwen3.8-max-preview 三档）。
@@ -57,21 +65,13 @@
   - **CI 阻断修复（既有缺陷，非本轮引入）**：`go-cross/cgo-actions@v1` 内硬编码下载 FreeBSD `14.3-RELEASE/base.txz`，该版本已从 `download.freebsd.org/releases` 下线（404），既有 patch 指向的 `archive.freebsd.org/old-releases` 同样 404，导致全部 10 插件 freebsd-amd64 构建失败并连带 `Release` job 被 skipped。已改为在 wget 包装层把 `14.3-RELEASE` 改写为仍可用的 `14.4-RELEASE`。
   - **生产验收边界**：热重载后 15 分钟窗口内无断流事件，端到端「断流 → 换号 → 第二次成功」未能实证；已改为确认新符号 `shouldRotateOnStreamReadError` / `after partial output` / `daily cooling persist failed` 已进入三插件生产二进制（qoderwork 另含 `mergeActiveDailyCooling`），服务 `/v1/models` 200、无 error/panic 日志。后续需在真实断流发生时观察日志。
   - 文档：`doc/4-bugs/2026-10-17_202500_qoderwork流式中途断流不换号且24h冷却未落盘根因诊断.md`、`doc/3-实施/2026-10-17_203500_qoder三插件流式断流换号与冷却落盘修复实施总览.md`（§14 记录执行结果与偏差）。
-- 上一会话（2026-10-15）：**跨插件同步第二轮复检（只读审计）+ 两份计划文档更新**：
-  - 需求背景：用户「已经改了很多版本了，再次检查，还有哪些需要同步的，更新计划」。本轮以文件级 md5 对比 + 机制分布 grep + 版本矩阵复核对全部 9 插件做跨维度审计。
-  - **审计结论**：原同步目标（批次 A~D）全部闭环且被后续演进自然覆盖；5 个 Scheduler 插件 `handleSchedulerPick` 同构，copilot 已随 0.1.2（`0054c28`）补齐 `candidateDisabled`。
-  - **新登记 G1~G4**：G1（修复，建议优先）zcode `handleSchedulerPick` 越界缺陷——与 copilot 已诊断缺陷同款（忽略 `req.Candidates` 直接返回 `pickActiveAuth().AuthID`，ID 不带 `.json`），当前因调度器在任者是 copilot 而潜伏；G2（评估）http_status 通道推广；G3（需求）copilot 用量上报；G4（低优先级）token-usage-tracker 补 `traework` 显示映射分支。
-  - **文档更新**：`doc/3-实施/2026-10-10_235000_*同步workbuddy路由能力实施总览.md`（新增「〇之二、第二轮复检」节：原目标复核 + 7 条新事实 + 版本矩阵 + G1~G4 登记）与 `doc/3-实施/2026-10-11_043000_九大插件全景架构与演进计划总览.md`（八大→九大插件、copilot 行新增、矩阵重写、G1~G4 路线图）。
-  - 未决：G1 修复是否立即实施待用户裁定；copilot 0.1.2 与五插件冷却全灭语义统一改动待提交（并行会话在途）。
+- 上一会话（2026-10-15）：**跨插件同步第二轮复检（只读审计）**：以 md5 对比 + 机制分布 grep + 版本矩阵复核对 9 插件做跨维度审计，原批次 A~D 全部闭环；新登记 G1（zcode `handleSchedulerPick` 越界，因调度器在任者是 copilot 而潜伏）、G2（http_status 推广）、G3（copilot 用量上报）、G4（token-usage 补 traework 映射）。文档同步两份实施总览。
 
 - 当前会话（2026-10-15）：**qoder 双插件重建上游 messages 保留工具调用结构（qoderwork 0.9.40 / qoder-ai 0.1.20），全链路发布生产**：
-  - 需求背景：会话 `3ed4dd9f-109e-404e-8757-81b6d46d7ce1` 用 `qwen-3.8-flash` 时「推理老是突然推理一点点就结束、要不停继续提问」。根因诊断（`doc/4-bugs/2026-10-15_193641_*`）：主因是模板 `baseprompt.json` agent 会话上下文（无条件上行），放大器是插件重建 messages 只搬 `role`+`content`、丢掉 `assistant.tool_calls` 与 `tool.tool_call_id`。
-  - **实施（方案 A）**：`openAIMessage` 补 `ToolCalls`/`ToolCallID`/`Name` 三字段 + **自定义 `UnmarshalJSON` 同步解析**（关键陷阱：结构体带自定义 UnmarshalJSON 时加字段必须同步赋值，否则恒空）+ `buildQoderBody` 重建时按非零值条件保留三者；双插件逐行同构。
-  - **发布闭环**：`f74a5e8`(fix 10 文件) → `6d32f84`(assets 14/14 校验) → `d9e8592`(registry) → `5124003`(prune 两个旧版)；生产热重载 `active_version=0.9.40/0.1.20`、**零容器重启**（Up 42h）、落盘 `.so` sha256 与本地 zip 逐字节一致、accounts/panel 四路由全 200；远端 14/14 artifacts ALL PASS 无残留。
-  - 门禁：隔离 worktree（`git worktree add --detach HEAD` + 仅复制本轮 8 文件，工作树含 20+ 并行会话文件）cgo-shim build/vet/test 全绿；两组哨兵变异各精确 FAIL 一项后恢复全绿（重建逻辑 → `TestBuildQoderBodyPreservesToolPairing`；UnmarshalJSON 赋值 → `TestOpenAIRequestPreservesToolStructure`）；提交按踩坑 57 路径限定，并行文件完好未混入。
-  - **⚠️ 方案 A 判别力边界（生产 A/B 实测，诚实标注）**：单工具任务（带配对历史 + tools）PAIRED 与 BROKEN **均收敛** 6/6 ⇒ 无判别力；探索型任务（「分析所有 Python 脚本各自作用」+ 2 轮历史）PAIRED 与 BROKEN **均不收敛**，各 3/3 发 tool_calls ⇒ 方案 A 修的是明确缺陷（结构丢失），**不承诺消除探索型任务的持续工具调用**；探索倾向抑制（方案 B）需另行评估。
-  - 未决：① 方案 B 待评估；② `chat_context.text` 在 agent loop 中恒回退最初提问是否致每轮从头探测（需上游裸直连验证）；③ 上游是否真正消费 `messages[].tool_calls`（未做裸直连 A/B）。
-  - 文档：`doc/4-bugs/2026-10-15_193641_qwen-3.8-flash客户端声明tools致上游持续发起工具调用而推理提前结束根因诊断.md`（第七节已更新为修复已发布态）。
+  - 根因：模板 `baseprompt.json` 的 agent 上下文（主因）+ 插件重建 messages 只搬 `role`/`content`、丢掉 `assistant.tool_calls` 与 `tool.tool_call_id`（放大器）。
+  - **方案 A**：`openAIMessage` 补 `ToolCalls`/`ToolCallID`/`Name` + **自定义 `UnmarshalJSON` 同步解析**（陷阱：带自定义 UnmarshalJSON 时加字段必须同步赋值，否则恒空）+ `buildQoderBody` 按非零值保留三者；双插件同构。发布链 `f74a5e8`→`6d32f84`(14/14)→`d9e8592`→`5124003`，热重载零重启，远端 14/14 ALL PASS。
+  - **⚠️ 判别力边界**：单工具任务 PAIRED/BROKEN 均收敛 6/6（无判别力）；探索型任务均不收敛（各 3/3 发 tool_calls）⇒ 修的是结构丢失，**不承诺消除探索型持续工具调用**。
+  - 未决：方案 B 待评估；`chat_context.text` 是否致每轮从头探测（需裸直连）；上游是否真消费 `messages[].tool_calls`。
 
 - 上一会话（2026-10-15）：**五插件签到节奏统一为每 4 小时，四插件全链路发布生产（qoderwork 0.9.38 / qoder-ai 0.1.18 / workbuddy 0.15.10 / traework 0.2.13）**：
   - 需求背景：用户裁定「把所有支持签到的插件改成每 4 小时尝试签到一次」。**关键事实**：5 个签到插件中 workbuddy / workbuddy-ai / traework 后端本就已是每 4 小时六槽，只有 qoderwork / qoder-ai 在 2026-10-12 被收敛为 `[10,22]`；zcode / cursor 不支持签到。
@@ -145,17 +145,12 @@
   - **Kiro 可行性评估（CYCLE-5，评估非实现）**：结论**不立项**。① Kiro FAQ 明文禁第三方 harness；② 免费档仅 **50 credits/月**；另有社区终局封禁实证。报告 `doc/3-实施/2026-10-15_235000_Kiro可行性评估报告.md`。
 
 - 会话（2026-10-13，更早历史已压缩，详见 git log 与 PROJECT_HISTORY.md）：
-  - **六插件 max_tokens 统一 32768 最低输出底线**：`model_specs.go` 新增 `minMaxTokensFloor=32768` + `applyMaxTokensFloor`，兜底 ReasoningMax 8192→32768，四个出口全部经 floor 收敛，广播层与 traework payload 层同步保底；zcode 规格矩阵由 14 扩至 64 条（最长前缀优先 + `vendor/` 剥离）；workbuddy/workbuddy-ai/traework 定时探活改「全量按序 any-success」，zcode 新增探活（30 分钟节流）；发布链 `7ec23c0`→`0aaaa65`/`b2b82e7`→`02e7375`→`82e437f`，六插件生产热重载零重启。
-  - **Qoder 110 日调用上限 24 小时持久化冷却引擎（qoder-ai 0.1.14 / qoderwork 0.9.34）**：`isDailyCountExceeded` 精确识别 110；`daily_cooldown.go` 落盘 `daily_cooling_until` + 内存镜像 + watchdog 重建；路由/换号/会话粘性绝对排除，`resetAccountFailover` 刻意保留冷却；新增 `POST /clear-cooldown` 与面板冷却徽标。发布中发现并前向修复 0.1.13 漏登记路由致宿主空 body 404。
-  - **按模型官方规格自适应放宽/截断 max_tokens**：根因是 Qoder 客户端写死 `max_output_tokens=8192`，长思维链吃满配额致正文被 `finish_reason: length` 截断（`output_tokens=reasoning_tokens=8192`，new-api 报无法扣费）。方案：内置官方规格表，推理模式自动放宽至官方上限、超限 clamp、元数据保底对齐。
-  - **ZCode 0.1.15 claim 端点**（后被 0.1.22 推翻为「领取指引」，0.1.28 再以无感验证实现）：claim 链路需 `X-Aliyun-Captcha-Verify-Param` + `sgp` 区域。
-  - **ZCode 0.1.14 修复用量管道/别名/额度刷新**：`usage_feed.go` 写孤立路径且缺 `tokens` 嵌套；`ExecutorModelScopeStatic` 误声明致别名未绑定；改 `ExecutorModelScopeOAuth` + `normalizeOfficialGLMModelID`。
-  - **qoder 两插件修复排队帧未识别致 60s 挂死（0.1.9 / 0.9.30）**：`parseQoderSSEChunk` 增第 4 类顶层 `code` 形态 + `unwrapNestedMessage` 逐层展开，三路径循环内即刻收尾，行为统一「立即报错」；哨兵反证移除识别分支后精确复现 10.00s 挂死。
-  - **删除 Gemini 插件（gemini-provider）**：体积 14.4MB、强依赖 GCP 结算、无面板与容灾 → `git rm` 后 registry 与 workflow 同步（9→8 插件）。
-  - **ZCode OAuth 重构为官方 CLI 轮询链路（0.1.5→0.1.8）**：`POST /api/v1/oauth/cli/init` + `GET .../cli/poll/<flow_id>`；redirect_uri 白名单结论经三臂实测推翻，真因是 deep-link 唤起本地客户端。
-  - **Qoder 403 首包假成功与流式诊断**：HTTP 200 下 `isQueued:true` 报错帧 + 连接僵死 60s、探活盲读 512 字节误判成功；生产 nginx `proxy_buffering off` 平滑重载后外网 1.35s 端到端。
-  - **deepseek-v4.1-flash 推理断开根因**：同名裸模型多服务商认领 + 会话亲和钉死故障服务商 + 两个 30s 超时串行；traework 补 `filterExcludedModels`。
-  - **Token 用量面板移除 4 图表（0.2.6/0.2.7/0.2.8）**：下线 `/stats/trends` 与序列聚合；0.2.7 修换句柄窗口丢记录（`ErrStoreClosed` 哨兵），0.2.8 让退役实例协程自退。
+  - **六插件 max_tokens 统一 32768 底线**：`applyMaxTokensFloor` 四出口收敛；zcode 规格矩阵 14→64 条；四插件探活改「全量按序 any-success」。
+  - **Qoder 110 日上限 24h 持久化冷却**：`isDailyCountExceeded` 精确识别 110；`daily_cooling_until` 落盘 + 内存镜像 + watchdog 重建；路由/换号/粘性绝对排除，`resetAccountFailover` 刻意保留；新增 `POST /clear-cooldown` 与面板徽标。
+  - **max_tokens 官方规格自适应**：Qoder 客户端写死 `max_output_tokens=8192` 致思维链吃满配额、正文被 `finish_reason: length` 截断；内置规格表，推理模式放宽至官方上限、超限 clamp。
+  - **ZCode 0.1.14/0.1.15**：修 `usage_feed.go` 孤立路径与缺 `tokens` 嵌套、`ExecutorModelScopeStatic` 误声明致别名未绑定（改 `ExecutorModelScopeOAuth`）；claim 需 `X-Aliyun-Captcha-Verify-Param` + `sgp`（后被 0.1.28 无感验证取代）。
+  - **qoder 排队帧未识别致 60s 挂死（0.1.9 / 0.9.30）**：`parseQoderSSEChunk` 增第 4 类顶层 `code` 形态 + `unwrapNestedMessage` 逐层展开；哨兵反证移除后精确复现 10.00s 挂死。
+  - **删除 Gemini 插件**（体积 14.4MB、强依赖 GCP 结算、无面板与容灾）；**ZCode OAuth 重构为官方 CLI 轮询**（0.1.5→0.1.8，deep-link 唤起本地客户端）；**Qoder 403 首包假成功与流式诊断**（生产 nginx `proxy_buffering off` 后外网 1.35s）；**deepseek-v4.1-flash 推理断开根因**（同名裸模型多服务商认领 + 会话亲和钉死）；**Token 用量面板移除 4 图表**（0.2.6~0.2.8）。
 
 - （更早的 13 条会话进展摘要已按 51200 字节上限裁剪，历史见 git log 与 PROJECT_HISTORY.md）
 
@@ -175,7 +170,7 @@
 {
   "version": 5,
   "registry_schema": "task_plan_projection_registry",
-  "registry_updated_at": "2026-10-17T13:26:54.757596Z",
+  "registry_updated_at": "2026-10-17T18:06:46Z",
   "projections": [
     {
       "projection_id": "SESSION/30608b3616fa2311bfb720a2776c09ac96b2738601ec3752b03a252c810cdb70",
@@ -373,6 +368,44 @@
         {
           "id": "TASK-005",
           "step": "[TASK-005] qoder-ai 断流换号与信封状态码扩展",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "projection_id": "SESSION/dd4640b0e3990effb3a66aee0da5c3fe25288b12610cbe5e75c08c80d2a34b14",
+      "session_id": "bbc80e05-e600-4495-bdc2-9fd5e1bfc7cf",
+      "projection_origin": "persisted",
+      "synthesis_mode": "none",
+      "state": "active",
+      "plan_key": "IMPL-QWENWORK-MULTI-ACCOUNT-20261018",
+      "source_document": "doc/3-实施/2026-10-17_234000_QwenWorkProvider插件立项_实施总览.md",
+      "plan_fingerprint": "21081b87f6808d09b806eb30cc74aedcc99e3c61226a4fa090740970209e032f",
+      "updated_at": "2026-10-17T18:06:46Z",
+      "steps": [
+        {
+          "id": "TASK-001",
+          "step": "[TASK-001] 侦察 qwenwork 多账号/调度/冷却现状与 CYCLE-02 差距",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-002",
+          "step": "[TASK-002] 账号池与账号落盘对齐（含令牌刷新折叠式直写）",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-003",
+          "step": "[TASK-003] 调度三模式 + 会话粘性对齐（含 off 解析修复）",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-004",
+          "step": "[TASK-004] 冷却阶梯 + 换号重试对齐（账号身份 key 统一为宿主 auth.ID）",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-005",
+          "step": "[TASK-005] 双账号故障切换验证 + 文档与风格收口",
           "status": "completed"
         }
       ]

@@ -329,7 +329,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.1.0"
+var version = "0.2.0"
 
 func wbRegistration() registration {
 	return registration{
@@ -685,18 +685,19 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 	var (
 		completion    []byte
 		completionErr error
-		usedAuthID    = req.AuthID
+		// 账号身份一律用宿主 auth.ID（req.AuthID，形如 qwenwork-<uid>.json）。
+		// 它是调度候选、冷却表、会话绑定、积分缓存共用的唯一 key；绝不能
+		// 用 accessToken 代替——宿主 ID 与凭据无关，混用会让冷却写入落到
+		// 永远查不到的键上，故障账号因此永不退出轮转。
+		usedAuthID = strings.TrimSpace(req.AuthID)
 	)
 
 	// 前置冷却拦截：若初始账号处于冷却中，直接换号到健康候选
-	initID := strings.TrimSpace(req.AuthID)
+	initID := usedAuthID
 	if initID == "" && curSA != nil {
-		initID = strings.TrimSpace(curSA.Auth.AccessToken)
-		if initID == "" {
-			initID = strings.TrimSpace(curSA.Account.UID)
-		}
+		initID = accountIdentity(curSA)
 	}
-	if initID != "" && (isAccountCoolingDown(initID) || (curSA != nil && curSA.Account.UID != "" && isAccountCoolingDown(curSA.Account.UID))) {
+	if initID != "" && isAccountCoolingDown(initID) {
 		if nextID, nextSA, hasNext := pickNextAuth(initID); hasNext && nextSA != nil {
 			curSA = nextSA
 			usedAuthID = nextID
@@ -711,12 +712,6 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 	for attempt := 0; attempt <= budget; attempt++ {
 		completion, completionErr = doExecuteOnceQwenWork(body, curSA, req.Model, sessionKey)
 		if completionErr == nil {
-			// Resolve the scheduler-level ID used by noteAccountFailure /
-			// reset bookkeeping: access token first, UID fallback.
-			usedAuthID = strings.TrimSpace(curSA.Auth.AccessToken)
-			if usedAuthID == "" {
-				usedAuthID = strings.TrimSpace(curSA.Account.UID)
-			}
 			// The account that actually served the request may differ from the
 			// initial one after failover; keep counter/feed bookkeeping in
 			// lockstep with it.
@@ -739,10 +734,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 		statusCode := parseUpstreamStatusFromErr(completionErr)
 		currentID := ""
 		if curSA != nil {
-			currentID = strings.TrimSpace(curSA.Auth.AccessToken)
-			if currentID == "" {
-				currentID = strings.TrimSpace(curSA.Account.UID)
-			}
+			currentID = accountIdentity(curSA)
 		}
 		if isDailyCountExceeded(statusCode, completionErr.Error()) && currentID != "" {
 			logDailyCooldownPersistFailure(currentID, triggerDailyCooldown("", currentID))
@@ -751,17 +743,14 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 			break
 		}
 		evictSessionBindingsForAuth(currentID)
-		_, nextSA, hasNext := pickNextAuth(currentID)
+		nextID, nextSA, hasNext := pickNextAuth(currentID)
 		if !hasNext || nextSA == nil {
 			break
 		}
 		curSA = nextSA
 		// Keep the failover/credit bookkeeping ID in lockstep with the
 		// account that will actually serve the next attempt.
-		usedAuthID = strings.TrimSpace(curSA.Auth.AccessToken)
-		if usedAuthID == "" {
-			usedAuthID = strings.TrimSpace(curSA.Account.UID)
-		}
+		usedAuthID = nextID
 	}
 	if completionErr != nil {
 		statusCode := parseUpstreamStatusFromErr(completionErr)
@@ -844,6 +833,25 @@ func applyMaasHeaders(req *http.Request, sess *maasSession) {
 	req.Header.Set("Authorization", "Bearer "+sess.AccessKey)
 }
 
+// accountIdentity 返回账号在调度/冷却/会话绑定/积分缓存中的统一 key。
+//
+// 宿主给执行器的 AuthID 就是 auth.ID（相对 auth 目录的文件名，形如
+// qwenwork-<uid>.json），与调度候选 ID 完全同源；缺失时退回按 UID 构造的
+// 文件名，保证任何路径都不会把凭据本身当成账号身份。
+//
+// [参数] sa 账号凭据。
+// [返回] 非空时返回宿主 ID 形态的 key；无法推导时返回空串。
+// 最近修改时间：2026-10-18 01:40:00；改动原因：修正 accessToken 误作账号身份。
+func accountIdentity(sa *storedAuth) string {
+	if sa == nil {
+		return ""
+	}
+	if uid := sanitizeUIDForFileName(sa.Account.UID); uid != "" {
+		return authFilePrefix + uid + ".json"
+	}
+	return ""
+}
+
 // stripProviderPrefix removes the leading "qwenwork/" (or any "<provider>/")
 // segment from a CPA-facing model name, leaving the bare alias/key.
 func stripProviderPrefix(model string) string {
@@ -908,7 +916,7 @@ func handleExecStream(raw []byte) ([]byte, error) {
 	// No async stream id → fall back to synchronous chunk collection.
 	if req.StreamID == "" {
 		collector := &sseUsageCollector{}
-		chunks, statusCode, errCollect := collectUpstreamStreamOpenAI(body, sa, sessionKey, sseFramed, collector)
+		chunks, statusCode, errCollect := collectUpstreamStreamOpenAI(body, sa, sessionKey, sseFramed, collector, req.AuthID)
 		if errCollect != nil {
 			publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, statusCode, errCollect.Error(), reasoningEffort, collector.ttftNS(started), accountLabel, sessionKey)
 			// Unlike the workbuddy plugin, collectUpstreamStreamQoder does not

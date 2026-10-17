@@ -335,15 +335,15 @@ func displayNote(sa *storedAuth, cr *creditsSummary, disabled bool) string {
 	return note
 }
 
-// labelForAuth adds [CN] for host labels.
+// labelForAuth 构造宿主展示用的账号标签。
+//
+// [参数] sa 账号凭据。
+// [返回] 形如 "昵称 [CN]" 的展示标签；昵称为空时用 "QwenWork"。
+// 最近修改时间：2026-10-18 02:05:00；改动原因：删除恒假的 region 分支（QwenWork 只有 CN）。
 func labelForAuth(sa *storedAuth) string {
 	base := "QwenWork"
 	if sa != nil && strings.TrimSpace(sa.Account.Nickname) != "" {
 		base = strings.TrimSpace(sa.Account.Nickname)
 	}
-	tag := "CN"
-	if "cn" == "global" {
-		tag = "CN"
-	}
-	return base + " [" + tag + "]"
+	return base + " [CN]"
 }

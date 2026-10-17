@@ -5,6 +5,8 @@
 ## 事件
 
 
+- 2026-10-18：**qwenwork CYCLE-02 多账号调度：修复账号身份 key 失配（P0，0.2.0）**——用户「启动 CYCLE-02 多账号调度」，范围含账号池 / 调度三模式+会话粘性 / 冷却阶梯+换号重试。**核心缺陷（克隆遗留）**：执行器把 `auth.accessToken` 当账号身份，而调度候选、冷却表、会话绑定、积分缓存全按宿主 `auth.ID`（`qwenwork-<uid>.json`，由宿主 `authIDForPath` 从相对路径派生）索引；实测 token 是 552 字符 JWT，两者形态完全不同 ⇒ 冷却写到永远查不到的键 ⇒ 故障账号永不退出轮转，**多账号调度实际退化为单账号**。**修复 6 项**：① 新增 `accountIdentity()`，执行器与流式路径统一用宿主 `auth.ID`（流式补 `initialAuthID` 参数）；② `scheduler_mode: off` 解析补全（原被静默当 session）；③ keepalive 令牌刷新改 `foldCredentialIntoDoc` 折叠式直写，保住 `disabled`/`manual_disable`/`exhausted_disable`/计数/`daily_cooling_until`（原 `buildAuthFileJSON` 重建 payload 会全丢）；④ `markSessionDead` 改直写；⑤ `hostAuthIndexForPhys` 补 Name/规范名两级匹配；⑥ 删除 `labelForAuth` 恒假分支 `"cn" == "global"`。**验证**：新增 10 个单测；**四次变异反证全部精确命中**（身份退回 token → 2 FAIL / 删 off 解析 → 1 FAIL / 折叠改重建 → 2 FAIL / 同关两处冷却闸门 → 4 FAIL）；真实 `.so` ctypes 探针 `test/qwenwork/multiaccount_probe.py` **9/9 PASS**，且探针自身判别力经变异验证（删 off 解析 → off 用例 FAIL）；WSL 真实 cgo 构建 + test + vet 全绿；`gofmt -l` 空；版本 0.1.0→**0.2.0**。**未验证（诚实标注）**：真实双账号端到端切换——本机仅 1 个真实账号，且失败路径需先过真实 MaaS 签发（`sharedHTTPClient` 直连，不经宿主桥），桩驱动无法不联网注入 401；该链路由「同键一致性单测 + 调度侧冷却排除单测」组合覆盖。**有意保留**：`clientUA = "qoderwork/1.3.1"` 是实测通过的 UA（探针同值）非残留；`isDailyCountExceeded` 的 110 判定实测四种常见形态均不误伤，留作防御。文档：实施总览 § CYCLE-02 执行结果、`doc/5-tests/2026-10-18_021000_*`、`doc/6-review/2026-10-18_021000_*`（STYLE: PASS）。
+
 - 2026-10-18：**新增 qwenwork-provider 插件（千问办公，0.1.0 首发），全链路发布 registry**——用户发现千问办公（qwenwork.cn，与 Qoder 是不同产品）并希望做成 CPA 插件，先要求分析 GitHub 与 CPA 插件库是否有开源项目（无现成实现），选定方案 A 做真实登录验证，随后要求「参考 workbuddy 插件的功能来实现」。**协议链路（真机实证）**：Device Flow + PKCE（`gateway.qwenwork.cn`，`clientId=e883ade2-…`，`redirect=qwenwork-cn://`，一次性 nonce + 纯 UUID machine_id）换宿主 token（JWT 7d）→ `POST /api/desktop-sessions`（**实测返回 201 非 200**）签发 `sk-mm-v1.*` 短票据（TTL 2h）→ 裸 Bearer 打 `{base_url}/v1/chat/completions`；轮换走 `POST {base}/v1/access-tokens/exchange`。MaaS 无 `/v1/models`（404），真实模型目录在 `GET /api/desktop/chat-modes`（`schema_version=2`，仅 flash / pro / qwen3.8-max-preview 三档）。**关键架构判断**：QwenWork 说标准 OpenAI 协议，故推理改**请求体透传**（`payload.go` 仅强制 `stream=true` + `max_tokens` 自适应放宽），Qoder 的 `agent_chat_generation` 模板 + 自定义 base64 编码 + COSY 签名在上游无对应物，整条模板链（`baseprompt.json` 59KB / `encoding.go` / `buildQoderBody` / `alignToolsWithClient`）删除。管理路由收敛为 13 条（移除 checkin / growth / trial / claim-pro / PAT import）；版本三处统一 `0.1.0`。**验证**：cgo-shim build/vet/test 全绿（145 个 Test 函数）；WSL 真实 cgo 构建 7.85MB ELF，`cliproxyPluginCall`/`Free`/`Shutdown` 符号齐全、版本串 `0.1.0`、`gateway.qwenwork.cn` ×6、`qoder.com.cn` ×0；真实账号 MaaS 签发 201 + OpenAI(`glm-5.2`) 与 Anthropic(`qwen3.8-max`) 双协议推理均 200。**发布链**：`a9585c7`(源码 69 文件 + CI 8 处接入点同提交) → CI run `39050879075` success（Test 12/12 + 7 平台构建全绿）→ `91e050e`(assets) → `14bc392`(对齐并行会话下线的 freebsd，改 6 平台) → `3568d37`(registry + 官方图标)；远端 6/6 artifacts HTTP 200 且 Content-Length 与 registry size 逐一相符，registry 11 插件无空 artifacts 条目，按宿主 `internal/pluginstore` 源码复刻的校验谓词全部通过。**并行会话冲突处置（两条关键教训）**：① 先前补的 CI 接入点被 `99034bb` 以「qwenwork/go.mod 未入库致 setup-go 失败、连带跳过所有插件 Release job」为由移除——**新插件的源码与 CI 接入点必须同一提交落地**，本轮据此重做；② `398a206` 提前写入的 coze-provider `artifacts: []` 占位条目（其 GitHub release 实测 404）会让 CPA **整体拒绝 registry 源**，已由 `13cb542` 撤回，待 coze 产物就绪后再由 `publish-assets.py` 回填。**图标修正**：`pluginLogoURL` 原指向 `DGZSbot/ai-icon/QwenWork.png`（实测 404，面板与账号行会破图），改为仓库内 `assets/icons/QwenWork.png`（取自千问办公客户端自带的官方 1024×1024 资源）。**未验证**：生产 `plugin-store install` 与热重载（本轮止于 registry 发布）；多账号调度、配额生命周期、Anthropic 输出（CYCLE-02/03/06 未启动）。
 
 
@@ -50,9 +52,6 @@
 
 - 2026-10-11：qoderwork-provider **0.9.27 修复 CN 每日签到「返回刷新成功但积分不变」（签到端点迁移 campaigns）**——用户报错：生产 QoderWork 账号积分 188，客户端显示可签到 +100，但签到不成功、只返回后台刷新、积分不变。根因（缺陷 C，与上一轮 0.9.26 缺陷 A 不同源）：CN 签到误用已废弃端点 `/sash/api/v1/me/daily-check-in/{status,claim}`；生产 token 实测 `status` 恒 `{"status":"DISABLED","campaignKey":"cn_daily_check_in_legacy"}`、`claim` 恒 HTTP 409 `AlreadyExists`，永远领不到积分。CN 官方客户端 v0.4.4（`com.qodercn.app.stable`）反解 + 运行日志证实真实签到走 campaigns API（`GET /sash/api/v1/me/campaigns` + `POST .../{campaignId}/claim`），且必须带 `Cosy-ClientType:10`+`User-Agent:Qoder` 头（缺头时列表被掩盖为 `showCampaign:false, campaigns:[]`）；与 qoder-ai 国际版 0.1.4 完全同源。修复：`main.go` 换 `endpointCampaigns`/`endpointCampaignClaim`；`billing.go` 新增 `campaignHeaders` + campaigns 解析 + `pickCheckinCampaign` + `performCheckinCall(sa,campaignID)`；`checkin.go` 传 `ci.CampaignID`、`!Active` 如实返回、summary 加 `no_activity`；`management.go` 加 `campaign_id`；`panel.html` 文案对齐。本地 `cgo-shim-build.py qoderwork` 全绿 + 双反证（`ClaimStatus` 破坏 → `TestPickCheckinCampaign_ClaimedInWindow` 必失败；删 Cosy 头 → `TestCampaignHeaders_CosyContract` 必失败）+ 提交态独立编译全绿（`git archive HEAD` + 叠加本轮文件）。发布链：`5b4acba` → CI run `38119587051` success（push-run `38119563064` 含 `Test (qoderwork) success`）→ assets `c568ce4` → registry `6a801b4`（0.9.27，7 平台 sha256/size ALL PASS、零残留）→ prune `bdda55a`（仅删自己的 0.9.26，保留并行会话在制的 qoder-ai 0.1.6）→ 文档 `dc94498`。生产部署：`plugin-store install 0.9.27` 落盘 `.so` sha256 `99733396c1bf3533e09274acfe175bd05fb87de60685f61be32a7d2e018c4085` 与本地 zip 逐字节一致，日志 `plugin hot reloaded active_version=0.9.27 retired_version=0.9.26`；**行为验收：生产账号 `u09a5b6ab`（`5643c3de6d95bacf`）真实签到 `success:true` + 「签到成功」，积分 188 → 288（+100）**；幂等复签返回 `reason=already, skipped=true,「今日已签到」` 不再报错。
 
-- 2026-10-11：qoderwork-provider **0.9.26 修复宿主 HTTP 桥状态码解码错误（签到假成功根因，与 qoder-ai 0.1.3 同源）并发布部署**——用户报错：生产 QoderWork 账号 `u09a5b6ab` 可签到但「签到好像有 bug，无法签到」，面板显示签到成功却拿不到积分（假成功）。根因：`qoderwork/host_bridge.go` 用 `json:"status_code"` 解码宿主 `host.http.do` 响应，而宿主 v7.2.x 序列化 `pluginapi.HTTPResponse` 无 json tag，线协议键名是 PascalCase `{"StatusCode":404,...}`；下划线标签既不精确匹配也不构成大小写不敏感匹配 → `StatusCode` 恒为 0 → `if resp.StatusCode >= 400` 永不触发 → 404/4xx/5xx 被当 200 成功；`performCheckinCall` 再对缺 `success` 字段的响应盲归一化 `m["success"]=true` → 对外「签到成功」但积分不变。修复：移植 `parseHostHTTPDoResult`（PascalCase 优先 + 下划线防御性回退）；`performCheckinCall` 缺 `success` 布尔字段即返回 `success:false`。本地 `cgo-shim-build.py qoderwork` 全绿 + 反证（改回旧标签必失败，`StatusCode = 0, want 200`）。发布链：`72ce2d0` → CI run `38064786540` 65/65 success → `fb07a16`（8 资产）→ `712cfc6`（registry 0.9.26）→ `c37fea5`（prune 0.9.25）→ `20e6b01`（文档）；远端 7 平台 zip sha256 全等、旧版资产 404。生产部署：`plugin-store install` 0.9.26 落盘 `.so` sha256 `53a909b0e84bc70483db55ee94bfb928345eb3bdc0eacce4f60f396aa0fd29c1` 与本地 zip 一致，日志 `plugin loaded/registered version=0.9.26`；行为验收生产账号 `u09a5b6ab`（`6a155a864014ffd8`）调用 `/checkin` 返回 `success:false` + 真实上游 `http 409 AlreadyExists`（summary fail:1），由「假成功」变为如实失败。
-
-
 ## 计数锚点区
 
 > 本区由 `memory-usage-tracking-rules` 收口闸门维护：HISTORY 仅窄读计入，会话启动不读不计；被裁剪事件的锚点随事件一起删除（不保留 retired）；本区计数仅作主题热度弱信号。锚点 key 用事件 `- YYYY-MM-DD：` 后的核心主题短语（约前 12 字符，可前缀匹配）。
@@ -60,6 +59,11 @@
 ```yaml
 version: 1
 anchors:
+- title: 'qwenwork CYCLE-02 多账号调度：修复账号身份 key 失配'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
 - title: '**qoder 两插件重建上游 messages 时保留工具调用配对结构'
   usage_count: 0
   usage_days: 0
@@ -141,11 +145,6 @@ anchors:
   last_used_at: null
   absorbed_to: null
 - title: 'qoderwork-provider **0.9.27 修复 CN'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
-  absorbed_to: null
-- title: 'qoderwork-provider **0.9.26 修复宿主'
   usage_count: 0
   usage_days: 0
   last_used_at: null

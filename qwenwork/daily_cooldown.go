@@ -308,16 +308,40 @@ func refreshDailyCoolingSetFromDisk() int {
 	return count
 }
 
-// hostAuthIndexForPhys 根据 authID 反查对应的宿主 auth_index。
-// [参数] authID: 账号认证唯一标识。
+// hostAuthIndexForPhys 根据账号标识反查对应的宿主 auth_index。
+//
+// 账号标识可能来自三条路径：宿主 auth.ID（qwenwork-<uid>.json）、裸 UID、
+// 或已归一化的文件名。这里按「ID → Name → UID」逐级匹配，避免因形态差异
+// 反查失败而让冷却只停在内存、无法落盘。
+//
+// [参数] authID: 账号标识。
 // [返回] 匹配的 auth_index；未找到返回 errAuthMissing()。
+// 最近修改时间：2026-10-18 01:55:00；改动原因：补 Name/UID 级匹配，兼容不同标识形态。
 func hostAuthIndexForPhys(authID string) (string, error) {
+	authID = strings.TrimSpace(authID)
+	if authID == "" {
+		return "", errAuthMissing()
+	}
 	files, err := hostAuthList()
 	if err != nil {
 		return "", err
 	}
+	// 1. 直接命中宿主 auth.ID。
 	for _, f := range files {
 		if f.ID == authID {
+			return f.AuthIndex, nil
+		}
+	}
+	// 2. 命中文件名（调用方可能传 qwenwork-<uid>.json）。
+	for _, f := range files {
+		if strings.EqualFold(f.Name, authID) {
+			return f.AuthIndex, nil
+		}
+	}
+	// 3. 命中裸 UID：与 authFileNameFor 生成的规范名比较。
+	wantName := authFilePrefix + sanitizeUIDForFileName(authID) + ".json"
+	for _, f := range files {
+		if strings.EqualFold(f.Name, wantName) {
 			return f.AuthIndex, nil
 		}
 	}

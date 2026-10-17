@@ -93,9 +93,14 @@ func configure(raw []byte) {
 				if strings.HasPrefix(line, "scheduler_mode:") {
 					v := strings.TrimSpace(strings.TrimPrefix(line, "scheduler_mode:"))
 					v = strings.Trim(v, "\"'")
-					if v == schedulerModeCredits {
+					// 三值都要识别：off 表示插件完全不参与路由（交还宿主内置
+					// 调度），漏掉它会让用户显式配置的 off 被静默当成 session。
+					switch v {
+					case schedulerModeOff:
+						nextSchedulerMode = schedulerModeOff
+					case schedulerModeCredits:
 						nextSchedulerMode = schedulerModeCredits
-					} else if v == schedulerModeSession {
+					case schedulerModeSession:
 						nextSchedulerMode = schedulerModeSession
 					}
 				}

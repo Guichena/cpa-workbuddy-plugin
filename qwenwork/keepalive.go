@@ -131,38 +131,63 @@ func refreshOneAuth(authIndex, authID string) (string, error) {
 	return "refreshed", nil
 }
 
-// persistAuthTokens writes the updated credential back through the host API.
-// The host's file watcher reloads it; we deliberately do NOT dual-write the
-// physical path (same rule as hostAuthPersist).
+// persistAuthTokens 把刷新后的凭据写回磁盘。
 //
-// MUST go through buildAuthFileJSON with the CURRENT top-level fields from
-// the physical file — a bare json.Marshal(sa) would drop type/provider/logo/
-// disabled/note, resurrecting accounts that lifecycle disabled (P0: a keepalive
-// keepalive refresh used to wipe disabled:true and put the account back into
-// rotation).
+// 1. 走物理直写而不是 host.auth.save：后者只接受插件给出的整份 JSON，
+// 重建 payload 会丢掉任何未显式搬运的顶层字段。
+// 2. 折叠而非重建：以磁盘现有文档为基线，只替换 auth/account 两棵子树，
+// 其余顶层字段（disabled / note / manual_disable / exhausted_disable /
+// success_count / daily_cooling_until …）原样保留。
+//
+// [参数] authIndex 宿主 auth 索引；sa 刷新后的账号凭据。
+// [返回] 落盘成功返回 nil。
+// 最近修改时间：2026-10-18 01:50:00；改动原因：改为保留式折叠，修复刷新丢顶层字段。
 func persistAuthTokens(authIndex string, sa *storedAuth) error {
 	phys, err := hostAuthGetPhysical(authIndex)
 	if err != nil {
 		return err
 	}
+	if phys == nil || len(phys.JSON) == 0 {
+		return errAuthMissing()
+	}
 	name := phys.Name
 	if name == "" {
 		name = authFileNameFor(sa)
 	}
-	// Carry over the note currently on disk (lifecycle writes credit/status
-	// notes there; dropping it would regress the panel display).
-	note := ""
-	var doc map[string]any
-	if err := json.Unmarshal(phys.JSON, &doc); err == nil {
-		if s, ok := doc["note"].(string); ok {
-			note = s
-		}
-	}
-	raw, err := buildAuthFileJSON(sa, phys.Disabled, note, nil)
+	raw, err := foldCredentialIntoDoc(phys.JSON, sa)
 	if err != nil {
 		return err
 	}
-	return hostAuthSaveJSON(name, raw)
+	return persistAuthDirect(name, phys.Path, "", raw)
+}
+
+// foldCredentialIntoDoc 把刷新后的凭据折叠进现有 auth 文档。
+//
+// 只覆盖 auth 与 account 两棵子树，其余顶层字段全部保留；这是「刷新令牌
+// 不应改变账号运营状态」的直接表达。
+//
+// [参数] base 磁盘上的原始 auth JSON；sa 刷新后的账号凭据。
+// [返回] 折叠后的 JSON；base 无法解析时返回错误而不是静默重建。
+// 最近修改时间：2026-10-18 01:50:00；新增函数。
+func foldCredentialIntoDoc(base []byte, sa *storedAuth) ([]byte, error) {
+	if sa == nil {
+		return nil, fmt.Errorf("nil storedAuth")
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(base, &doc); err != nil || doc == nil {
+		return nil, fmt.Errorf("parse existing auth json: %w", err)
+	}
+	storage, err := json.Marshal(sa)
+	if err != nil {
+		return nil, err
+	}
+	var nested map[string]any
+	if err := json.Unmarshal(storage, &nested); err != nil {
+		return nil, err
+	}
+	doc["auth"] = nested["auth"]
+	doc["account"] = nested["account"]
+	return json.Marshal(doc)
 }
 
 // markSessionDead logs the session-dead condition but does NOT write
@@ -170,10 +195,18 @@ func persistAuthTokens(authIndex string, sa *storedAuth) error {
 // toggle controls the disabled flag. Auto-failover routing handles dead
 // accounts via the failure cooldown (laddered 30s..10min) without needing
 // disabled:true.
+//
+// [参数] authIndex 宿主 auth 索引；authID 宿主 auth.ID（仅用于日志）；
+// sa 账号凭据（用于兜底文件名）。
+// [返回] 落盘成功返回 nil。
+// 最近修改时间：2026-10-18 01:52:00；改动原因：改直写，避免 host.auth.save 丢顶层字段。
 func markSessionDead(authIndex, authID string, sa *storedAuth) error {
 	phys, err := hostAuthGetPhysical(authIndex)
 	if err != nil {
 		return err
+	}
+	if phys == nil || len(phys.JSON) == 0 {
+		return errAuthMissing()
 	}
 	if phys.Disabled {
 		return nil // already disabled; nothing to do
@@ -192,7 +225,7 @@ func markSessionDead(authIndex, authID string, sa *storedAuth) error {
 	if name == "" {
 		name = authFileNameFor(sa)
 	}
-	return hostAuthSaveJSON(name, raw)
+	return persistAuthDirect(name, phys.Path, "", raw)
 }
 
 // keepaliveSummary is one row of the daily run, surfaced via the

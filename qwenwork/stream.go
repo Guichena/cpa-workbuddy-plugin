@@ -422,7 +422,14 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 // (no async stream id): drain the upstream nested SSE, unwrap the inner
 // OpenAI chunks, return them as a slice. The collector, when non-nil,
 // observes the unwrapped inner chunks for usage extraction.
-func collectUpstreamStreamOpenAI(encodedBody []byte, sa *storedAuth, sessionKey string, sseFramed bool, collector *sseUsageCollector) ([]pluginapi.ExecutorStreamChunk, int, error) {
+// collectUpstreamStreamOpenAI 收集一次流式推理的完整分片，并在账号级失败时换号重试。
+//
+// [参数] encodedBody 已预处理的上游请求体；sa 初始账号；sessionKey 会话标识；
+// sseFramed 是否给分片补 data: 前缀；collector 用量收集器；
+// initialAuthID 初始账号的宿主 auth.ID（调度/冷却/会话绑定共用的唯一 key）。
+// [返回] 分片列表、最后一次上游状态码、错误。
+// 最近修改时间：2026-10-18 01:45:00；改动原因：账号身份改用宿主 auth.ID，不再用 accessToken。
+func collectUpstreamStreamOpenAI(encodedBody []byte, sa *storedAuth, sessionKey string, sseFramed bool, collector *sseUsageCollector, initialAuthID string) ([]pluginapi.ExecutorStreamChunk, int, error) {
 	// Per-request account-failover budget. 0 means no retry (kill switch
 	// via `retry_on_4xx: 0` in plugin.yaml). The request body is
 	// account-independent; each retry re-issues a MaaS ticket for the next
@@ -430,17 +437,18 @@ func collectUpstreamStreamOpenAI(encodedBody []byte, sa *storedAuth, sessionKey 
 	budget := loadedRetryOn4xx()
 	curSA := sa
 	lastStatus := 0
+	// 账号身份与调度候选同源：宿主 auth.ID。用它而不是 accessToken，
+	// 否则冷却/绑定写到永远查不到的键上。
+	curID := strings.TrimSpace(initialAuthID)
+	if curID == "" {
+		curID = accountIdentity(sa)
+	}
 
 	// 前置冷却拦截：若初始账号在冷却中，直接换号到健康候选
-	if curSA != nil {
-		currentID := strings.TrimSpace(curSA.Auth.AccessToken)
-		if currentID == "" {
-			currentID = strings.TrimSpace(curSA.Account.UID)
-		}
-		if isAccountCoolingDown(currentID) || (curSA.Account.UID != "" && isAccountCoolingDown(curSA.Account.UID)) {
-			if _, nextSA, hasNext := pickNextAuth(currentID); hasNext && nextSA != nil {
-				curSA = nextSA
-			}
+	if curSA != nil && curID != "" && isAccountCoolingDown(curID) {
+		if nextID, nextSA, hasNext := pickNextAuth(curID); hasNext && nextSA != nil {
+			curSA = nextSA
+			curID = nextID
 		}
 	}
 
@@ -472,21 +480,19 @@ func collectUpstreamStreamOpenAI(encodedBody []byte, sa *storedAuth, sessionKey 
 			if !isAccountLevel4xx(statusCode) || attempt >= budget || curSA == nil {
 				return nil, statusCode, errResp
 			}
-			// Failover bookkeeping keys on the same heuristic as the
-			// executor: access token first, UID fallback.
-			currentID := strings.TrimSpace(curSA.Auth.AccessToken)
-			if currentID == "" {
-				currentID = strings.TrimSpace(curSA.Account.UID)
-			}
+			// Failover bookkeeping keys on the host auth.ID so it matches the
+			// scheduler's candidate IDs.
+			currentID := curID
 			if isDailyCountExceeded(statusCode, errResp.Error()) {
 				logDailyCooldownPersistFailure(currentID, triggerDailyCooldown("", currentID))
 			}
 			evictSessionBindingsForAuth(currentID)
-			_, nextSA, hasNext := pickNextAuth(currentID)
+			nextID, nextSA, hasNext := pickNextAuth(currentID)
 			if !hasNext || nextSA == nil {
 				return nil, statusCode, errResp
 			}
 			curSA = nextSA
+			curID = nextID
 			continue
 		}
 		chunks := make([]pluginapi.ExecutorStreamChunk, 0, 64)
@@ -531,16 +537,14 @@ func collectUpstreamStreamOpenAI(encodedBody []byte, sa *storedAuth, sessionKey 
 			if len(chunks) > 0 || !shouldRotateOnUpstreamErr(http.StatusOK, sseErrMsg) || attempt >= budget || curSA == nil {
 				return chunks, http.StatusOK, errResp
 			}
-			currentID := strings.TrimSpace(curSA.Auth.AccessToken)
-			if currentID == "" {
-				currentID = strings.TrimSpace(curSA.Account.UID)
-			}
+			currentID := curID
 			evictSessionBindingsForAuth(currentID)
-			_, nextSA, hasNext := pickNextAuth(currentID)
+			nextID, nextSA, hasNext := pickNextAuth(currentID)
 			if !hasNext || nextSA == nil {
 				return chunks, http.StatusOK, errResp
 			}
 			curSA = nextSA
+			curID = nextID
 			continue
 		}
 		if err := scanner.Err(); err != nil {
@@ -548,14 +552,12 @@ func collectUpstreamStreamOpenAI(encodedBody []byte, sa *storedAuth, sessionKey 
 			emitted := len(chunks) > 0
 			// 2. 零泄漏且预算允许时换号重试
 			if !emitted && attempt < budget && curSA != nil {
-				currentID := strings.TrimSpace(curSA.Auth.AccessToken)
-				if currentID == "" {
-					currentID = strings.TrimSpace(curSA.Account.UID)
-				}
+				currentID := curID
 				evictSessionBindingsForAuth(currentID)
-				_, nextSA, hasNext := pickNextAuth(currentID)
+				nextID, nextSA, hasNext := pickNextAuth(currentID)
 				if shouldRotateOnStreamReadError(emitted, attempt, budget, len(encodedBody) > 0, hasNext && nextSA != nil) {
 					curSA = nextSA
+					curID = nextID
 					continue
 				}
 			}
