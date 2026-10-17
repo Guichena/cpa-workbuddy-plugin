@@ -512,6 +512,28 @@ func TestHandleLoginCallback_ReplayIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestEnvelope_NoHTMLEscapeInScript 验证授权脚本在响应里不被实体化。
+//
+// 生产实测缺陷：json.Marshal 默认 HTML 转义会把脚本里的 `=>`、`'` 变成
+// `=&gt;`、`&#39;`，面板复制到的脚本直接语法错误、无法执行。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-18；改动原因：新增，响应转义回归用例。
+func TestEnvelope_NoHTMLEscapeInScript(t *testing.T) {
+	script := buildAuthScript("state-abc")
+	raw, errEnvelope := okEnvelope(map[string]any{"script": script})
+	if errEnvelope != nil {
+		t.Fatalf("信封构造失败：%v", errEnvelope)
+	}
+	body := string(raw)
+	if strings.Contains(body, "&gt;") || strings.Contains(body, "&#39;") || strings.Contains(body, "&amp;") {
+		t.Fatalf("响应不得包含 HTML 实体，实际 %s", body)
+	}
+	if !strings.Contains(body, "=>") {
+		t.Fatalf("脚本中的 => 应原样保留，实际 %s", body)
+	}
+}
+
 // TestHandleLoginCallback_ShellWhenNoHeaders 验证首次打开返回接收页而非报错。
 //
 // 令牌在 URL fragment 里，服务端首次请求看不到；此时必须返回接收页，

@@ -46,6 +46,7 @@ extern void cliproxyPluginShutdown(void);
 import "C"
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -64,7 +65,7 @@ const (
 
 var (
 	// version 当前插件版本号。
-	version      = "0.1.0"
+	version      = "0.1.1"
 	hostAPI      *C.cliproxy_host_api
 	hostAPIMu    sync.RWMutex
 	activeConfig atomic.Value
@@ -339,15 +340,32 @@ func configurePlugin(raw []byte) error {
 }
 
 // okEnvelope 包装成功信封。
+//
+// 不用 json.Marshal：它默认开启 HTML 转义，会把脚本里的 `>`、`'`、`&`
+// 变成 `&gt;` / `&#39;` / `&amp;`，面板复制到的脚本将无法执行。
 // [参数] v: 任意可序列化结果。
 // [返回] 信封 JSON 与序列化错误。
-// 最近修改时间：2026-10-18；改动原因：新增，统一成功响应构造。
+// 最近修改时间：2026-10-18；改动原因：关闭 HTML 转义，避免授权脚本被实体化。
 func okEnvelope(v any) ([]byte, error) {
-	result, err := json.Marshal(v)
+	result, err := marshalNoHTMLEscape(v)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(envelope{OK: true, Result: result})
+	return marshalNoHTMLEscape(envelope{OK: true, Result: result})
+}
+
+// marshalNoHTMLEscape 序列化且不做 HTML 转义。
+// [参数] v: 任意可序列化值。
+// [返回] JSON 字节与错误。
+// 最近修改时间：2026-10-18；改动原因：新增，关闭 json.Marshal 的默认实体转义。
+func marshalNoHTMLEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // errorEnvelope 构造错误信封（不返回 error，供分发表直接回写）。
