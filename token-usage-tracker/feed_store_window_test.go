@@ -231,7 +231,10 @@ func TestFeedImporterLoopSurvivesHandleSwapAndResumes(t *testing.T) {
 		DBPath:        filepath.Join(dir, "stale.db"),
 		RetentionDays: 365,
 		FlushInterval: time.Second,
-		PollInterval:  50 * time.Millisecond,
+		// 轮询间隔必须远大于下面的等待窗口：窗口内最多只可能命中 1 轮关闭，
+		// 而退役阈值是 3 轮。此前用 50ms 间隔配 120ms 等待，CI 上 goroutine
+		// 调度与 ticker 抖动会让窗口内跑满 3 轮，循环提前退出导致用例假失败。
+		PollInterval: 400 * time.Millisecond,
 	}
 	trackerCfgMu.Unlock()
 
@@ -240,8 +243,8 @@ func TestFeedImporterLoopSurvivesHandleSwapAndResumes(t *testing.T) {
 		feedImporterLoop()
 		close(done)
 	}()
-	// 只让它经历 1~2 轮关闭（阈值为 3 轮），留出足够余量避免定时器抖动导致误退出。
-	time.Sleep(120 * time.Millisecond)
+	// 等待窗口固定小于 2 个轮询间隔：最多 1 轮关闭，远低于退役阈值 3 轮。
+	time.Sleep(150 * time.Millisecond)
 
 	// 2. 换入健康句柄（模拟宿主完成换句柄）：计数必须归零，循环不得退出。
 	live, err := usagestats.Open(usagestats.Config{DataPath: filepath.Join(dir, "live.db"), RetentionDays: 365, FlushInterval: time.Second, FlushMaxRecords: 100, SyncOnRecord: true})
@@ -255,7 +258,9 @@ func TestFeedImporterLoopSurvivesHandleSwapAndResumes(t *testing.T) {
 	usageStore = live
 	appliedStoreKey = "live-handle"
 	storeMu.Unlock()
-	time.Sleep(250 * time.Millisecond)
+	// 健康窗口必须覆盖至少 1 个完整轮询，才能证明关闭计数确实被重置；
+	// 取 1.5 个间隔，既够跑到健康轮，又不足以让后续关闭累计到退役阈值。
+	time.Sleep(600 * time.Millisecond)
 	select {
 	case <-done:
 		t.Fatal("importer loop exited although the store became healthy again")
@@ -266,9 +271,10 @@ func TestFeedImporterLoopSurvivesHandleSwapAndResumes(t *testing.T) {
 	if err := live.Close(); err != nil {
 		t.Fatalf("close live: %v", err)
 	}
+	// 需要重新累计 3 轮关闭：阈值 3 × 400ms，留足余量。
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("importer loop did not exit after the store finally closed")
 	}
 }
