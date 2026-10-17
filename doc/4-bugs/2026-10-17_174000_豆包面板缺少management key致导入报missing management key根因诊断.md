@@ -93,8 +93,31 @@ async function api(path, opts) {
 | 变异自测②：删除无 key 拦截 | 3 项断言失败（证明断言有效） |
 | `cgo-shim-build.py doubao` | build / vet / test 全绿 |
 
-## 六、结论
+## 六、生产部署与真实浏览器验收（0.1.1）
+
+| 项目 | 结果 |
+| --- | --- |
+| CI | dispatch `39021666413` → **success**；7 平台全部 success；Release `doubao-provider-v0.1.1` 8 个资产 |
+| 产物校验 | `ALL CHECKSUMS OK`（7/7）；zip 根条目为裸库名 |
+| registry | 仅 `doubao-provider` 由 0.1.0 → 0.1.1（+22/−22），其余 9 条未变；远端 7 个 artifact 哈希全一致 |
+| 生产安装 | HTTP 200，`restart_required=false` |
+| 落盘哈希 | `47d0411e18baded483e885f26a509940ae5ca9700a3fe420c5f9317b4da02c4a`，7,883,392 字节，与 release zip 内 `.so` 一致 |
+| 热重载 | `plugin hot reloaded plugin_id=doubao-provider active_version=0.1.1 retired_version=0.1.0` |
+| 生产面板资源 | 200，15,504 字节；含 `management key acquisition` / `doubao-mgmt-key` / `authBox` / `authHeaders` |
+| 容器状态 | 未重启（`RestartCount=0`） |
+
+### 真实浏览器验收（生产 `cpa.luode.vip`）
+
+| 场景 | 结果 |
+| --- | --- |
+| 无 key 打开面板 | `authBox` 显示 `block`；提示「加载账号失败：需要管理密钥，请在 CPA 主面板中打开本页，或在下方向输入框填入」——不再是 `missing management key` |
+| 输入错误 key | 401 → 清 sessionStorage → 重新弹框；提示「管理密钥无效或已失效，请重新填写」 |
+| 输入正确 key | 弹框关闭；账号列表渲染「生产验收」；计数「共 1 个账号」 |
+| 事后清理 | 浏览器 sessionStorage 中测试密钥已删除（`ssKeys=0`） |
+
+## 七、结论
 
 - 根因：面板缺少 management key 鉴权逻辑（移植遗漏），非宿主缺陷、非导入链路缺陷。
-- 修复：0.1.1 补齐三段式取 key 与 401 处理。
+- 修复：0.1.1 补齐三段式取 key 与 401 处理，已发布并热重载到生产。
 - 回归资产：`test/doubao/panel_auth_repro.mjs`（16 项断言，含两条变异自测验证）。
+- 遗留：生产导入的账号文件仍缺 `device_id` / `web_id` / `web_tab_id`（见 CYCLE-04 测试文档 §3.4），建议单独立项。
