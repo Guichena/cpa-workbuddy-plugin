@@ -116,7 +116,14 @@ function loadPanelContext() {
     document,
     navigator: { userAgent: "harness" },
     history: { replaceState() {} },
-    sessionStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+    sessionStorage: (() => {
+      const store = new Map([["doubao-mgmt-key", "test-mgmt-key"]]);
+      return {
+        getItem(k) { return store.has(k) ? store.get(k) : null; },
+        setItem(k, v) { store.set(k, String(v)); },
+        removeItem(k) { store.delete(k); },
+      };
+    })(),
     localStorage: { getItem() { return null; }, setItem() {} },
     location: { host: "cpa.luode.dev", search: "", href: "https://cpa.luode.dev/panel" },
     fetch: async (url, opts) => {

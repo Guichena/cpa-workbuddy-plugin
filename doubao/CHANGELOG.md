@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1
+
+- 面板补齐 management key 鉴权（修复生产「导入失败：missing management key」）：
+  宿主对 `/v0/management/*` 统一鉴权，不带 `Authorization` 时返回
+  401 `{"error":"missing management key"}`。面板此前直接裸 fetch，
+  导致导入、刷新账号、启停、删除全部被宿主拦断。
+  现按既有 6 个插件的同构实现补齐三段式取 key：① CPA 主面板 iframe 内
+  从 `localStorage["cli-proxy-auth"]` 解密（XOR+base64）；② URL `?key=`
+  读取后从地址栏剔除并落 `sessionStorage`；③ 面板内手动填入。另补
+  401/403 时清 key、重新弹框并给出可读提示，不再回显「未知错误」。
+- 新增 `test/doubao/panel_auth_repro.mjs`（16 项 DOM 断言，覆盖三条兜底路径与 401 处理）
+
 ## 0.1.0
 
 - 插件骨架与宿主注册：`doubao-provider` 能力声明、管理路由、内嵌面板页

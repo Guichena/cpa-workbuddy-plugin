@@ -64,6 +64,11 @@ button:disabled{opacity:.5;cursor:default}
 .import input[type=text]:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
 .card .acts{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
 .card .acts button{padding:5px 10px;font-size:12px}
+.auth{background:var(--card);border:1px solid var(--warn-border);border-radius:var(--radius-md);padding:14px 16px;margin-bottom:16px}
+.auth .hint{color:var(--mut);font-size:12px;margin-bottom:8px;line-height:1.6}
+.auth .row{display:flex;gap:8px}
+.auth input{flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:7px 11px;color:var(--fg);font-size:13px;outline:none}
+.auth input:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
 .badge{font-size:11px;padding:2px 7px;border-radius:999px}
 .badge.on{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border)}
 .badge.off{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
@@ -73,6 +78,14 @@ button:disabled{opacity:.5;cursor:default}
 <div class="wrap">
   <h1>豆包 Provider</h1>
   <div class="sub">导入浏览器登录态后，本插件把豆包账号能力以 OpenAI 兼容接口提供给 CPA。</div>
+
+  <div class="auth" id="authBox" style="display:none">
+    <div class="hint">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
+    <div class="row">
+      <input type="password" id="keyInput" placeholder="management key" autocomplete="off">
+      <button id="keySave">连接</button>
+    </div>
+  </div>
 
   <div class="import">
     <h2>导入登录态</h2>
@@ -101,9 +114,95 @@ button:disabled{opacity:.5;cursor:default}
 <script>
 const API = "/v0/management/plugins/doubao-provider";
 
+/* ---------- management key acquisition (3 fallbacks, zero config) ----------
+   1) CPA main panel localStorage "cli-proxy-auth" (XOR+base64, same-origin
+      iframe embed) — same approach as the sibling provider panels.
+   2) ?key= URL param (cleaned from history after read, kept in sessionStorage).
+   3) Manual input (sessionStorage only, never persisted).
+   宿主对 /v0/management/* 统一做鉴权：不带 Authorization 时直接返回
+   401 {"error":"missing management key"}，面板必须自行补齐该请求头。
+*/
+const ENC_PREFIX = "enc::v1::";
+const SECRET_SALT = "cli-proxy-api-webui::secure-storage";
+const PANEL_STORE = "cli-proxy-auth";
+const SS_KEY = "doubao-mgmt-key";
+
+function _enc(t){return new TextEncoder().encode(t)}
+function _dec(b){return new TextDecoder().decode(b)}
+function _keyBytes(){try{return _enc(SECRET_SALT+"|"+window.location.host+"|"+navigator.userAgent)}catch(e){return _enc(SECRET_SALT)}}
+function _xor(d,k){const r=new Uint8Array(d.length);for(let i=0;i<d.length;i++)r[i]=d[i]^k[i%k.length];return r}
+function _b64d(s){const bin=atob(s);const b=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);return b}
+function deobfuscate(p){if(!p||!p.startsWith(ENC_PREFIX))return p;try{return _dec(_xor(_b64d(p.slice(ENC_PREFIX.length)),_keyBytes()))}catch(e){return p}}
+function isEmbedded(){try{return window.self!==window.top}catch(e){return false}}
+
+function readPanelKey(){
+  if(!isEmbedded())return null;
+  let raw;try{raw=localStorage.getItem(PANEL_STORE)}catch(e){return null}
+  if(!raw)return null;
+  try{
+    const parsed=JSON.parse(deobfuscate(raw));
+    const st=(parsed&&parsed.state)||parsed||{};
+    return typeof st.managementKey==="string"&&st.managementKey?st.managementKey:null;
+  }catch(e){return null}
+}
+function readUrlKey(){
+  const m=new URLSearchParams(window.location.search).get("key");
+  if(m){
+    // 只剔除 key 参数，保留 theme 等其它 query，避免连带抹掉上下文。
+    try{
+      const u=new URL(window.location.href);
+      u.searchParams.delete("key");
+      history.replaceState(null,"",u.pathname+u.search+u.hash);
+    }catch(e){ /* 历史接口不可用时忽略，key 已落 sessionStorage */ }
+  }
+  return m;
+}
+// readUrlKey() 会立刻把 key 从 URL 上抹掉，而 readPanelKey() 依赖父窗口的
+// localStorage；若解析后不落盘，首次调用之后 getKey() 将永远返回空。
+function persistKey(k){
+  if(!k) return k;
+  try{ sessionStorage.setItem(SS_KEY,k); }catch(e){}
+  return k;
+}
+function getKey(){
+  let stored=null;try{stored=sessionStorage.getItem(SS_KEY)}catch(e){}
+  return stored||persistKey(readPanelKey())||persistKey(readUrlKey());
+}
+function authHeaders(k){return k?{"Authorization":"Bearer "+k}:{}}
+function showAuth(){
+  const box=document.getElementById("authBox");
+  if(!box)return;
+  box.style.display="block";
+  const i=document.getElementById("keyInput");
+  if(i)i.focus();
+}
+function saveKey(){
+  const i=document.getElementById("keyInput");
+  const v=i?i.value.trim():"";
+  if(!v)return;
+  try{ sessionStorage.setItem(SS_KEY,v); }catch(e){}
+  document.getElementById("authBox").style.display="none";
+  refresh();
+}
+/* --------------------------------------------------------------------------- */
+
 async function api(path, opts) {
-  const headers = Object.assign({ "Content-Type": "application/json" }, (opts && opts.headers) || {});
+  const key = getKey();
+  if (!key) {
+    showAuth();
+    throw new Error("需要管理密钥，请在 CPA 主面板中打开本页，或在下方向输入框填入");
+  }
+  const headers = Object.assign(
+    { "Content-Type": "application/json" },
+    authHeaders(key),
+    (opts && opts.headers) || {}
+  );
   const res = await fetch(API + path, Object.assign({}, opts, { headers, cache: "no-store" }));
+  if (res.status === 401 || res.status === 403) {
+    try { sessionStorage.removeItem(SS_KEY); } catch (e) { /* 隐私模式下不可写时忽略 */ }
+    showAuth();
+    throw new Error("管理密钥无效或已失效，请重新填写");
+  }
   let data = null;
   try { data = await res.json(); } catch (e) { data = { error: "响应解析失败" }; }
   return data;
@@ -194,6 +293,10 @@ async function act(id, action) {
 
 document.getElementById("import").addEventListener("click", doImport);
 document.getElementById("refresh").addEventListener("click", refresh);
+document.getElementById("keySave").addEventListener("click", saveKey);
+document.getElementById("keyInput").addEventListener("keydown", function (ev) {
+  if (ev.key === "Enter") saveKey();
+});
 document.getElementById("list").addEventListener("click", function (ev) {
   const btn = ev.target.closest("button[data-act]");
   if (!btn) return;
