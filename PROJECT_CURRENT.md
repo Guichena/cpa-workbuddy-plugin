@@ -38,6 +38,7 @@
   - **修复 6 项**：① 新增 `accountIdentity()`，执行器与流式路径统一用宿主 `auth.ID`（流式补 `initialAuthID` 参数）；② `scheduler_mode: off` 解析补全（原被静默当 session）；③ keepalive 令牌刷新改 `foldCredentialIntoDoc` 折叠式直写，保住 `disabled`/`manual_disable`/`exhausted_disable`/计数/`daily_cooling_until`；④ `markSessionDead` 改直写；⑤ `hostAuthIndexForPhys` 补 Name/规范名两级匹配；⑥ 删除 `labelForAuth` 恒假分支。
   - **验证**：新增 10 个单测；四次变异反证全部精确命中（身份退回 token / 删 off 解析 / 折叠改重建 / 同关两处冷却闸门 → 分别 2/1/2/4 个用例 FAIL）；真实 `.so` ctypes 探针 `test/qwenwork/multiaccount_probe.py` 9/9 PASS（含探针自身判别力变异验证）；WSL 真实 cgo 构建 + test + vet 全绿；gofmt 空；版本 0.1.0→**0.2.0**。
   - **未验证（诚实标注）**：真实双账号端到端切换。本机仅 1 个真实账号，且失败路径需先过真实 MaaS 签发（`sharedHTTPClient` 直连，不经宿主桥），桩驱动无法不联网注入 401；该链路由「同键一致性单测 + 调度侧冷却排除单测」组合覆盖。
+  - **0.2.0 已发布（2026-10-18）**：CI run `39062771266` 全绿（Test + 6 平台 build/cross + Release）→ `cc7fe59`(assets，先于 registry 推送) → `bf36ab1`(registry 0.2.0，6 artifacts) → `33d5fb2`(prune 0.1.0)。远端 6/6 raw URL HTTP 200 且 Content-Length 与 registry size 全等，下载复算 sha256 6/6 一致；6 个二进制内均含 `0.2.0`；远端 registry 12 插件无空 artifacts；旧 0.1.0 URL 现 404（预期）。
   - **有意保留**：`clientUA = "qoderwork/1.3.1"` 是实测通过的 UA（探针同值），非残留；`isDailyCountExceeded` 的 110 判定实测四形态不误伤，留作防御。
   - 文档：实施总览 § CYCLE-02 执行结果、`doc/5-tests/2026-10-18_021000_*`、`doc/6-review/2026-10-18_021000_*`（STYLE: PASS）。
 - 当前会话（2026-10-18）：**qwenwork-provider 0.1.0 立项实现并全链路发布**：
@@ -103,29 +104,9 @@
   - 未覆盖：**「未领取 → 已激活」完整激活未取得实证**——上游当前对全部账号 `billing/preview` 返回 `plans:[]`（无下发可领取计划），claim 业务层返回 `no permission`，属上游活动态非插件缺陷；captcha 层已独立判据通过。
   - 门禁：`cgo-shim-build.py zcode` build/vet/test 全绿；面板 JS `node --check` 双块 rc=0；`gofmt` LF 归一后空；`POLLUTION: PASS`；`STYLE: PASS`（`doc/6-review/2026-10-15_003700_*`）。
 
-- 当前会话（2026-10-14）：**zcode-provider 支持 bigmodel（中国区）OAuth 授权：CYCLE-1/2 已发布 0.1.25 上线，CYCLE-3 待真实账号**：
-  - 需求背景：用户指出 ZCode 授权走的是国际站 `chat.z.ai`，国际版无每日额度赠送，需改走中国区以获取额度政策。期间用户两次纠正方向（先说「中国区依旧走 z.ai，不是 bigmodel」，后又更正「应该使用 bigmodel」）；实测最终确认：`provider=bigmodel` **完全复用**现有 CLI 轮询链路（共用 `zcode.z.ai/api/v1/oauth/cli/init` 与 `/cli/poll/`），仅 provider 参数、authorize 域名（`bigmodel.cn/login`）、回调路径不同 —— 是**参数化**而非重写。
-  - 需求与计划文档：`doc/2-需求/2026-10-14_153951_zcode支持bigmodel中国区授权需求.md`（编号 `REQ-ZCODE-BIGMODEL-OAUTH-20261014`）、`doc/3-实施/2026-10-14_zcode支持bigmodel中国区授权实施总览.md`。
-  - CYCLE-1（提交 `c84088f`，12 文件 +1017/-67）：`providerFamilyZai/Bigmodel` 常量 + `normalizeProviderFamily`/`providerFamilyOf`；`StoredAuth.ProviderFamily` 字段（缺省 `zai` 向后兼容）；`startAccountOAuth`/`settleZaiPollResult`/`saveZaiAccount` 全链 provider 参数化；`resolveUpstreamTargets` 按 family 分支（bigmodel → `open.bigmodel.cn/api/anthropic`）；业务令牌端点 `businessLoginEndpointFor` 分支 + 缓存键按 family 隔离。新增 `provider_family_test.go`（8 例）、`upstream_target_test.go`（6 例）。
-  - CYCLE-2（提交 `0e88c4c`，7 文件）：面板工具栏新增 `#oauthProvider` 下拉（国际站/中国区，默认 `zai`），`openOAuthBridge()` 把选中值透传 `/activate-start`；新增 `providerBadge(a)` 渲染账号归属徽标；后端 `accountSummary` 新增 `provider_family` 字段并由 `handleListAccounts` 透出。扩展面板回归脚本（阶段 6/7）+ Go 用例 `TestHandleListAccounts_ExposesProviderFamily`。
-  - **重要修正**：`quota.go` **无需** family 分支 —— 实测 `bigmodel.cn/api/v1/zcode-plan/billing/current` 返回 404、`zcode.z.ai` 同路径 401（端点存在），证明 start-plan 额度端点两家共用。已回写需求 GAP-002。
-  - **0.1.25~0.1.27 发布闭环**：0.1.25 bigmodel 中国区（`797d807`）；0.1.26 修 `/activate-start` 非法 provider 静默回退（改 `resolveOAuthProvider` 先校验后归一，`cbbca35`）；0.1.27 修 bigmodel 推理 401（`open.bigmodel.cn/api/anthropic` 不接受 ZCode JWT，start-plan 两站共用 `zcode.z.ai`，`c19493b`）。均远端 7/7 PASS、热重载零重启、`.so` 与 zip 逐字节一致。
-  - 门禁：cgo-shim build/vet/test 全绿；面板回归 PASS；哨兵变异精确 FAIL 后恢复全绿；`gofmt -l` 空；`POLLUTION: PASS`；`STYLE: PASS`。
-  - 待办：GAP-004/005/006 均已解除；上游 `zcode.z.ai` 对生产 IP 有时段性 WAF（405/3012）与限流（429/3009），zai 账号同样受影响，属外部因素待观测。
+- 会话（2026-10-14，已压缩）：**zcode-provider 支持 bigmodel（中国区）OAuth 授权，0.1.25~0.1.27 三连发**：`provider=bigmodel` 完全复用既有 CLI 轮询链路（仅 provider 参数 / authorize 域名 / 回调路径不同，属参数化非重写）；CYCLE-1 `c84088f` 加 `ProviderFamily` 字段与全链参数化，CYCLE-2 `0e88c4c` 加面板下拉与归属徽标。三版闭环：0.1.25 中国区（`797d807`）→ 0.1.26 修非法 provider 静默回退（`cbbca35`）→ 0.1.27 修 bigmodel 推理 401（`open.bigmodel.cn/api/anthropic` 不接受 ZCode JWT，start-plan 两站共用 `zcode.z.ai`，`c19493b`）。GAP-004/005/006 全解除；`quota.go` 无需 family 分支（实测额度端点两家共用）。上游 `zcode.z.ai` 对生产 IP 有时段性 WAF（405/3012）与限流（429/3009），zai 账号同样受影响，属外部因素。
 
-- 当前会话（2026-10-14）：**四插件（workbuddy/workbuddy-ai/traework/zcode）定时探活降频至 4 小时并修正失败账号节流缺陷，全链路发布生产**：
-  - 需求背景：用户先问「真的需要定时探测吗」，选定「移除探活 + test_failed 机制」后中途改口为「探活还是留下，但 4 小时一次就够了，不要那么频繁」；最终方向为**保留探活与 test_failed 标签全链路，仅把节流间隔 30 分钟 → 4 小时**。
-  - 关键实现与真实缺陷修复：
-    1. 四插件 `defaultActivePingInterval` 30 分钟 → 4 小时（workbuddy/workbuddy-ai/traework/zcode 的 `active_ping.go`），同步 4 处 `// 最近修改时间：2026-10-14 02:50:00`；
-    2. **修正失败账号节流缺陷**：`recordActivePing` 原先仅在探活**成功**时刷新节流时间戳，失败账号不计时 → 会在每个 watchdog tick（10 分钟）被反复全量重测，反而比健康账号更频繁消耗配额；改为「无论成败都先刷新时间戳」后再轮测；
-    3. 四插件各补 `TestDoActivePingFailureStillThrottles` 回归用例（断言失败后立即再次调用被节流拦截、不再发起模型请求），节流测试的时间回拨改为 `-defaultActivePingInterval - time.Minute` 自适应。
-  - 并行会话保护：本轮曾误把工作树回退到 HEAD，需回贴并行会话的 `HIGH-CREDIT-FIRST` / cooldown-defer 注释修正（qoder-ai/qoderwork/workbuddy/workbuddy-ai/traework 的 scheduler/session_auth/watchdog/routing_test）；按路径限定 `git commit -- <20 路径>` 只提交本轮文件。
-  - 发布与生产闭环：
-    1. **提交链**：`22bf7fe`(feat 20 文件) → 四插件各自 assets/registry 提交 → `368a63e`(prune 5 个旧版本)；
-    2. **CI 处置（可复用教训）**：① zcode 首个 run 因既有 flaky 测试 `Test (token-usage-tracker)` 失败致其 Release job skipped → 单插件重发成功；② traework 首个 run 卡在 `darwin/amd64` 的 `actions/checkout` 超 35 分钟不动 → 取消并重发；③ 取消自己 push 触发的冗余 push run（assets/registry 提交各触发一个）释放免费 Runner 后 traework 才获得执行位（踩坑 55 复现）；
-    3. **远端验证**：四插件各 7/7 artifacts sha256+size ALL PASS；
-    4. **生产热重载**：四插件 `plugin-store install` 均 `restart_required=false`、日志确认 `plugin hot reloaded`（workbuddy 0.15.8→0.15.9、workbuddy-ai 0.1.14→0.1.15、traework 0.2.11→0.2.12、zcode 0.1.22→0.1.24 直上），落盘 `.so` sha256 与本地 zip 逐字节一致，accounts/panel 全 200，**零容器重启**。
-  - 门禁：四插件 `cgo-shim-build.py` build/vet/test 全绿 + 哨兵反证测试真实进编译。
+- 会话（2026-10-14，已压缩）：**四插件定时探活降频至 4 小时并修正失败账号节流缺陷，全链路发布生产**：`defaultActivePingInterval` 30 分钟 → 4 小时（workbuddy / workbuddy-ai / traework / zcode）；**真实缺陷**：`recordActivePing` 原仅在探活成功时刷新节流时间戳，失败账号不计时 → 每个 watchdog tick 被反复全量重测，反而比健康账号更耗配额，改为「无论成败都先刷新」；四插件各补 `TestDoActivePingFailureStillThrottles`。提交链 `22bf7fe` → 各插件 assets/registry → `368a63e`(prune 5 旧版)；远端各 7/7 ALL PASS；生产四插件热重载 `restart_required=false`、零容器重启、`.so` 与 zip 逐字节一致、accounts/panel 全 200。CI 教训：flaky `Test (token-usage-tracker)` 与 darwin checkout 卡死各需单插件重发；须取消冗余 push run 释放 Runner。
 
 - 会话（2026-10-14，已压缩）：**zcode-provider 0.1.22 领取指引**：纠正「激活开通」错误承诺，改为如实 Start Plan 领取指引（`guideModal`），提交链 `9655225`→`d859616`(assets)→`2d6d7f8`(registry)→`0cd3060`(prune 0.1.21)；根因实证：额度领取须官方客户端内手动完成（claim 接口强制阿里云人机验证头，无头一律 `400 3007`），`authorize` 层不做 redirect_uri 白名单（三臂 307 通过）。
 

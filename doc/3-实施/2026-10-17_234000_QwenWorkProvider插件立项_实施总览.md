@@ -367,6 +367,19 @@ sha256，必须先跑 CI 产出真实 assets。空 artifacts 会导致 CPA 整�
 （探针 `CLIENT_VERSION` 同值），非克隆残留；`isDailyCountExceeded` 的 110 判定对
 QwenWork 无对应语义，但实测四种常见 110 形态均不误伤，保留为防御。
 
+**发布结果（2026-10-18）**：`qwenwork-provider` **0.2.0** 已发布。
+
+| 项 | 结果 |
+|---|---|
+| 源码提交 | `470cf82`（14 文件，+1382/−114） |
+| CI run | `39062771266` 全部成功（Test + 6 平台 build/cross + Release） |
+| 产物 | 6 平台 zip + `checksums.txt`，逐包 sha256 自校验通过 |
+| 资产提交 | `cc7fe59`（先于 registry 推送，确保 URL 可达） |
+| registry | `bf36ab1`，`version=0.2.0`、6 artifacts，`validate-registry.py` OK |
+| 远端验证 | 6/6 raw URL HTTP 200，`Content-Length` 与 registry `size` 全等；下载复算 sha256 6/6 一致 |
+| 旧版清理 | `33d5fb2` prune `qwenwork-provider-0.1.0`（本地与远端目录均移除，旧 URL 现 404 为预期） |
+| 产物版本核验 | 6 个二进制内均含 `0.2.0` 版本串 |
+
 ### CYCLE-03：额度与生命周期
 
 - `account-context` + `wallets` 额度查询
