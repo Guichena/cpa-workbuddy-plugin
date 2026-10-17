@@ -28,26 +28,31 @@ type testActiveResponse struct {
 //  1. 必须用流式请求（stream=true），收到首个有效输出帧即判可用并异步关流，
 //     避免思考型模型生成完整思维链导致的数秒等待；
 //  2. 严禁仅凭「有字节流出」或 HTTP 200 盲判成功——HTTP 200 下的 error 帧
-//     同样代表失败，必须解析内容。
+//     同样代表失败，必须解析内容；
+//  3. auto 探活必须省略 model 字段，与真实推理请求保持同一形态，
+//     否则会用 "model":"auto" 探到 400 而误判账号不可用。
 //
 // [参数] sa: 目标账号凭据；model: 上游模型 ID。
 // [返回] ok 表示收到有效输出帧；statusCode 为 HTTP 状态码；errMsg 为失败原因；latencyMS 为耗时。
-// 最近修改时间：2026-10-15 23:40:00；改动原因：新增，面板测试模型的传输内核。
+// 最近修改时间：2026-10-17 15:30:00；改动原因：新增 auto 语义，探活请求省略 model 字段。
 func pingUpstreamOnce(sa *StoredAuth, model string) (ok bool, statusCode int, errMsg string, latencyMS int64) {
 	if sa == nil {
 		return false, 0, "nil account", 0
 	}
 	cfg := currentConfig()
 
-	// 1. 构造最小流式探活负载。
-	pingPayload, errPayload := json.Marshal(map[string]any{
-		"model":      model,
+	// 1. 构造最小流式探活负载；auto 不写 model 字段，交由上游自动选模。
+	pingBody := map[string]any{
 		"max_tokens": 1,
 		"stream":     true,
 		"messages": []map[string]string{
 			{"role": "user", "content": "ping"},
 		},
-	})
+	}
+	if !isAutoModelID(model) {
+		pingBody["model"] = model
+	}
+	pingPayload, errPayload := json.Marshal(pingBody)
 	if errPayload != nil {
 		return false, 0, errPayload.Error(), 0
 	}

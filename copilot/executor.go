@@ -286,14 +286,22 @@ func executeOnce(payload []byte, sa *StoredAuth, cfg Config) ([]byte, int, error
 }
 
 // mutateModel 改写请求体中的模型名。
+//
+// 特殊口径：目标模型为 auto 时必须**删除** model 字段而不是写入 "auto"。
+// 上游对 "model":"auto" 返回 400 model_not_supported，省略该字段才由服务端
+// 按账号档位自动选模——这是免费 / 学生档唯一可用的请求形态。
 // [参数] raw: 原始请求体；model: 目标上游模型名。
 // [返回] 改写后的请求体；解析失败时原样返回副本。
+// 最近修改时间：2026-10-17 15:30:00；改动原因：新增 auto 语义，省略 model 字段交由上游自选。
 func mutateModel(raw []byte, model string) []byte {
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
 		return append([]byte(nil), raw...)
 	}
-	if model != "" {
+	// 1. auto 走省略字段的自动选模通道；其余情况原样写入目标模型名。
+	if isAutoModelID(model) {
+		delete(body, "model")
+	} else if model != "" {
 		body["model"] = model
 	}
 	out, err := json.Marshal(body)

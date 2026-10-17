@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -274,7 +276,7 @@ func probeServerForTest(t *testing.T) *httptest.Server {
 // TestProbeModelCallableDistinguishesEntitlement 校验探测判据能区分账号 entitlement。
 //
 // 判据：返回 messages must be non-empty（已过模型鉴权）视为可调用；
-// 返回 model_not_supported / not accessible 视为不可调用；5xx 等不确定结果保守保留。
+// 返回 model_not_supported / not accessible 视为不可调用；5xx 等不确定结果标记为 unknown。
 func TestProbeModelCallableDistinguishesEntitlement(t *testing.T) {
 	srv := probeServerForTest(t)
 	defer srv.Close()
@@ -284,23 +286,23 @@ func TestProbeModelCallableDistinguishesEntitlement(t *testing.T) {
 
 	cases := []struct {
 		model string
-		want  bool
+		want  modelProbeVerdict
 	}{
-		{"gpt-4o", true},
-		{"gpt-4o-mini", true},
-		{"gpt-4.1", true},
-		{"gpt-6-luna", false},
-		{"claude-haiku-4.5", false},
+		{"gpt-4o", modelProbeUsable},
+		{"gpt-4o-mini", modelProbeUsable},
+		{"gpt-4.1", modelProbeUsable},
+		{"gpt-6-luna", modelProbeUnusable},
+		{"claude-haiku-4.5", modelProbeUnusable},
 	}
 	for _, c := range cases {
 		got := probeModelCallable(context.Background(), srv.URL, "tid=probe", c.model, cfg)
 		if got != c.want {
-			t.Errorf("model %s: expected callable=%v, got %v", c.model, c.want, got)
+			t.Errorf("model %s: expected verdict=%v, got %v", c.model, c.want, got)
 		}
 	}
 }
 
-// TestProbeModelCallableKeepsOnUncertainty 校验不确定结果保守保留，避免上游抖动误删模型。
+// TestProbeModelCallableKeepsOnUncertainty 校验不确定结果标记为 unknown，交由调用方决策。
 func TestProbeModelCallableKeepsOnUncertainty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -310,8 +312,8 @@ func TestProbeModelCallableKeepsOnUncertainty(t *testing.T) {
 
 	cfg := currentConfig()
 	cfg.BaseURL = srv.URL
-	if !probeModelCallable(context.Background(), srv.URL, "tid=probe", "gpt-4o", cfg) {
-		t.Error("5xx must be treated as uncertain and keep the model")
+	if got := probeModelCallable(context.Background(), srv.URL, "tid=probe", "gpt-4o", cfg); got != modelProbeUnknown {
+		t.Errorf("5xx must be treated as unknown, got %v", got)
 	}
 }
 
@@ -332,7 +334,10 @@ func TestProbeUsableModelsFiltersUnentitled(t *testing.T) {
 		ExpiresAt:    "2099-01-01T00:00:00Z",
 	}
 	candidates := []string{"gpt-4o", "gpt-6-luna", "gpt-4.1", "claude-haiku-4.5", "gpt-4o-mini"}
-	got := probeUsableModels(context.Background(), sa, cfg, candidates)
+	got, unknown := probeUsableModels(context.Background(), sa, cfg, candidates)
+	if unknown != 0 {
+		t.Fatalf("deterministic probe must report zero unknown, got %d", unknown)
+	}
 	want := map[string]bool{"gpt-4o": true, "gpt-4.1": true, "gpt-4o-mini": true}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d usable models, got %d: %v", len(want), len(got), got)
@@ -408,9 +413,9 @@ func TestFetchUpstreamModelsFiltersByEntitlement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchUpstreamModels: %v", err)
 	}
-	want := map[string]bool{"gpt-4o": true, "gpt-4.1": true}
+	want := map[string]bool{autoModelID: true, "gpt-4o": true, "gpt-4.1": true}
 	if len(got) != len(want) {
-		t.Fatalf("expected %d entitled models, got %d: %v", len(want), len(got), got)
+		t.Fatalf("expected %d models (auto + entitled), got %d: %v", len(want), len(got), got)
 	}
 	for _, m := range got {
 		if !want[m] {
@@ -419,12 +424,12 @@ func TestFetchUpstreamModelsFiltersByEntitlement(t *testing.T) {
 	}
 }
 
-// TestFetchUpstreamModelsKeepsCandidatesWhenProbeYieldsNothing 校验探测无可用结果时不清空出口。
+// TestFetchUpstreamModelsClearsWhenProbeSaysUnentitled 校验探测确定全部无权时清空具体模型。
 //
-// 降级判据：探测未得到任何可用模型（上游抖动使探测整体不可用、或账号零可用）时，
-// 模型出口不得被清空，必须回退到 /models 过滤结果（宁多勿空）——
-// 否则一次探测异常就会让插件彻底无模型可路由。
-func TestFetchUpstreamModelsKeepsCandidatesWhenProbeYieldsNothing(t *testing.T) {
+// 这是免费 / 学生档的回归判据：上游 /models 仍列出大量 chat 条目，但探测对每个模型
+// 都明确返回 model_not_supported。旧实现「探测结果为空就回退候选」会把无权模型
+// 原样暴露，用户点开即 400；正确行为是收敛到零个具体模型，由出口层补入 auto。
+func TestFetchUpstreamModelsClearsWhenProbeSaysUnentitled(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -434,7 +439,7 @@ func TestFetchUpstreamModelsKeepsCandidatesWhenProbeYieldsNothing(t *testing.T) 
 				{"id":"gpt-4.1","vendor":"Azure OpenAI","capabilities":{"type":"chat","family":"gpt-4.1"}}
 			]}`))
 		default:
-			// 探测端点对全部模型都返回「不受支持」：探测结果为空，触发保留分支。
+			// 探测端点对全部模型都返回「不受支持」：确定结论为账号零可用。
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"message":"The requested model is not supported.","code":"model_not_supported"}}`))
 		}
@@ -457,8 +462,112 @@ func TestFetchUpstreamModelsKeepsCandidatesWhenProbeYieldsNothing(t *testing.T) 
 	if err != nil {
 		t.Fatalf("fetchUpstreamModels: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("empty probe result must keep the filtered candidates, got %d: %v", len(got), got)
+	// 只剩 auto：具体模型必须全部清空，且出口不得为空（否则调用方会回退旧落盘清单）。
+	if len(got) != 1 || got[0] != autoModelID {
+		t.Fatalf("deterministic unentitled probe must yield [auto], got %v", got)
+	}
+}
+
+// TestFetchUpstreamModelsKeepsCandidatesWhenProbeIsUncertain 校验探测不确定时保留候选。
+//
+// 降级判据：探测全部落入不确定（上游 5xx）时不得清空模型出口，
+// 否则一次上游抖动就会让插件彻底无模型可路由。
+func TestFetchUpstreamModelsKeepsCandidatesWhenProbeIsUncertain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/models":
+			_, _ = w.Write([]byte(`{"data":[
+				{"id":"gpt-4o","vendor":"Azure OpenAI","capabilities":{"type":"chat","family":"gpt-4o"}},
+				{"id":"gpt-4.1","vendor":"Azure OpenAI","capabilities":{"type":"chat","family":"gpt-4.1"}}
+			]}`))
+		default:
+			// 探测端点整体 5xx：无法判定 entitlement，必须保留候选。
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"message":"internal server error"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	prevCfg := currentConfig()
+	cfg := prevCfg
+	cfg.BaseURL = srv.URL
+	cfg.ModelCacheSecs = 300
+	activeConfig.Store(cfg)
+	defer activeConfig.Store(prevCfg)
+
+	sa := &StoredAuth{
+		AuthID:       "copilot-probe-unknown-test",
+		CopilotToken: "tid=probe;exp=9999999999",
+		ExpiresAt:    "2099-01-01T00:00:00Z",
+	}
+	got, err := fetchUpstreamModels(context.Background(), sa)
+	if err != nil {
+		t.Fatalf("fetchUpstreamModels: %v", err)
+	}
+	if len(got) != 3 || got[0] != autoModelID {
+		t.Fatalf("uncertain probe must keep the filtered candidates plus auto, got %d: %v", len(got), got)
+	}
+}
+
+// TestFetchUpstreamModelsDoesNotPersistAuto 校验落盘清单不写入 auto。
+//
+// auto 是出口层合成的入口，不是上游真实模型：写进账号文件会让离线兜底
+// 把它当成上游模型，掩盖上游可达性变化，也会让下一次「动态发现」看起来
+// 已经成功（实际只是读回了自己写的 auto）。
+func TestFetchUpstreamModelsDoesNotPersistAuto(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/models":
+			_, _ = w.Write([]byte(`{"data":[
+				{"id":"gpt-4o","vendor":"Azure OpenAI","capabilities":{"type":"chat","family":"gpt-4o"}}
+			]}`))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"messages must be non-empty","code":""}}`))
+		}
+	}))
+	defer srv.Close()
+
+	prevCfg := currentConfig()
+	cfg := prevCfg
+	cfg.BaseURL = srv.URL
+	cfg.ModelCacheSecs = 300
+	activeConfig.Store(cfg)
+	defer activeConfig.Store(prevCfg)
+
+	dir := t.TempDir()
+	setAccountsDir(dir)
+	defer setAccountsDir("")
+	authPath := filepath.Join(dir, "copilot-persist-test.json")
+
+	sa := &StoredAuth{
+		AuthID:       "copilot-persist-test",
+		CopilotToken: "tid=probe;exp=9999999999",
+		ExpiresAt:    "2099-01-01T00:00:00Z",
+		PhysicalPath: authPath,
+	}
+	got, err := fetchUpstreamModels(context.Background(), sa)
+	if err != nil {
+		t.Fatalf("fetchUpstreamModels: %v", err)
+	}
+	if len(got) != 2 || got[0] != autoModelID {
+		t.Fatalf("returned list must be [auto gpt-4o], got %v", got)
+	}
+
+	raw, errRead := os.ReadFile(authPath)
+	if errRead != nil {
+		t.Fatalf("read persisted auth: %v", errRead)
+	}
+	var persisted StoredAuth
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("unmarshal persisted auth: %v", err)
+	}
+	for _, m := range persisted.Models {
+		if isAutoModelID(m) {
+			t.Fatalf("auto must not be persisted to auth file, got %v", persisted.Models)
+		}
 	}
 }
 
@@ -496,7 +605,10 @@ func TestProbeUsableModelsRunsConcurrently(t *testing.T) {
 	for i := range candidates {
 		candidates[i] = "gpt-4o-" + string(rune('a'+i))
 	}
-	got := probeUsableModels(context.Background(), sa, cfg, candidates)
+	got, unknown := probeUsableModels(context.Background(), sa, cfg, candidates)
+	if unknown != 0 {
+		t.Fatalf("all-callable batch must report zero unknown, got %d", unknown)
+	}
 	if len(got) != len(candidates) {
 		t.Fatalf("all callable models must be kept, got %d of %d", len(got), len(candidates))
 	}

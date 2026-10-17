@@ -535,7 +535,9 @@ func handleRefreshAuth(raw []byte) ([]byte, error) {
 			}
 			// 顺带刷新模型清单：存量账号的 models 字段可能仍是历史兜底值，
 			// 不刷新会让面板与宿主按账号注册长期显示失真清单。
-			if models, errModels := fetchUpstreamModels(context.Background(), &sa); errModels == nil && len(models) > 0 {
+			// 探测给出确定结论时清单可能为空（如免费档只剩 auto），此时仍需落盘，
+			// 否则旧的具体模型会一直挂在账号上；auto 由出口层统一补入，不写入落盘字段。
+			if models, errModels := fetchUpstreamModels(context.Background(), &sa); errModels == nil {
 				sa.Models = models
 			}
 			if path := strings.TrimSpace(sa.PhysicalPath); path != "" {

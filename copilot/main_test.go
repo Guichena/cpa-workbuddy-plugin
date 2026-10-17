@@ -544,6 +544,66 @@ func TestMutateModel(t *testing.T) {
 	}
 }
 
+// TestMutateModelAutoOmitsField 校验 auto 语义：删除 model 字段而非写入 "auto"。
+//
+// 上游对 "model":"auto" 返回 400 model_not_supported，省略字段才由服务端
+// 按账号档位自动选模；这是免费 / 学生档唯一可用的请求形态。
+func TestMutateModelAutoOmitsField(t *testing.T) {
+	got := mutateModel([]byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`), "auto")
+	var body map[string]any
+	if err := json.Unmarshal(got, &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, exists := body["model"]; exists {
+		t.Fatalf("auto must omit model field, got %v", body["model"])
+	}
+	if _, exists := body["messages"]; !exists {
+		t.Fatal("auto must keep other payload fields")
+	}
+
+	// 大小写与空白不敏感。
+	for _, variant := range []string{"AUTO", " auto "} {
+		raw := mutateModel([]byte(`{"model":"gpt-4o"}`), variant)
+		_ = json.Unmarshal(raw, &body)
+		if _, exists := body["model"]; exists {
+			t.Fatalf("variant %q must omit model field", variant)
+		}
+	}
+}
+
+// TestEnsureAutoModel 校验模型出口统一补入 auto 且去重、置顶。
+func TestEnsureAutoModel(t *testing.T) {
+	got := ensureAutoModel([]string{"gpt-4o", "auto", " ", "gpt-4.1"})
+	want := []string{"auto", "gpt-4o", "gpt-4.1"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+
+	// 空输入也必须产出 auto，保证免费档出口非空。
+	if only := ensureAutoModel(nil); len(only) != 1 || only[0] != autoModelID {
+		t.Fatalf("empty input must yield [auto], got %v", only)
+	}
+}
+
+// TestIsAutoModelID 校验 auto 识别的大小写与空白容忍度。
+func TestIsAutoModelID(t *testing.T) {
+	for _, in := range []string{"auto", "AUTO", " Auto "} {
+		if !isAutoModelID(in) {
+			t.Fatalf("%q should be recognized as auto", in)
+		}
+	}
+	for _, in := range []string{"", "autos", "gpt-4o", "auto-gpt-5.4"} {
+		if isAutoModelID(in) {
+			t.Fatalf("%q must not be treated as auto", in)
+		}
+	}
+}
+
 // TestParseModelAliasAttribute 校验三种别名表形态（JSON 数组 / JSON 对象 / 逗号分隔）。
 func TestParseModelAliasAttribute(t *testing.T) {
 	// 1. JSON 数组形态。
