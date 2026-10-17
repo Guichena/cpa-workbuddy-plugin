@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.4
+
+- 登录桥接页不再要求管理密钥。0.1.3 的桥接页让浏览器直接请求
+  `/v0/management/plugins/doubao-provider/import`，而 management 路由由宿主强制
+  鉴权，用户必须再填一次管理密钥才能完成导入——与 traework 等插件的授权体验不一致。
+  现改为提交到本插件自己的 resource 路由 `/login/import`（宿主对 resource 路由
+  GET 免密钥放行），Cookie 放 `X-Doubao-Cookie` 请求头。安全性由 state 保证：
+  state 在发起登录时随机生成、15 分钟过期，等于一次性短时凭证。
+- 移除桥接页的密钥输入框、localStorage 密钥读取与 401 清 key 逻辑。
+- `/import` 管理路由不再承担桥接页回传职责，删除已无调用方的 `login_state` 分支。
+- 新增回归：`TestLoginBridgeImportWithoutManagementKey`（无 Authorization 也能导入
+  且轮询拿到 success）、`TestLoginBridgeImportRejectsBadInput`、
+  `TestLoginBridgeImportRouteIsDispatched`（路由被删/改 404 时用例必须失败）。
+
 ## 0.1.3
 
 - 修复登录桥接页的假成功：0.1.2 用「账号集合变化 / UpdatedAt 变新」判定登录完成，

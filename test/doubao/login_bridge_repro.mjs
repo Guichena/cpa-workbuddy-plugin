@@ -2,13 +2,12 @@
 /**
  * 豆包登录桥接页回归脚本（Node vm + DOM 桩，真实执行 login.go 渲染出的内联 JS）。
  *
- * 覆盖 TASK-013 的桥接页契约：
- *   1. 页面能从管理面板 localStorage 取到 management key 并回填输入框；
- *   2. 无 key 时点提交给出可操作提示且不发请求；
- *   3. 有 key 时提交 /import，携带 Authorization 与 Cookie 正文；
+ * 覆盖桥接页契约：
+ *   1. 页面不需要管理密钥，也不渲染密钥输入框；
+ *   2. 未粘贴 Cookie 时点提交给出提示且不发请求；
+ *   3. 提交走免密钥 resource 路由 /login/import，Cookie 放 X-Doubao-Cookie 头；
  *   4. 导入成功展示成功提示，失败展示上游原因；
- *   5. 401/403 时清 key 并提示重新填写；
- *   6. 请求进行中禁用按钮，结束后恢复。
+ *   5. 请求进行中禁用按钮，结束后恢复。
  *
  * 用法：node test/doubao/login_bridge_repro.mjs
  * 退出码：0 = 全部断言通过；1 = 存在断言失败。
@@ -16,7 +15,6 @@
 import fs from "fs";
 import path from "path";
 import vm from "vm";
-import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 
 const plugin = "doubao";
@@ -51,7 +49,7 @@ function renderBridgePage(state) {
   return html;
 }
 
-function loadBridge(state, { panelKey = "sk-from-panel" } = {}) {
+function loadBridge(state) {
   const html = renderBridgePage(state);
   const bodies = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((x) => x[1]);
   const main = bodies[bodies.length - 1];
@@ -81,18 +79,6 @@ function loadBridge(state, { panelKey = "sk-from-panel" } = {}) {
     body: { getAttribute(k) { return bodyAttrs[k] || null; } },
   };
 
-  // 用与面板相同的 XOR+base64 混淆，验证桥接页能解开主面板写入的值。
-  const SALT = "cli-proxy-api-webui::secure-storage";
-  const host = "cpa.luode.dev";
-  const ua = "harness";
-  function obfuscate(plain) {
-    const key = Buffer.from(`${SALT}|${host}|${ua}`, "utf8");
-    const data = Buffer.from(plain, "utf8");
-    const out = Buffer.alloc(data.length);
-    for (let i = 0; i < data.length; i++) out[i] = data[i] ^ key[i % key.length];
-    return "enc::v1::" + out.toString("base64");
-  }
-
   const requests = [];
   let respond = () => ({ status: 200, data: { ok: true, label: "测试号" } });
   const ctx = {
@@ -102,27 +88,9 @@ function loadBridge(state, { panelKey = "sk-from-panel" } = {}) {
     btoa: (s) => Buffer.from(s, "binary").toString("base64"),
     atob: (s) => Buffer.from(s, "base64").toString("binary"),
     document,
-    navigator: { userAgent: ua },
-    location: { host },
-    localStorage: {
-      getItem(k) {
-        if (k !== "cli-proxy-auth") return null;
-        return obfuscate(JSON.stringify({ state: { managementKey: panelKey } }));
-      },
-      setItem() {},
-    },
-    sessionStorage: (() => {
-      const store = new Map();
-      return {
-        getItem(k) { return store.has(k) ? store.get(k) : null; },
-        setItem(k, v) { store.set(k, String(v)); },
-        removeItem(k) { store.delete(k); },
-      };
-    })(),
     fetch: async (url, opts) => {
-      const body = JSON.parse((opts && opts.body) || "{}");
-      requests.push({ path: String(url), opts: opts || {}, body });
-      const r = await respond(body);
+      requests.push({ path: String(url), opts: opts || {} });
+      const r = await respond();
       return {
         status: r.status,
         json: async () => r.data,
@@ -133,7 +101,7 @@ function loadBridge(state, { panelKey = "sk-from-panel" } = {}) {
   vm.createContext(ctx);
   vm.runInContext(main, ctx, { filename: "doubao-bridge-main.js" });
   return {
-    ctx, document, requests,
+    ctx, document, html, requests,
     setRespond: (fn) => { respond = fn; },
   };
 }
@@ -155,11 +123,11 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 (async () => {
   console.log(`[回归] 登录桥接页 = ${plugin}/login.go`);
 
-  // 阶段1：能从主面板 localStorage 取到 key 并回填。
-  console.log("阶段1 自动取 key：");
+  // 阶段1：页面不再出现管理密钥输入框与密钥相关文案。
+  console.log("阶段1 无管理密钥：");
   const first = loadBridge("state-1");
-  check("key 已回填", first.document.getElementById("key").value, "sk-from-panel");
-  checkTrue("sessionStorage 已缓存 key", first.ctx.sessionStorage.getItem("doubao-mgmt-key") === "sk-from-panel");
+  checkTrue("页面无密钥输入框", !first.html.includes('id="key"'));
+  checkTrue("页面无管理密钥文案", !first.html.includes("管理密钥"));
 
   // 阶段2：未粘贴 Cookie 时不发请求。
   console.log("阶段2 空 Cookie 拦截：");
@@ -168,18 +136,19 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   check("未发请求", first.requests.length, 0);
   checkTrue("提示要求粘贴 Cookie", first.document.getElementById("result").textContent.includes("Cookie"));
 
-  // 阶段3：提交 → /import 带 Authorization 与 Cookie。
-  console.log("阶段3 提交导入：");
+  // 阶段3：提交走 resource 路由，Cookie 放请求头，不带 Authorization。
+  console.log("阶段3 免密钥提交：");
   first.document.getElementById("cookie").value = "sessionid=abc; flow_cur_user_sec_id=xyz";
   first.setRespond(() => ({ status: 200, data: { ok: true, label: "测试号" } }));
   first.document.getElementById("submit")._fire("click");
   await tick(); await tick();
   const req = first.requests[0];
-  checkTrue("请求路径为 /import", req && req.path.endsWith("/import"));
-  check("Authorization 头", req.opts.headers.Authorization, "Bearer sk-from-panel");
-  check("Content-Type 头", req.opts.headers["Content-Type"], "application/json");
-  check("Cookie 正文", req.body.cookie, "sessionid=abc; flow_cur_user_sec_id=xyz");
-  check("携带登录会话 state", req.body.login_state, "state-1");
+  checkTrue("路径为 resource /login/import", req && req.path.startsWith("/v0/resource/plugins/doubao-provider/login/import"));
+  checkTrue("URL 携带 state", req && req.path.includes("state=state-1"));
+  check("方法为 GET", req.opts.method, "GET");
+  check("Cookie 走自定义头", req.opts.headers["X-Doubao-Cookie"], "sessionid=abc; flow_cur_user_sec_id=xyz");
+  checkTrue("不带 Authorization", !(req.opts.headers.Authorization));
+  checkTrue("不带请求体", !req.opts.body);
   checkTrue("成功提示", first.document.getElementById("result").className === "ok");
   check("按钮文案改为已导入", first.document.getElementById("submit").textContent, "已导入");
 
@@ -194,25 +163,14 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   check("失败态", second.document.getElementById("result").className, "err");
   checkTrue("按钮已恢复可用", second.document.getElementById("submit").disabled === false);
 
-  // 阶段5：401 清 key 并要求重填。
-  console.log("阶段5 密钥失效：");
+  // 阶段5：会话过期提示可操作。
+  console.log("阶段5 会话过期：");
   const third = loadBridge("state-3");
   third.document.getElementById("cookie").value = "sessionid=abc";
-  third.setRespond(() => ({ status: 401, data: { error: "missing management key" } }));
+  third.setRespond(() => ({ status: 400, data: { error: "登录会话不存在或已过期，请回到管理页重新发起" } }));
   third.document.getElementById("submit")._fire("click");
   await tick(); await tick();
-  checkTrue("提示密钥失效", third.document.getElementById("result").textContent.includes("密钥无效"));
-  checkTrue("已清掉失效 key", third.ctx.sessionStorage.getItem("doubao-mgmt-key") === null);
-
-  // 阶段6：无可用 key 时提交给出可操作提示且不发请求。
-  console.log("阶段6 无 key 拦截：");
-  const fourth = loadBridge("state-4", { panelKey: "" });
-  fourth.document.getElementById("key").value = "";
-  fourth.document.getElementById("cookie").value = "sessionid=abc";
-  fourth.document.getElementById("submit")._fire("click");
-  await tick();
-  check("无 key 不发请求", fourth.requests.length, 0);
-  checkTrue("提示需要管理密钥", fourth.document.getElementById("result").textContent.includes("管理密钥"));
+  checkTrue("提示回到管理页重新发起", third.document.getElementById("result").textContent.includes("重新发起"));
 
   if (failures.length) {
     console.log(`\n[结果] ${failures.length} 项失败`);

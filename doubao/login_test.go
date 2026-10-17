@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -373,6 +376,158 @@ func TestAuthMethodsAreDispatched(t *testing.T) {
 		if strings.Contains(errCall.Error(), "unknown_method") {
 			t.Fatalf("%s 未接入分发表：%v", method, errCall)
 		}
+	}
+}
+
+// TestLoginBridgeImportWithoutManagementKey 校验桥接页提交不需要管理密钥。
+//
+// resource 路由由宿主以 GET 免密钥放行，桥接页是浏览器顶层打开的普通页面，
+// 拿不到管理密钥也不该要求用户填。这条用例锁定「无 Authorization 也能导入」，
+// 防止以后有人把它改回 management 路由。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17；改动原因：新增，锁定免密钥提交契约。
+func TestLoginBridgeImportWithoutManagementKey(t *testing.T) {
+	isolateAccounts(t)
+	resetLoginSessions()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"message":"success","data":{"sec_user_id":"sec_bridge_for_test_0123456789abcdef","user_id":13572468,"screen_name":"桥接测试"}}`))
+	}))
+	defer srv.Close()
+	restore := swapAccountInfoEndpoint(srv.URL + "/passport/account/info/v2/")
+	defer restore()
+
+	startRaw, _ := handleStartLogin(nil)
+	var start pluginapi.AuthLoginStartResponse
+	decodeEnvelopeResult(t, startRaw, &start)
+
+	req := pluginapi.ManagementRequest{
+		Method:  http.MethodGet,
+		Path:    "/v0/resource/plugins/" + providerName + "/login/import",
+		Query:   url.Values{"state": []string{start.State}},
+		Headers: http.Header{loginBridgeImportHeader: []string{validCookieHeader}},
+	}
+	resp := handleLoginBridgeImport(req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("免密钥导入应成功，实际 %d：%s", resp.StatusCode, truncateText(string(resp.Body), 200))
+	}
+	var out map[string]any
+	if errUnmarshal := json.Unmarshal(resp.Body, &out); errUnmarshal != nil {
+		t.Fatalf("结果应为合法 JSON：%v", errUnmarshal)
+	}
+	if ok, _ := out["ok"].(bool); !ok {
+		t.Fatalf("结果 ok 应为 true，实际 %v", out)
+	}
+	authID, _ := out["auth_id"].(string)
+	if authID == "" {
+		t.Fatal("结果应回传 auth_id")
+	}
+
+	// 导入后宿主轮询必须能拿到 success：这是桥接页与宿主之间的唯一交接点。
+	pollBody, _ := json.Marshal(pluginapi.AuthLoginPollRequest{State: start.State})
+	pollRaw, _ := handlePollLogin(pollBody)
+	var poll pluginapi.AuthLoginPollResponse
+	decodeEnvelopeResult(t, pollRaw, &poll)
+	if poll.Status != pluginapi.AuthLoginStatusSuccess {
+		t.Fatalf("桥接页导入后轮询应为 success，实际 %q（%s）", poll.Status, poll.Message)
+	}
+	if poll.Auth.ID != authID {
+		t.Fatalf("轮询回传账号应为 %q，实际 %q", authID, poll.Auth.ID)
+	}
+}
+
+// TestLoginBridgeImportRejectsBadInput 校验提交入口的三类拒绝路径。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17；改动原因：新增，免密钥入口的边界防护。
+func TestLoginBridgeImportRejectsBadInput(t *testing.T) {
+	isolateAccounts(t)
+	resetLoginSessions()
+
+	startRaw, _ := handleStartLogin(nil)
+	var start pluginapi.AuthLoginStartResponse
+	decodeEnvelopeResult(t, startRaw, &start)
+
+	cases := []struct {
+		name    string
+		req     pluginapi.ManagementRequest
+		wantMsg string
+	}{
+		{
+			name:    "缺 state",
+			req:     pluginapi.ManagementRequest{Method: http.MethodGet, Headers: http.Header{loginBridgeImportHeader: []string{validCookieHeader}}},
+			wantMsg: "登录会话",
+		},
+		{
+			name:    "未知 state",
+			req:     pluginapi.ManagementRequest{Method: http.MethodGet, Query: url.Values{"state": []string{"not-exist"}}, Headers: http.Header{loginBridgeImportHeader: []string{validCookieHeader}}},
+			wantMsg: "登录会话",
+		},
+		{
+			name:    "缺 Cookie",
+			req:     pluginapi.ManagementRequest{Method: http.MethodGet, Query: url.Values{"state": []string{start.State}}},
+			wantMsg: "cookie",
+		},
+	}
+	for _, c := range cases {
+		resp := handleLoginBridgeImport(c.req)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s：应返回 400，实际 %d", c.name, resp.StatusCode)
+			continue
+		}
+		if !strings.Contains(strings.ToLower(string(resp.Body)), strings.ToLower(c.wantMsg)) {
+			t.Errorf("%s：提示应含 %q，实际 %s", c.name, c.wantMsg, truncateText(string(resp.Body), 200))
+		}
+	}
+}
+
+// TestLoginBridgeImportRouteIsDispatched 校验 resource 提交路由真的接到分发表。
+//
+// 只测 handleLoginBridgeImport 本身不够：把分发分支删掉、改成 404，函数级用例
+// 仍会全绿。这条用例走 handleManagement，锁定「路由可达」这一层。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17；改动原因：新增，防止分发分支被删而测试不失灵。
+func TestLoginBridgeImportRouteIsDispatched(t *testing.T) {
+	isolateAccounts(t)
+	resetLoginSessions()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"message":"success","data":{"sec_user_id":"sec_route_for_test_0123456789abcdef","user_id":24681357,"screen_name":"路由测试"}}`))
+	}))
+	defer srv.Close()
+	restore := swapAccountInfoEndpoint(srv.URL + "/passport/account/info/v2/")
+	defer restore()
+
+	startRaw, _ := handleStartLogin(nil)
+	var start pluginapi.AuthLoginStartResponse
+	decodeEnvelopeResult(t, startRaw, &start)
+
+	path := "/v0/resource/plugins/" + providerName + "/login/import?state=" + url.QueryEscape(start.State)
+	payload, _ := json.Marshal(pluginapi.ManagementRequest{
+		Method:  http.MethodGet,
+		Path:    path,
+		Query:   url.Values{"state": []string{start.State}},
+		Headers: http.Header{loginBridgeImportHeader: []string{validCookieHeader}},
+	})
+	raw, errCall := handleManagement(payload)
+	if errCall != nil {
+		t.Fatalf("分发表不应报错：%v", errCall)
+	}
+	var env envelope
+	if errUnmarshal := json.Unmarshal(raw, &env); errUnmarshal != nil {
+		t.Fatalf("信封解析失败：%v", errUnmarshal)
+	}
+	if !env.OK {
+		t.Fatalf("提交路由应可达，实际信封 ok=false：%s", truncateText(string(raw), 200))
+	}
+	var resp pluginapi.ManagementResponse
+	if errUnmarshal := json.Unmarshal(env.Result, &resp); errUnmarshal != nil {
+		t.Fatalf("响应解析失败：%v", errUnmarshal)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("提交应成功，实际 %d：%s", resp.StatusCode, truncateText(string(resp.Body), 200))
 	}
 }
 

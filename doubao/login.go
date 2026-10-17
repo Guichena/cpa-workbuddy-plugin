@@ -290,12 +290,13 @@ func handleRefreshAuth(raw []byte) ([]byte, error) {
 
 // handleLoginBridge 渲染桥接页。
 //
-// 页面只做两件事：说明为什么没有一键授权，以及把用户粘贴的 Cookie 提交给
-// 已有的 /import 管理路由。管理密钥按面板同款三段式获取——桥接页是宿主 UI
-// 用 window.open 打开的顶层同源窗口，因此能直接读到主面板写入的 localStorage。
+// 页面只做两件事：说明为什么没有一键授权，以及把用户粘贴的 Cookie 交给插件
+// 自己消费。提交走 resource 路由（/login/import）而不是 management 路由：
+// resource 路由由宿主以 GET 免密钥放行，桥接页是浏览器顶层打开的普通页面，
+// 拿不到、也不该要求用户填管理密钥（与 traework 桥接页同一做法）。
 // [参数] state: 登录会话标识；rawQuery: 原始查询串（兼容资源路由的取参差异）。
 // [返回] 管理响应（HTML）。
-// 最近修改时间：2026-10-17；改动原因：新增，桥接页渲染。
+// 最近修改时间：2026-10-17；改动原因：提交改走免密钥的 resource 路由。
 func handleLoginBridge(state, rawQuery string) pluginapi.ManagementResponse {
 	state = strings.TrimSpace(state)
 	if state == "" {
@@ -314,6 +315,58 @@ func handleLoginBridge(state, rawQuery string) pluginapi.ManagementResponse {
 	}
 
 	return loginBridgePage(state, "")
+}
+
+// loginBridgeImportHeader 是桥接页提交 Cookie 时使用的请求头。
+//
+// resource 路由由宿主强制改写为 GET 且不带请求体，Cookie 只能走请求头；
+// 用自定义头而不是 Cookie 头，避免与浏览器自身的 Cookie 语义混淆。
+const loginBridgeImportHeader = "X-Doubao-Cookie"
+
+// handleLoginBridgeImport 处理桥接页的登录态提交（resource 路由，免管理密钥）。
+//
+// 只有持有有效 state 的桥接页才能调用：state 在 handleStartLogin 时随机生成、
+// 15 分钟过期，等于一次性的短时凭证。导入成功后登记到该会话，宿主轮询领取。
+// [参数] req: 宿主透传的请求（Cookie 在 X-Doubao-Cookie 头，state 在 query）。
+// [返回] JSON 结果信封。
+// 最近修改时间：2026-10-17；改动原因：新增，桥接页免密钥提交入口。
+func handleLoginBridgeImport(req pluginapi.ManagementRequest) pluginapi.ManagementResponse {
+	state := strings.TrimSpace(req.Query.Get("state"))
+	if state == "" {
+		return jsonManagementResponse(http.StatusBadRequest, map[string]any{"error": "缺少登录会话标识，请回到管理页重新发起"})
+	}
+
+	loginSessionsMu.Lock()
+	session, ok := loginSessions[state]
+	if ok && time.Since(session.startedAt) > loginStateTTL {
+		delete(loginSessions, state)
+		ok = false
+	}
+	loginSessionsMu.Unlock()
+	if !ok || session == nil {
+		return jsonManagementResponse(http.StatusBadRequest, map[string]any{"error": "登录会话不存在或已过期，请回到管理页重新发起"})
+	}
+
+	cookie := strings.TrimSpace(req.Headers.Get(loginBridgeImportHeader))
+	if cookie == "" {
+		return jsonManagementResponse(http.StatusBadRequest, map[string]any{"error": "cookie 不能为空"})
+	}
+
+	timeout := time.Duration(currentConfig().TimeoutSeconds) * time.Second
+	sa, errSave := saveCredentials(cookie, "", timeout)
+	if errSave != nil {
+		return jsonManagementResponse(http.StatusBadRequest, map[string]any{"error": errSave.Error()})
+	}
+	if !markLoginImported(state, sa.AuthID) {
+		// 账号已落盘但会话刚好过期：不丢账号，只提示宿主重来。
+		return jsonManagementResponse(http.StatusOK, map[string]any{
+			"ok": true, "auth_id": sa.AuthID, "label": sa.Label,
+			"message": "登录态导入成功，但登录会话已过期；账号已保存，可直接在面板使用",
+		})
+	}
+	return jsonManagementResponse(http.StatusOK, map[string]any{
+		"ok": true, "auth_id": sa.AuthID, "label": sa.Label, "message": "登录态导入成功",
+	})
 }
 
 // loginBridgePage 渲染桥接页 HTML。detail 非空时为错误页。
@@ -365,7 +418,7 @@ func writeBridgeHead(b *strings.Builder, state string) {
 // writeBridgeBody 写出引导文案与表单控件。
 // [参数] b: 输出缓冲。
 // [返回] 无。
-// 最近修改时间：2026-10-17；改动原因：新增，从桥接页渲染中拆出。
+// 最近修改时间：2026-10-17；改动原因：移除管理密钥输入框（改走免密钥 resource 路由）。
 func writeBridgeBody(b *strings.Builder) {
 	b.WriteString("<h1>绑定豆包账号</h1>")
 	b.WriteString("<p>豆包没有开放给第三方的一键授权：登录态是浏览器里的 HttpOnly Cookie，只能由你从浏览器导出。请按下面三步操作。</p>")
@@ -375,50 +428,33 @@ func writeBridgeBody(b *strings.Builder) {
 	b.WriteString("<li>粘贴到下方文本框并点「导入并完成」</li>")
 	b.WriteString("</ol>")
 	b.WriteString("<textarea id=\"cookie\" placeholder=\"flow_cur_user_sec_id=...; sessionid=...; ttwid=...\"></textarea>")
-	b.WriteString("<input id=\"key\" type=\"password\" placeholder=\"管理密钥（从管理面板打开本页时会自动填入）\" autocomplete=\"off\">")
 	b.WriteString("<button id=\"submit\">导入并完成</button>")
 	b.WriteString("<div id=\"result\"></div>")
-	b.WriteString("<div class=\"note\">导入成功后本页会自动提示，回到管理页即可看到新账号。密钥只存在当前标签页，关闭即失效。</div>")
+	b.WriteString("<div class=\"note\">导入成功后本页会自动提示，回到管理页即可看到新账号。</div>")
 }
 
 // writeBridgeScript 写出桥接页脚本。
 //
 // 脚本保持纯静态：provider 与 state 从 body 的 data 属性读取，避免把 Go 变量
 // 拼进 JS 字面量——拼接点既难测，也容易引入转义缺陷。
+// 提交走 resource 路由（免管理密钥），Cookie 放自定义请求头，因为宿主把
+// resource 请求统一改写为 GET 且不转发请求体。
 // [参数] b: 输出缓冲。
 // [返回] 无。
-// 最近修改时间：2026-10-17；改动原因：新增，从桥接页渲染中拆出。
+// 最近修改时间：2026-10-17；改动原因：改走免密钥 resource 路由提交。
 func writeBridgeScript(b *strings.Builder) {
 	b.WriteString("<script>")
 	b.WriteString("var PROVIDER=document.body.getAttribute(\"data-provider\")||\"\";")
 	b.WriteString("var STATE=document.body.getAttribute(\"data-state\")||\"\";")
-	b.WriteString("var API=\"/v0/management/plugins/\"+PROVIDER;")
-	b.WriteString("var SS=\"doubao-mgmt-key\";")
-	b.WriteString("var PREFIX=\"enc::v1::\";")
-	b.WriteString("var SALT=\"cli-proxy-api-webui::secure-storage\";")
-	b.WriteString("var STORE=\"cli-proxy-auth\";")
-	b.WriteString("function enc(t){return new TextEncoder().encode(t)}")
-	b.WriteString("function dec(b){return new TextDecoder().decode(b)}")
-	b.WriteString("function kb(){try{return enc(SALT+\"|\"+location.host+\"|\"+navigator.userAgent)}catch(e){return enc(SALT)}}")
-	b.WriteString("function xor(d,k){var r=new Uint8Array(d.length);for(var i=0;i<d.length;i++)r[i]=d[i]^k[i%k.length];return r}")
-	b.WriteString("function b64(s){var t=atob(s);var u=new Uint8Array(t.length);for(var i=0;i<t.length;i++)u[i]=t.charCodeAt(i);return u}")
-	b.WriteString("function deob(p){if(!p||p.indexOf(PREFIX)!==0)return p;try{return dec(xor(b64(p.slice(PREFIX.length)),kb()))}catch(e){return p}}")
-	b.WriteString("function panelKey(){try{var raw=localStorage.getItem(STORE);if(!raw)return null;var o=JSON.parse(deob(raw));var st=(o&&o.state)||o||{};return typeof st.managementKey===\"string\"&&st.managementKey?st.managementKey:null}catch(e){return null}}")
-	b.WriteString("function savedKey(){try{return sessionStorage.getItem(SS)}catch(e){return null}}")
-	b.WriteString("function remember(k){try{sessionStorage.setItem(SS,k)}catch(e){}}")
-	b.WriteString("var keyEl=document.getElementById(\"key\");")
-	b.WriteString("var auto=savedKey()||panelKey();")
-	b.WriteString("if(auto){remember(auto);keyEl.value=auto;}")
+	b.WriteString("var IMPORT=\"/v0/resource/plugins/\"+PROVIDER+\"/login/import?state=\"+encodeURIComponent(STATE);")
 	b.WriteString("function show(text,cls){var r=document.getElementById(\"result\");r.className=cls;r.textContent=text;}")
 	b.WriteString("document.getElementById(\"submit\").addEventListener(\"click\",function(){")
-	b.WriteString("  var btn=this;var cookie=document.getElementById(\"cookie\").value.trim();var key=keyEl.value.trim();")
+	b.WriteString("  var btn=this;var cookie=document.getElementById(\"cookie\").value.trim();")
 	b.WriteString("  if(!cookie){show(\"请先粘贴 Cookie\",\"err\");return}")
-	b.WriteString("  if(!key){show(\"需要管理密钥：请在管理面板中打开本页，或在上方输入\",\"err\");return}")
-	b.WriteString("  remember(key);btn.disabled=true;show(\"正在校验登录态…\",\"\");")
-	b.WriteString("  fetch(API+\"/import\",{method:\"POST\",cache:\"no-store\",headers:{\"Content-Type\":\"application/json\",\"Authorization\":\"Bearer \"+key},body:JSON.stringify({cookie:cookie,label:\"\",login_state:STATE})})")
+	b.WriteString("  btn.disabled=true;show(\"正在校验登录态…\",\"\");")
+	b.WriteString("  fetch(IMPORT,{method:\"GET\",cache:\"no-store\",headers:{\"X-Doubao-Cookie\":cookie}})")
 	b.WriteString("    .then(function(res){return res.json().then(function(d){return {status:res.status,data:d}}).catch(function(){return {status:res.status,data:{error:\"响应解析失败\"}}})})")
 	b.WriteString("    .then(function(r){")
-	b.WriteString("      if(r.status===401||r.status===403){try{sessionStorage.removeItem(SS)}catch(e){}show(\"管理密钥无效或已失效，请重新填写\",\"err\");return}")
 	b.WriteString("      if(r.data&&r.data.ok){show(\"导入成功，正在通知管理页…\",\"ok\");document.getElementById(\"submit\").textContent=\"已导入\";return}")
 	b.WriteString("      show(\"导入失败：\"+((r.data&&r.data.error)||\"未知错误\"),\"err\");")
 	b.WriteString("    })")
@@ -437,6 +473,18 @@ func htmlManagementResponse(page string) pluginapi.ManagementResponse {
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Cache-Control", "no-store")
 	return pluginapi.ManagementResponse{StatusCode: http.StatusOK, Headers: h, Body: []byte(page)}
+}
+
+// jsonManagementResponse 把结果编码成 JSON 管理响应。
+// [参数] status: HTTP 状态码；payload: 结果对象。
+// [返回] 管理响应。
+// 最近修改时间：2026-10-17；改动原因：新增，桥接页提交结果回写。
+func jsonManagementResponse(status int, payload map[string]any) pluginapi.ManagementResponse {
+	body, _ := json.Marshal(payload)
+	h := http.Header{}
+	h.Set("Content-Type", "application/json; charset=utf-8")
+	h.Set("Cache-Control", "no-store")
+	return pluginapi.ManagementResponse{StatusCode: status, Headers: h, Body: body}
 }
 
 // htmlEscape 转义 HTML 关键字符。
