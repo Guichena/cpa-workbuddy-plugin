@@ -571,10 +571,10 @@ func TestMutateModelAutoOmitsField(t *testing.T) {
 	}
 }
 
-// TestEnsureAutoModel 校验模型出口统一补入 auto 且去重、置顶。
+// TestEnsureAutoModel 校验模型出口统一补入 auto（置于末尾）且去重。
 func TestEnsureAutoModel(t *testing.T) {
 	got := ensureAutoModel([]string{"gpt-4o", "auto", " ", "gpt-4.1"})
-	want := []string{"auto", "gpt-4o", "gpt-4.1"}
+	want := []string{"gpt-4o", "gpt-4.1", "auto"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -584,7 +584,7 @@ func TestEnsureAutoModel(t *testing.T) {
 		}
 	}
 
-	// 空输入也必须产出 auto，保证免费档出口非空。
+	// 空输入也必须产出 auto，保证出口非空。
 	if only := ensureAutoModel(nil); len(only) != 1 || only[0] != autoModelID {
 		t.Fatalf("empty input must yield [auto], got %v", only)
 	}

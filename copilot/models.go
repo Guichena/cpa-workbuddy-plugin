@@ -38,16 +38,18 @@ func isAutoModelID(model string) bool {
 	return strings.EqualFold(strings.TrimSpace(model), autoModelID)
 }
 
-// ensureAutoModel 在模型清单首位补入 auto 并去重。
+// ensureAutoModel 在模型清单末尾补入 auto 并去重。
 //
-// 上游 /models 不返回 auto（它不是具体模型），但它对免费档是唯一可用入口，
-// 必须在所有模型出口（全局注册、按账号注册、面板、测试弹窗）稳定可见。
+// 上游 /models 不返回 auto（它不是具体模型）。实测（2026-10-17 生产免费账号）
+// 该账号省略 model 字段与传 "auto" 均返回 400 model_not_supported，具体模型
+// 反而 200——说明并非所有免费账号都能走自动选模。因此 auto 只作为**保留入口**
+// 放在末尾：既让真正受限的账号仍有可用项，也不会让能直连具体模型的账号
+// 把 auto 当成首选而踩 400。
 // [参数] models: 原始模型清单。
-// [返回] 首位为 auto 的去重清单。
-// 最近修改时间：2026-10-17 15:30:00；改动原因：新增，统一模型出口的 auto 合成口径。
+// [返回] 去重后的清单，auto 置于末尾。
+// 最近修改时间：2026-10-17 16:40:00；改动原因：生产实测 auto 并非普遍可用，改为末尾保留入口。
 func ensureAutoModel(models []string) []string {
 	out := make([]string, 0, len(models)+1)
-	out = append(out, autoModelID)
 	for _, m := range models {
 		trimmed := strings.TrimSpace(m)
 		if trimmed == "" || isAutoModelID(trimmed) {
@@ -55,7 +57,7 @@ func ensureAutoModel(models []string) []string {
 		}
 		out = append(out, trimmed)
 	}
-	return out
+	return append(out, autoModelID)
 }
 
 var (
@@ -248,7 +250,7 @@ func fetchUpstreamModels(ctx context.Context, sa *StoredAuth) ([]string, error) 
 		models = usable
 	}
 
-	// 出口清单始终包含 auto：探测确定零可用时这里只剩 auto，
+	// 出口清单始终包含 auto（置于末尾）：探测确定零可用时这里只剩 auto，
 	// 若返回空列表，调用方会误判为「动态发现失败」并回退到落盘旧清单，
 	// 让免费档上无权调用的具体模型继续残留。
 	//

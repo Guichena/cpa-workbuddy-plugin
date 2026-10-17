@@ -505,8 +505,8 @@ func TestFetchUpstreamModelsKeepsCandidatesWhenProbeIsUncertain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchUpstreamModels: %v", err)
 	}
-	if len(got) != 3 || got[0] != autoModelID {
-		t.Fatalf("uncertain probe must keep the filtered candidates plus auto, got %d: %v", len(got), got)
+	if len(got) != 3 || got[len(got)-1] != autoModelID {
+		t.Fatalf("uncertain probe must keep the filtered candidates plus auto (auto last), got %d: %v", len(got), got)
 	}
 }
 
@@ -552,8 +552,8 @@ func TestFetchUpstreamModelsDoesNotPersistAuto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchUpstreamModels: %v", err)
 	}
-	if len(got) != 2 || got[0] != autoModelID {
-		t.Fatalf("returned list must be [auto gpt-4o], got %v", got)
+	if len(got) != 2 || got[len(got)-1] != autoModelID {
+		t.Fatalf("returned list must be [gpt-4o auto], got %v", got)
 	}
 
 	raw, errRead := os.ReadFile(authPath)

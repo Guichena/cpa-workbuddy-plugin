@@ -1,25 +1,26 @@
 # Changelog
 
-## 0.1.7
+## 0.1.8
 
-免费 / 学生档只开放 auto 选模，插件此前既没有 auto 入口、又会把账号无权调用的模型继续暴露。
+免费 / 学生档在上游只开放 auto 选模，插件此前既没有 auto 入口、又会把账号无权调用的模型继续暴露。
 
 **Fix**
 
-- `models.go`：新增 `autoModelID` / `isAutoModelID` / `ensureAutoModel`，所有模型出口（`model.static`、`model.register`、`model.for_auth`、面板 `/models`、面板 `/accounts`、测试弹窗）统一把 `auto` 合成到清单首位并去重。上游 `/models` 不返回 auto（它不是具体模型），而免费 / 学生档只能走自动选模，缺了它等于把这类账号整体从路由中排除。
+- `models.go`：新增 `autoModelID` / `isAutoModelID` / `ensureAutoModel`，所有模型出口（`model.static`、`model.register`、`model.for_auth`、面板 `/models`、面板 `/accounts`、测试弹窗）统一把 `auto` 合成到清单**末尾**并去重。上游 `/models` 不返回 auto（它不是具体模型）；实测（2026-10-17 生产免费账号）该账号省略 model 字段与传 `"auto"` 均返回 400 `model_not_supported`，而具体模型返回 200，说明并非所有免费账号都能走自动选模。因此 auto 只作保留入口置于末尾，避免能直连具体模型的账号把 auto 当首选而踩 400。
 - `models.go`：`defaultModels` 收敛为 `["auto"]`。原静态兜底写死 `gpt-4.1` / `gpt-4o` / `claude-sonnet-4` / `o4-mini` / `gemini-2.5-pro`，在上游不可达时会把已下线或当前档位无权调用的模型暴露给宿主；具体模型 ID 一律只由 `/models` 动态获取。
 - `models.go`：探测判据由布尔改为三态（usable / unusable / unknown），并修正「探测确定全空就回退候选」的缺陷——免费档上游 `/models` 仍列出大量 chat 条目、探测对每个都返回 `model_not_supported`，旧实现只要探测结果为空就回退候选，导致无权模型被原样暴露（用户点开即 400）。现在只有存在不确定结果（传输错误 / 5xx / 限流）时才保留候选。
 - `models.go`：400 / 422 且未命中模型拒绝文案时判为可调用（请求已过模型鉴权、落到参数校验，典型为 `messages must be non-empty`）；此前这类响应落到 unknown 分支。
 - `models.go`：`allConfiguredModels` 输出按字典序稳定排序，避免 map 随机迭代顺序让模型注册结果每次不同。
-- `executor.go`：`mutateModel` 对 auto 执行 `delete(body, "model")` 而非写入 `"auto"`。上游对 `"model":"auto"` 返回 400 `model_not_supported`，省略该字段才由服务端按账号档位自动选模——这是免费 / 学生档唯一可用的请求形态。
-- `active_ping.go`：`pingUpstreamOnce` 对 auto 同样省略 `model` 字段，与真实推理请求保持同一形态，避免面板「测试」用 `"model":"auto"` 探到 400 而误判账号不可用。
+- `executor.go`：`mutateModel` 对 auto 执行 `delete(body, "model")` 而非写入 `"auto"`。上游对 `"model":"auto"` 返回 400 `model_not_supported`，省略该字段交由服务端按账号档位自选。
+- `active_ping.go`：`pingUpstreamOnce` 对 auto 同样省略 `model` 字段，与真实推理请求保持同一形态。
 - `oauth.go`：刷新令牌时即使模型清单为空也落盘，否则免费档账号上的旧具体模型会一直残留。
 
 **Test**
 
-- 新增 `TestMutateModelAutoOmitsField`（auto 删除字段、大小写与空白容忍）、`TestEnsureAutoModel`（置顶去重、空输入仍产出 auto）、`TestIsAutoModelID`。
+- 新增 `TestMutateModelAutoOmitsField`（auto 删除字段、大小写与空白容忍）、`TestEnsureAutoModel`（末尾去重、空输入仍产出 auto）、`TestIsAutoModelID`、`TestFetchUpstreamModelsDoesNotPersistAuto`（落盘不含 auto）。
 - `TestFetchUpstreamModelsKeepsCandidatesWhenProbeYieldsNothing` 拆分为 `...ClearsWhenProbeSaysUnentitled`（确定全空必须清空）与 `...KeepsCandidatesWhenProbeIsUncertain`（不确定才保留）。
-- 哨兵变异 3/3 精确命中（恢复 auto 原样写入、恢复「探测空即回退」、移除 auto 出口合成，均被对应用例 FAIL 捕获）；`cgo-shim-build.py copilot` build/vet/test 全绿。
+- 哨兵变异 5/5 精确命中；`cgo-shim-build.py copilot` build/vet/test 全绿；真实 `.so` ABI 探针 5/5 PASS。
+- 生产实测（2026-10-17）：`auto` 省略 model 与 `"model":"auto"` 均 400，`gpt-4o-mini-2024-07-18` / `gpt-4.1` 均 200，据此确定 auto 置末尾。
 
 ## 0.1.6
 
