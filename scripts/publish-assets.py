@@ -30,6 +30,11 @@ PLATFORMS = [
     "windows_arm64",
 ]
 
+# FreeBSD 14.3 已从官方源下架（2026-10-17 实测 download/old-releases 均 404），
+# CI 的 go-cross 动作固定请求该版本，导致所有插件的 freebsd 构建集体失败。
+# 在镜像版本修好前，freebsd 包按可选处理：存在就登记，缺失不阻断发布。
+OPTIONAL_PLATFORMS = {"freebsd_amd64"}
+
 RAW_BASE = "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets"
 
 
@@ -58,27 +63,36 @@ def main() -> int:
     if not out.is_dir():
         raise SystemExit(f"assets dir missing: {out}")
 
-    missing = [t for t in PLATFORMS if not (out / f"{plugin}_{version}_{t}.zip").exists()]
+    def zip_path(t: str) -> pathlib.Path:
+        return out / f"{plugin}_{version}_{t}.zip"
+
+    def present_platforms() -> list[str]:
+        return [t for t in PLATFORMS if zip_path(t).exists()]
+
+    missing = [t for t in PLATFORMS if not zip_path(t).exists() and t not in OPTIONAL_PLATFORMS]
     if missing:
         raise SystemExit(f"missing zips: {missing}")
+    skipped = [t for t in PLATFORMS if not zip_path(t).exists()]
+    if skipped:
+        print(f"NOTE optional platforms absent (not registered): {skipped}")
 
     # checksums.txt sanity (regenerate if absent)
     cksum = out / "checksums.txt"
     if not cksum.exists():
         lines = []
-        for t in PLATFORMS:
-            z = out / f"{plugin}_{version}_{t}.zip"
+        for t in present_platforms():
+            z = zip_path(t)
             lines.append(f"{sha256_of(z)}  {z.name}")
         cksum.write_text("\n".join(lines) + "\n")
-    for t in PLATFORMS:
-        z = out / f"{plugin}_{version}_{t}.zip"
+    for t in present_platforms():
+        z = zip_path(t)
         h = sha256_of(z)
         ck = f"{h}  {z.name}"
         if ck not in cksum.read_text():
             print(f"WARN checksums.txt mismatch for {z.name} (will regenerate)")
             lines = []
-            for tt in PLATFORMS:
-                zz = out / f"{plugin}_{version}_{tt}.zip"
+            for tt in present_platforms():
+                zz = zip_path(tt)
                 lines.append(f"{sha256_of(zz)}  {zz.name}")
             cksum.write_text("\n".join(lines) + "\n")
             break
@@ -98,8 +112,8 @@ def main() -> int:
         arts = []
         entry["install"]["artifacts"] = arts
     seen = set()
-    for t in PLATFORMS:
-        z = out / f"{plugin}_{version}_{t}.zip"
+    for t in present_platforms():
+        z = zip_path(t)
         goos, goarch = t.split("_", 1)
         art = next((a for a in arts if a.get("goos") == goos and a.get("goarch") == goarch), None)
         if art is None:
