@@ -47,7 +47,7 @@
   - **改动范围**：`.github/workflows/build.yml`（删除 12 条 freebsd 交叉矩阵项、删除 wget 补丁步骤、release notes 表格删行）；`scripts/publish-assets.py`（`PLATFORMS` 移除 `freebsd_amd64`、删除 `OPTIONAL_PLATFORMS` 可选平台逃生门）；`registry.json`（10 插件各 7→6 artifacts）；`release-assets/`（删除 10 个 freebsd zip 并同步各 `checksums.txt`）；文档同步 `README.md` / `cursor/README.md` / `项目设计.md` / `AGENTS.md` / `CLAUDE.md` / 两份发布 skill。
   - **保留项**：`build-cross` 仅剩 windows-arm64（12 条）；release job 的 6 平台完整性检查本就不含 freebsd，未改。
   - **验证**：workflow YAML 解析通过（native 60 条 5 组合 / cross 12 条仅 windows-arm64）；`validate-registry.py` OK（10 插件各 6 artifacts，组合恰为 6 个）；`publish-assets.py` 临时目录正向实跑（6 zip → 6 artifacts 回写成功）与负向实跑（缺 windows_arm64 → `missing zips` + exit=1）；10 个版本目录 `sha256sum -c checksums.txt` 全 OK；临时目录已清理。
-  - 未验证：新矩阵尚未触发真实 CI（需下次发布时确认 Release job 不再因 freebsd 卡住）。
+  - **真实 CI 已验证（run `39052278051`，提交 `0118051`）**：84 success / 1 skipped（Release job 因纯 push 跳过）/ 0 failure；作业总数由 108 降至 84，**freebsd 作业为 0**，交叉构建仅剩 12 条 windows-arm64。
   - 文档：`doc/6-review/2026-10-18_010000_发布矩阵下线freebsd平台_6-review.md`（STYLE: PASS）。
 - 当前会话（2026-10-17）：**qoder 三插件流式断流换号与冷却落盘修复（CYCLE-01 + CYCLE-02 全部闭环）**：
   - 需求背景：生产会话 `5fa71566` 中 `qwen-3.8-flash` 请求（ID `202610171157242386880308268d9d6KQb4LXIN`）上游断流后未换号。根因：插件断流分支无换号路径（主）+ 断流信封无状态码（次）+ 24h 冷却 92 次触发零落盘（独立缺陷）。
