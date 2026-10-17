@@ -72,7 +72,7 @@ import (
 const (
 	providerName  = "qwenwork-provider"
 	authFileName  = "qwenwork.json"
-	pluginLogoURL = "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/QwenWork.png"
+	pluginLogoURL = "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/assets/icons/QwenWork.png"
 	// QwenWork: 单一 gateway 域名承载认证、额度与 MaaS 签发。
 	// 推理走 MaaS 网关（base_url 由签发接口下发），不需要 COSY 签名。
 	upstreamBaseCN = "https://gateway.qwenwork.cn"
