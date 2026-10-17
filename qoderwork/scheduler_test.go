@@ -75,6 +75,10 @@ func TestSchedulerPick_SingleCandidate_PicksIt(t *testing.T) {
 	}
 }
 
+// TestSchedulerPick_PrefersLowCreditOverHighCredit guards the safety-floor
+// exclusion: an account below minRoutableCredits is hard-excluded, so the
+// remaining healthy account is routed. (The test name predates the
+// low-credit-first reversal; current routing is HIGH-CREDIT-FIRST.)
 func TestSchedulerPick_PrefersLowCreditOverHighCredit(t *testing.T) {
 	resetActiveAuth(t)
 	accountCache.Store("qo-a", &accountCacheEntry{credits: &creditsSummary{TotalRemain: 10, TotalSize: 10}})
@@ -126,23 +130,26 @@ func TestSchedulerPick_KeepsHealthyPanelSelection(t *testing.T) {
 	}
 }
 
-func TestSchedulerPick_StaysOnExhaustedSelection(t *testing.T) {
+// TestSchedulerPick_ZeroCreditSelectionKept 验证 0 积分账号仍可路由：
+// 免费模型不消耗积分，选中账号不得因积分为 0 被换掉。
+func TestSchedulerPick_ZeroCreditSelectionKept(t *testing.T) {
 	resetActiveAuth(t)
-	accountCache.Store("qo-exhausted", &accountCacheEntry{
+	resetFailover(t)
+	accountCache.Store("qo-zero", &accountCacheEntry{
 		credits: &creditsSummary{TotalRemain: 0, TotalUsed: 500, TotalSize: 500},
 	})
 	accountCache.Store("qo-ok", &accountCacheEntry{
 		credits: &creditsSummary{TotalRemain: 300, TotalUsed: 0, TotalSize: 300},
 	})
 	defer func() {
-		accountCache.Delete("qo-exhausted")
+		accountCache.Delete("qo-zero")
 		accountCache.Delete("qo-ok")
 	}()
-	setActiveAuthID("qo-exhausted")
+	setActiveAuthID("qo-zero")
 	raw, err := handleSchedulerPick(mustMarshal(t, pluginapi.SchedulerPickRequest{
 		Provider: providerName,
 		Candidates: []pluginapi.SchedulerAuthCandidate{
-			{ID: "qo-exhausted", Provider: providerName},
+			{ID: "qo-zero", Provider: providerName},
 			{ID: "qo-ok", Provider: providerName},
 		},
 	}))
@@ -150,16 +157,16 @@ func TestSchedulerPick_StaysOnExhaustedSelection(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	resp := parsePickResponse(t, raw)
-	if !resp.Handled || resp.AuthID != "qo-ok" {
-		t.Fatalf("want switch to qo-ok, got %+v", resp)
-	}
-	if getActiveAuthID() != "qo-ok" {
-		t.Fatalf("active should update to qo-ok, got %q", getActiveAuthID())
+	if !resp.Handled || resp.AuthID != "qo-zero" {
+		t.Fatalf("0-credit selection should be kept for free models, got %+v", resp)
 	}
 }
 
-func TestSchedulerPick_AllExhausted_Defers(t *testing.T) {
+// TestSchedulerPick_AllZeroCreditStillRoutes 验证全池 0 积分时插件仍自行接管：
+// 免费模型可用，不得让位给宿主跨 provider 轮转。
+func TestSchedulerPick_AllZeroCreditStillRoutes(t *testing.T) {
 	resetActiveAuth(t)
+	resetFailover(t)
 	accountCache.Store("qo-a", &accountCacheEntry{
 		credits: &creditsSummary{TotalRemain: 0, TotalUsed: 100, TotalSize: 100},
 	})
@@ -183,8 +190,8 @@ func TestSchedulerPick_AllExhausted_Defers(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	resp := parsePickResponse(t, raw)
-	if resp.Handled {
-		t.Fatalf("all exhausted should defer to host (cross-provider failover), got %+v", resp)
+	if !resp.Handled {
+		t.Fatalf("0-credit pool must stay handled (free models), got %+v", resp)
 	}
 }
 

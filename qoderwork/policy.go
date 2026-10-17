@@ -46,12 +46,6 @@ func lifecycleEnabled() bool {
 	return lifecycleAuto
 }
 
-// shouldActOnCredits is true only when credits are *known* exhausted.
-// nil / empty (no packages, no used) is unknown → false.
-func shouldActOnCredits(cr *creditsSummary) bool {
-	return isCreditsExhausted(cr)
-}
-
 // hardCreditMarkers are case-insensitive substrings in upstream error bodies.
 var hardCreditMarkers = []string{
 	"insufficient credit",
@@ -106,13 +100,17 @@ func setMinRoutableCredits(n int64) func() {
 	}
 }
 
-// isCreditsLowOrExhausted 判定账号是否额度耗尽或已低于安全缓冲额度红线。
-func isCreditsLowOrExhausted(cr *creditsSummary) bool {
+// isCreditsLowForRouting 判定账号是否因残血积分暂停路由。
+// [参数] cr：积分快照。
+// [返回] 剩余积分为 0 时返回 false（可走免费模型）；仅正积分低于安全红线时返回 true。
+// 最近修改时间 2026-10-17 15:12:00（0 积分账号仍可走免费模型，仅保留残血保护）
+func isCreditsLowForRouting(cr *creditsSummary) bool {
 	if cr == nil {
 		return false
 	}
-	if isCreditsExhausted(cr) {
-		return true
+	// 0 积分不等于不可用：免费模型不消耗积分，仅残血账号需暂停路由。
+	if cr.TotalRemain <= 0 {
+		return false
 	}
 	return cr.TotalRemain < loadedMinRoutableCredits()
 }
@@ -247,31 +245,6 @@ func envelopeHTTPStatusForError(message string) int {
 	return 0
 }
 
-// lifecycleActionFor chooses disable/none from credits.
-// QoderWork is CN-only — disable (not delete) so check-in can restore credits
-// without forcing the user to re-import a PAT.
-func lifecycleActionFor(region string, cr *creditsSummary) lifecycleAction {
-	if !shouldActOnCredits(cr) {
-		return lifecycleNone
-	}
-	return lifecycleDisable
-}
-
-// shouldReenableCN is true when a CN account is disabled but now has credits.
-func shouldReenableCN(disabled bool, cr *creditsSummary) bool {
-	if !disabled {
-		return false
-	}
-	if cr == nil {
-		return false
-	}
-	if isCreditsExhausted(cr) {
-		return false
-	}
-	// Known positive remain, or non-exhausted with packages still having room.
-	return cr.TotalRemain > 0
-}
-
 // displayNote builds a one-line note for CPAMP Auth cards.
 func displayNote(sa *storedAuth, cr *creditsSummary, disabled bool) string {
 	region := strings.ToUpper("cn")
@@ -287,8 +260,6 @@ func displayNote(sa *storedAuth, cr *creditsSummary, disabled bool) string {
 	switch {
 	case cr == nil:
 		parts = append(parts, "积分未知")
-	case isCreditsExhausted(cr):
-		parts = append(parts, fmt.Sprintf("耗尽 · 余%d 已用%d", cr.TotalRemain, cr.TotalUsed))
 	default:
 		// Show remain as primary (what you can still spend). Used is real cycle spend.
 		// Size (capacity) grows with check-in packs — do not treat size↑ as usage↓.

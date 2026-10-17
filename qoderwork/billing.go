@@ -361,9 +361,10 @@ func performCheckinCall(sa *storedAuth, campaignID string) (map[string]any, erro
 	return out, nil
 }
 
-// isCreditsExhausted is the shared "耗尽" definition for panel + scheduler.
-// Exhausted = we have usage signal and no remaining credits.
-// Missing credits data is NOT exhausted (unknown).
+// isCreditsExhausted 判定积分快照是否归零（仅用于面板展示「0积分」标签）。
+// [参数] cr：积分快照。
+// [返回] 有消耗或额度池信号且剩余为 0 时返回 true；缺失数据视为未知返回 false。
+// 最近修改时间 2026-10-17 15:12:00（改为纯展示语义，不再参与路由与自动禁用）
 func isCreditsExhausted(cr *creditsSummary) bool {
 	if cr == nil {
 		return false

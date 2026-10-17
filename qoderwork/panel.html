@@ -211,7 +211,7 @@ button.danger:hover{background:var(--err);color:#fff}
 <body>
 <div class="wrap">
   <h1>QoderWork 账号面板</h1>
-  <div class="sub">积分余额 · CN 每日签到（00/04/08/12/16/20）· 耗尽自动关</div>
+  <div class="sub">积分余额 · CN 每日签到（00/04/08/12/16/20）· 0 积分仍可用免费模型</div>
   <div id="authBox" class="card" style="display:none;margin-bottom:16px">
     <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
     <div style="display:flex;gap:8px">
@@ -231,10 +231,10 @@ button.danger:hover{background:var(--err);color:#fff}
   </div>
   <div class="filter-bar" id="filterBar">
     <button type="button" class="ftag active" data-region="all" onclick="filterRegion('all',this)">全部 <span class="cnt" id="cntAll">0</span></button>
-    <button type="button" class="ftag" data-region="available" onclick="filterRegion('available',this)" title="未禁用 · 未耗尽，可用积分能正常路由">可用 <span class="cnt" id="cntAvailable">0</span></button>
+    <button type="button" class="ftag" data-region="available" onclick="filterRegion('available',this)" title="未禁用 · 未处于日限冷却，可正常路由（0 积分账号仍可用免费模型）">可用 <span class="cnt" id="cntAvailable">0</span></button>
     <button type="button" class="ftag" data-region="cn" onclick="filterRegion('cn',this)">CN <span class="cnt" id="cntCn">0</span></button>
-    <button type="button" class="ftag" data-region="cooling" onclick="filterRegion('cooling',this)" title="因 110 日调用上限处于 24 小时持久化冷却中">冷却 <span class="cnt" id="cntCooling">0</span></button>
-    <button type="button" class="ftag" data-region="exhausted" onclick="filterRegion('exhausted',this)">耗尽 <span class="cnt" id="cntExhausted">0</span></button>
+    <button type="button" class="ftag" data-region="cooling" onclick="filterRegion('cooling',this)" title="触发上游每日调用次数上限（110），处于 24 小时冷却中">冷却 <span class="cnt" id="cntCooling">0</span></button>
+    <button type="button" class="ftag" data-region="exhausted" onclick="filterRegion('exhausted',this)" title="积分为 0 的账号（仍可调用免费模型）">0积分 <span class="cnt" id="cntExhausted">0</span></button>
   </div>
   <div class="summary card" id="summaryBox" style="display:none"></div>
   <div id="grid" class="grid"><div class="loading">加载中…</div></div>
@@ -439,7 +439,8 @@ function card(a){
   const lowCreditsBadge=lowCredits?`<span class="badge low-credits" title="剩余额度低于安全红线(20)，已暂停路由，防止推理中途断开">低额保护</span>`:"";
   const dailyCooling=!!a.daily_cooling;
   const dailyCoolingRemain=a.daily_cooling_remain||"";
-  const coolingBadge=dailyCooling?`<span class="badge cooling" title="达到上游 110 日调用上限，已进入 24 小时持久化冷却（${esc(dailyCoolingRemain)}）">110冷却(${esc(dailyCoolingRemain)})</span>`:"";
+  // 110 日调用次数上限：账号级日限额，与积分无关，冷却期内换模型同样被拒
+  const coolingBadge=dailyCooling?`<span class="badge cooling" title="账号触发上游每日调用次数上限（110），已进入 24 小时冷却，到期自动恢复（${esc(dailyCoolingRemain)}）">日限冷却(${esc(dailyCoolingRemain)})</span>`:"";
   const region=a.region||"cn";
   
   const disabled=!!a.disabled;
@@ -463,7 +464,7 @@ function card(a){
     : (disabled?``:`<button class="sec" data-action="select" data-auth-index="${esc(a.auth_index)}">选用</button>`);
   const refreshBtn=`<button class="sec" data-action="refresh" data-auth-index="${esc(a.auth_index)}" title="刷新积分">刷新</button>`;
   const clearCooldownBtn=dailyCooling?`<button class="sec" data-action="clear-cooldown" data-auth-index="${esc(a.auth_index)}" title="手动解除 110 日调用上限冷却">解冷</button>`:"";
-  const badges=(selected?`<span class="badge" style="background:var(--acc-ring);color:var(--acc);border-color:var(--acc)">使用中</span>`:"")+(disabled?`<span class="badge disabled">已禁用</span>`:"")+(exhausted?`<span class="badge exhausted">耗尽</span>`:lowCreditsBadge)+coolingBadge+regionBadge+`<span class="badge ${esc(plan)}">${esc(a.plan||"-")}</span>`;
+  const badges=(selected?`<span class="badge" style="background:var(--acc-ring);color:var(--acc);border-color:var(--acc)">使用中</span>`:"")+(disabled?`<span class="badge disabled">已禁用</span>`:"")+(exhausted?`<span class="badge exhausted" title="积分为 0，仍可调用免费模型">0积分</span>`:lowCreditsBadge)+coolingBadge+regionBadge+`<span class="badge ${esc(plan)}">${esc(a.plan||"-")}</span>`;
   const display=(a.nickname||a.label||a.name||"").replace(/^qoderwork-?/i,"");
   const nick=display||("u"+(a.uid||"").slice(-8));
   return `<div class="card${selected?" selected":""}" data-region="${region}" data-auth="${esc(a.auth_index)}" data-refresh-state="${a._refreshState||""}" data-nickname="${esc(display)}" data-uid="${esc(a.uid||"")}" data-name="${esc(a.name||"")}">
@@ -545,7 +546,8 @@ function filterRegion(region, btn){
     const r=c.dataset.region||"cn";
     let show=true;
     if(currentFilter==="all") show=true;
-    else if(currentFilter==="available") show=!(c.dataset.disabled==="1"||c.querySelector(".badge.exhausted")!=null||c.querySelector(".badge.low-credits")!=null||c.querySelector(".badge.cooling")!=null);
+    // 0 积分不算不可用：免费模型不消耗积分，只有禁用 / 残血 / 日限冷却才排除
+    else if(currentFilter==="available") show=!(c.dataset.disabled==="1"||c.querySelector(".badge.low-credits")!=null||c.querySelector(".badge.cooling")!=null);
     else if(currentFilter==="cooling") show=c.querySelector(".badge.cooling")!=null;
     else if(currentFilter==="exhausted") show=c.querySelector(".badge.exhausted")!=null;
     else show=r===currentFilter;
@@ -566,7 +568,8 @@ function updateFilterCounts(accounts){
     const c=creditOf(a);
     const isExhausted=!!a.exhausted||(c.known&&c.remain===0&&(c.used>0||c.size>0));
     const isLowCredits=!isExhausted&&(!!a.low_credits||(c.known&&c.remain>0&&c.remain<20));
-    if(!(a.disabled||isExhausted||isLowCredits||a.daily_cooling)) avail++;
+    // 0 积分不参与可用性排除：免费模型不消耗积分
+    if(!(a.disabled||isLowCredits||a.daily_cooling)) avail++;
   });
   const elAll=document.getElementById("cntAll");
   const elCn=document.getElementById("cntCn");
@@ -583,12 +586,12 @@ function accountsForFilter(accounts){
   const list=accounts||[];
   if(currentFilter==="all") return list;
   if(currentFilter==="available"){
-    // 可用 = 不属于已禁用 / 已耗尽 / 低额保护 / 110持久化冷却（同步自 workbuddy 0.14.4）
+    // 可用 = 不属于已禁用 / 低额保护 / 日限冷却；0 积分仍可走免费模型
     return list.filter(a=>{
       const c=creditOf(a);
       const isExhausted=!!a.exhausted||(c.known&&c.remain===0&&(c.used>0||c.size>0));
       const isLowCredits=!isExhausted&&(!!a.low_credits||(c.known&&c.remain>0&&c.remain<20));
-      return !(a.disabled||isExhausted||isLowCredits||a.daily_cooling);
+      return !(a.disabled||isLowCredits||a.daily_cooling);
     });
   }
   if(currentFilter==="cooling"){
@@ -671,14 +674,15 @@ function renderSummary(accounts){
   const scoped=accountsForFilter(all);
   // 5 卡片口径：剩余(可用) / 剩余(不可用) / 已用(消耗) / 额度池 / 消耗占比
   // 「剩余(可用)/已用/额度池/占比」按可用账号统计；「剩余(不可用)」独立统计不可用账号。
-  // 不可用 = 保号池 / 已禁用 / 已耗尽（同步自 workbuddy 0.14.4）
+  // 不可用 = 已禁用 / 低额保护 / 日限冷却（0 积分仍可走免费模型）
   let remainAvail=0, remainUnavail=0, used=0, size=0, knownN=0, disabledN=0, exhaustedN=0, coolingN=0, unavailN=0;
   let cnRemain=0, cnUsed=0;
   scoped.forEach(a=>{
     const c=creditOf(a);
     const isExhausted=!!a.exhausted||(c.known&&c.remain===0&&(c.used>0||c.size>0));
     const isLowCredits=!isExhausted&&(!!a.low_credits||(c.known&&c.remain>0&&c.remain<20));
-    const isUnavailable=!!a.disabled||isExhausted||isLowCredits||!!a.daily_cooling;
+    // 0 积分账号仍可路由（免费模型），不计入不可用
+    const isUnavailable=!!a.disabled||isLowCredits||!!a.daily_cooling;
     if(c.known){
       if(isUnavailable){ remainUnavail+=c.remain; unavailN++; }
       else { remainAvail+=c.remain; used+=c.used; size+=c.size; knownN++; }
@@ -698,13 +702,13 @@ function renderSummary(accounts){
   const pct=total>0?Math.round(used/total*100):0;
   let barColor="var(--ok)"; if(pct>60)barColor="var(--warn)"; if(pct>85)barColor="var(--err)";
   // 标题文案：「可用」过滤时直接用"可用账号"；其他用通用「全部账号」
-  const scopeLabel=currentFilter==="all"?"全部账号":(currentFilter==="available"?"可用账号":(currentFilter==="cn"?"CN 账号":(currentFilter==="cooling"?"冷却账号":(currentFilter==="exhausted"?"耗尽账号":"全部账号"))));
+  const scopeLabel=currentFilter==="all"?"全部账号":(currentFilter==="available"?"可用账号":(currentFilter==="cn"?"CN 账号":(currentFilter==="cooling"?"冷却账号":(currentFilter==="exhausted"?"0积分账号":"全部账号"))));
   const allTotal=allSize>0?allSize:(allRemain+allUsed);
   box.style.display="block";
   box.innerHTML=`
     <div class="summary-hd">
       <div class="summary-title">用量汇总 · ${esc(scopeLabel)}</div>
-      <div class="summary-meta">${scoped.length} 个账号 · 可用 ${knownN} · 冷却 ${coolingN} · 不可用 ${unavailN} · 禁用 ${disabledN} · 耗尽 ${exhaustedN}</div>
+      <div class="summary-meta">${scoped.length} 个账号 · 可用 ${knownN} · 冷却 ${coolingN} · 不可用 ${unavailN} · 禁用 ${disabledN} · 0积分 ${exhaustedN}</div>
     </div>
     <div class="summary-grid">
       <div class="summary-item"><div class="k">剩余(可用)</div><div class="v ok">${remainAvail}</div></div>

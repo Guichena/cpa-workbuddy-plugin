@@ -168,10 +168,10 @@ func headerSessionPrefix(header string) string {
 // sessionKey != "" → sticky session routing:
 //   - a fresh, still-usable binding is reused unchanged (1h stickiness);
 //   - a stale binding (expired) or a binding whose account became
-//     disabled/exhausted/cooling-down/anomalous is re-assigned;
+//     disabled/cooling-down/low-credit is re-assigned;
 //   - new assignments prefer accounts with no live bindings, then round-robin
-//     across all usable accounts;
-//   - when every account is disabled/exhausted, the current pin is kept if the
+//     across all routable accounts;
+//   - when no routable account exists, the current pin is kept if the
 //     account still exists, else the first candidate.
 //
 // sessionKey == "" → fall back to the panel-selected account (same behavior as
@@ -189,7 +189,7 @@ func pickSessionAuth(sessionKey string, candidates []activeAuthCandidate) string
 	usableSet := make(map[string]struct{}, len(candidates))
 	for _, c := range candidates {
 		live[c.ID] = struct{}{}
-		if !c.Disabled && !c.Exhausted && accountRoutable(c.ID) {
+		if !c.Disabled && accountRoutable(c.ID) {
 			usable = append(usable, c.ID)
 			usableSet[c.ID] = struct{}{}
 		}
@@ -209,10 +209,10 @@ func pickSessionAuth(sessionKey string, candidates []activeAuthCandidate) string
 	}
 
 	if len(usable) == 0 {
-		// Everything disabled/exhausted/cooling-down/测试失败: no healthy
-		// account exists. Return "" so handleSchedulerPick defers (Handled:
-		// false) to the host's built-in scheduler (cross-provider failover);
-		// keep the binding so recovery can re-pin it once an account recovers.
+		// Everything disabled/cooling-down/low-credit: no routable account
+		// exists. Return "" so handleSchedulerPick defers (Handled: false) to
+		// the host's built-in scheduler (cross-provider failover); keep the
+		// binding so recovery can re-pin it once an account recovers.
 		return ""
 	}
 

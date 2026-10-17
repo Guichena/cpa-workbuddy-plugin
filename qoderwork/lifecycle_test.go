@@ -2,13 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
 // TestAuthMarkerReaders pins the three top-level flag readers used by the
-// exhausted-disable lifecycle (policy update 2026-09-08): disabled,
-// manual_disable (user intent — never auto-touched) and exhausted_disable
-// (set by disableAuth auto path, cleared by reenableAuth).
+// exhausted-disable lifecycle: disabled, manual_disable (user intent — never
+// auto-touched) and exhausted_disable (历史自动禁用标记，校验时据此恢复启用).
 func TestAuthMarkerReaders(t *testing.T) {
 	if !parseDisabledFromAuthJSON([]byte(`{"disabled":true}`)) {
 		t.Fatal("disabled:true must read true")
@@ -74,5 +74,27 @@ func TestBuildAuthFileJSONExhaustedMarker(t *testing.T) {
 	}
 	if _, ok := m2["manual_disable"]; ok {
 		t.Fatalf("reenable must clear manual_disable: %v", m2["manual_disable"])
+	}
+}
+
+// TestZeroCreditsNotDisabling 验证 0 积分不再触发自动禁用，也不被路由排除：
+// 免费模型不消耗积分，因此 0 积分账号必须保持可路由且不写入禁用状态。
+func TestZeroCreditsNotDisabling(t *testing.T) {
+	zero := &creditsSummary{TotalRemain: 0, TotalUsed: 500, TotalSize: 500}
+
+	// 1. 0 积分仍判定为可路由
+	if isCreditsLowForRouting(zero) {
+		t.Fatal("0-credit account must stay routable (free models)")
+	}
+
+	// 2. 只有正积分残血才触发低额保护
+	low := &creditsSummary{TotalRemain: 5, TotalUsed: 495, TotalSize: 500}
+	if !isCreditsLowForRouting(low) {
+		t.Fatal("positive residual below the floor must be excluded")
+	}
+
+	// 3. 面板备注不再出现「耗尽」字样
+	if note := displayNote(&storedAuth{}, zero, false); strings.Contains(note, "耗尽") {
+		t.Fatalf("zero-credit note must not say 耗尽, got %q", note)
 	}
 }

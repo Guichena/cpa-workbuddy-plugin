@@ -47,21 +47,20 @@ func clearActiveAuthIfMatch(id string) {
 }
 
 // activeAuthCandidate is a thin view used by pickActiveAuth.
+// Exhausted 仅用于展示（0 积分），不参与可路由判定：免费模型不消耗积分。
 type activeAuthCandidate struct {
-	ID        string
-	Disabled  bool
-	Exhausted bool
+	ID       string
+	Disabled bool
 }
 
 // pickActiveAuth chooses which qoderwork auth to use from host candidates.
 // The panel selection is sticky: it stays on the current account unless that
-// account is no longer in the candidate list (disabled/deleted by host),
-// is marked exhausted in cache, or is no longer routable (cooling down /
-// test-failed). When switching, it picks the first ready
-// candidate — the caller already ordered them low-credit-first — and updates
-// activeAuthID so the panel reflects the change on next dashboard load. When
-// NO healthy candidate exists, it returns "" so the scheduler defers to the
-// host's built-in scheduler (cross-provider failover).
+// account is no longer in the candidate list (disabled/deleted by host) or is
+// no longer routable (cooling down / low residual credits). When switching, it
+// picks the first ready candidate — the caller already ordered them
+// high-credit-first — and updates activeAuthID so the panel reflects the change
+// on next dashboard load. When NO routable candidate exists, it returns "" so
+// the scheduler defers to the host's built-in scheduler (cross-provider failover).
 func pickActiveAuth(candidates []activeAuthCandidate) string {
 	if len(candidates) == 0 {
 		return ""
@@ -74,16 +73,16 @@ func pickActiveAuth(candidates []activeAuthCandidate) string {
 	cur := getActiveAuthID()
 	// Keep current selection if it's still a live candidate AND routable.
 	if cur != "" {
-		if c, ok := byID[cur]; ok && !c.Disabled && !c.Exhausted && accountRoutable(cur) {
+		if c, ok := byID[cur]; ok && !c.Disabled && accountRoutable(cur) {
 			return cur
 		}
 	}
 
 	// Selection is gone or unusable — pick the first ready candidate (the
-	// slice is pre-ordered low-credit-first), else report no healthy account.
+	// slice is pre-ordered high-credit-first), else report no routable account.
 	var ready []string
 	for _, c := range candidates {
-		if !c.Disabled && !c.Exhausted && accountRoutable(c.ID) {
+		if !c.Disabled && accountRoutable(c.ID) {
 			ready = append(ready, c.ID)
 		}
 	}
@@ -104,19 +103,18 @@ func pickActiveAuth(candidates []activeAuthCandidate) string {
 // Called from buildDashboardEx on every /accounts and /refresh request.
 //
 // Rules (single source of truth, same as pickActiveAuth):
-//  1. If current selection is live AND available (not disabled / exhausted /
-//     cooling / test-failed) → keep it.
-//  2. If current selection is not available → switch to the available account
-//     with the LOWEST remaining credits (unknown credits rank last).
+//  1. If current selection is live AND routable (not disabled / cooling /
+//     low residual credits) → keep it.
+//  2. If current selection is not routable → switch to the routable account
+//     with the HIGHEST remaining credits (unknown credits rank last).
 //  3. If current selection is gone (disabled/deleted) → same as rule 2.
-//  4. If all exhausted → keep current if alive, else first.
+//  4. If none is routable → keep current if alive, else first.
 //
-// This ensures the panel's selected card always matches what scheduler.pick
-// actually routes to. No silent drift.
+// 0 积分账号仍视为可路由：免费模型不消耗积分，因此这里不按 exhausted 排除。
 //
 // [参数] accounts：面板全量账号行（含本轮排除项）。
 // [返回] 面板应选中的 auth_id；无可用账号时退化为存活/首个账号。
-// 最近修改时间：2026-10-11 批次 C 同步 workbuddy 路由能力
+// 最近修改时间 2026-10-17 15:12:00（0 积分账号保留选中资格）
 func ensureDefaultActiveAuth(accounts []wbAccount) string {
 	cur := getActiveAuthID()
 	live := make(map[string]wbAccount, len(accounts))
@@ -124,17 +122,16 @@ func ensureDefaultActiveAuth(accounts []wbAccount) string {
 		live[a.AuthID] = a
 	}
 
-	// Rule 1: current selection is live AND available → keep.
+	// Rule 1: current selection is live AND routable → keep.
 	if cur != "" {
-		if a, ok := live[cur]; ok && !a.Disabled && !a.Exhausted && accountRoutable(cur) {
+		if a, ok := live[cur]; ok && !a.Disabled && accountRoutable(cur) {
 			return cur
 		}
 	}
 
-	// Rule 2 & 3: selection is unavailable or gone → pick the LOWEST-credit
-	// available account so the panel pin agrees with the low-credit-first
-	// scheduler. Unknown credits (-1) rank last and only win when nothing else
-	// is measurable.
+	// Rule 2 & 3: selection is unavailable or gone → pick the HIGHEST-credit
+	// routable account. Unknown credits (-1) rank last and only win when nothing
+	// else is measurable.
 	var firstAny, firstOK, firstReady string
 	for _, a := range accounts {
 		if firstAny == "" {
@@ -146,7 +143,7 @@ func ensureDefaultActiveAuth(accounts []wbAccount) string {
 		if firstOK == "" {
 			firstOK = a.AuthID
 		}
-		if a.Exhausted || !accountRoutable(a.AuthID) {
+		if !accountRoutable(a.AuthID) {
 			continue
 		}
 		if firstReady == "" {
@@ -158,10 +155,10 @@ func ensureDefaultActiveAuth(accounts []wbAccount) string {
 		}
 	}
 
-	// Prefer first non-exhausted non-disabled.
+	// Prefer the first routable non-disabled account.
 	next := firstReady
 	if next == "" {
-		// Rule 4: all exhausted — keep current if still alive (not disabled).
+		// Rule 4: none routable — keep current if still alive (not disabled).
 		if cur != "" {
 			if a, ok := live[cur]; ok && !a.Disabled {
 				return cur
@@ -179,15 +176,14 @@ func ensureDefaultActiveAuth(accounts []wbAccount) string {
 }
 
 // accountRoutable reports whether an auth ID may carry traffic at all: not
-// cooling down (failover). Shared by the panel-selection rules and documented
-// as the same predicate family scheduler.pick applies before ordering
-// candidates.
+// cooling down (failover) and not below the residual-credit floor. Zero
+// credits stay routable because free models do not consume credits.
 func accountRoutable(authID string) bool {
 	if isAccountCoolingDown(authID) {
 		return false
 	}
-	remain, lowOrExhausted := cachedCreditsScore(authID)
-	if lowOrExhausted || (remain >= 0 && remain < loadedMinRoutableCredits()) {
+	_, lowCredits := cachedCreditsScore(authID)
+	if lowCredits {
 		return false
 	}
 	return true

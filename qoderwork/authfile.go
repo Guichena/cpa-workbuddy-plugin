@@ -243,13 +243,10 @@ func manualDisableFromAuthJSON(raw []byte) bool {
 	return m.ManualDisable
 }
 
-// exhaustedDisableFromAuthJSON reads the top-level exhausted_disable flag.
-// It is set by the automatic credit-exhaustion lifecycle (disableAuth auto
-// path) together with disabled:true, and cleared when reconcile re-enables
-// the account (credits recovered). Reconcile only auto-re-enables docs
-// carrying this marker — a disabled doc without it (manual toggle via the
-// host UI, or any other writer) is never auto-re-enabled.
-
+// exhaustedDisableFromAuthJSON 读取顶层 exhausted_disable 标记。
+// [参数] raw：物理 auth 文件原始 JSON 字节流。
+// [返回] 标记为 true 时返回 true；缺失或非布尔值返回 false。
+// 最近修改时间 2026-10-17 15:12:00（该标记只保留恢复语义，0 积分不再写入）
 func exhaustedDisableFromAuthJSON(raw []byte) bool {
 	var m struct {
 		ExhaustedDisable bool `json:"exhausted_disable"`

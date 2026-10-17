@@ -127,7 +127,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 				acct.Checkin = ci
 				acct.Credits = cr
 				acct.Exhausted = isCreditsExhausted(cr)
-				acct.LowCredits = cr != nil && !acct.Exhausted && cr.TotalRemain < loadedMinRoutableCredits()
+				acct.LowCredits = isCreditsLowForRouting(cr)
 				// Keep note in sync (throttled); do not block dashboard on save errors.
 				_ = syncAuthNote(f.AuthIndex, f.ID, sa, cr, acct.Disabled)
 				acct.Error = strings.Join(errs, "; ")
@@ -139,7 +139,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 						acct.Checkin = e.checkin
 						acct.Credits = e.credits
 						acct.Exhausted = isCreditsExhausted(e.credits)
-						acct.LowCredits = e.credits != nil && !acct.Exhausted && e.credits.TotalRemain < loadedMinRoutableCredits()
+						acct.LowCredits = isCreditsLowForRouting(e.credits)
 					}
 				}
 			}
@@ -176,6 +176,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 						if e.credits != nil {
 							a.Credits = e.credits
 							a.Exhausted = isCreditsExhausted(e.credits)
+							a.LowCredits = isCreditsLowForRouting(e.credits)
 						}
 						if e.plan != "" {
 							a.Plan = e.plan

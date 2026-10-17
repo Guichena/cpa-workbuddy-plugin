@@ -1,5 +1,21 @@
 # QoderWork Plugin Changelog
 
+## 0.9.42
+
+### Fix - 0 积分不再等同不可用：退出路由排除与自动禁用，仅保留冷却机制
+
+- 变更要点:
+  1. 语义纠正：QoderWork 存在免费模型，积分归零不影响这类模型调用。原实现把「0 积分」同时用于面板标签、路由排除与自动禁用三处，导致仍有免费模型可用的账号被标为「耗尽」并踢出调度池。现改为：0 积分仅作展示标签，不再参与路由排除，也不再触发自动禁用。
+  2. 路由层：`policy.go` 的 `isCreditsLowOrExhausted` 更名为 `isCreditsLowForRouting`，0 积分返回 false；`scheduler.go` / `active_auth.go` / `failover_retry.go` 三处冗余的 `remain < min_routable_credits` 判据统一收敛到该函数，消除「函数放行但调用点仍排除」的口径分叉。`activeAuthCandidate.Exhausted` 字段一并移除。
+  3. 安全红线保留：正积分但低于 `min_routable_credits`（默认 20）的残血账号仍暂停路由，防止推理中途断开；该保护与 0 积分语义互不影响。
+  4. 生命周期：`lifecycleActionFor` / `applyExhaustedPolicy` / `disableAuth` 三条 0 积分自动禁用路径删除；`reconcileOneAccount` 保留「带 `exhausted_disable` 标记的账号自动恢复」通道，历史被自动禁用的账号在下次校验时恢复启用；`manual_disable` 与 SESSION-DEAD 守卫不变。
+  5. 面板：卡片徽标「耗尽」改为「0积分」（灰色，仅展示）；筛选标签同步改名，且「可用」筛选不再排除 0 积分账号；用量汇总的「不可用」口径移除 0 积分维度。
+  6. 冷却机制保持不变：日限冷却徽标文案由「110冷却(HH:MM)」改为「日限冷却(HH:MM)」，明确其为上游账号级每日调用次数上限（与积分无关，冷却期内换模型同样被拒），24 小时到期自动恢复，仍支持手动「解冷」。
+- 验证: 新增 `TestZeroCreditsNotDisabling`（0 积分可路由 + 正积分残血仍保护 + 备注不含「耗尽」）、`TestPickSessionAuth_ZeroCreditStaysRoutable`、`TestPickSessionAuth_LowCreditAccountReassigns`、`TestPickSessionAuth_AllCoolingDefers`、`TestSchedulerPick_ZeroCreditSelectionKept`、`TestSchedulerPick_AllZeroCreditStillRoutes`；必失败哨兵反证新测试真实进入编译；`cgo-shim-build.py qoderwork` build/vet/test 全绿；面板两个 `<script>` 块 `new Function()` 语法校验通过。
+- 边界说明: 本次不改变「冷却」与「低额保护」两套既有隔离机制；0 积分账号放行后，若上游对免费模型另有独立配额，将由上游返回的业务码经既有冷却通道处理，本地无法预验证。
+- 依据: 用户反馈——QoderWork 有免费模型，耗尽标签会误导为不可用；结合仓库既有实证 `doc/4-bugs/2026-10-12_214500_Qoder上游110每日计费次数上限致账号误判测试失败根因诊断.md`：110 与积分无关（满额账号连发仍 110），属账号级日调用上限，因此冷却标签保留、耗尽标签改为展示。
+- 涉及文件: qoderwork/policy.go、qoderwork/lifecycle.go、qoderwork/scheduler.go、qoderwork/active_auth.go、qoderwork/session_auth.go、qoderwork/failover_retry.go、qoderwork/panel.go、qoderwork/panel.html、qoderwork/credits_handler.go、qoderwork/billing.go、qoderwork/main.go、qoderwork/scheduler_test.go、qoderwork/session_auth_test.go、qoderwork/lifecycle_test.go、qoderwork/routing_exclusion_test.go、qoderwork/VERSION、qoderwork/CHANGELOG.md
+
 ## 0.9.41
 
 ### Feat - 推理设备指纹按账号稳定派生，并补齐签到链路可观测性与面板文案区分

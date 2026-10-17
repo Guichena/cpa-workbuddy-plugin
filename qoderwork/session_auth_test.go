@@ -203,22 +203,35 @@ func TestPickSessionAuth_TTLExpiryReassigns(t *testing.T) {
 	}
 }
 
-func TestPickSessionAuth_ExhaustedAccountReassigns(t *testing.T) {
+// TestPickSessionAuth_LowCreditAccountReassigns 验证会话绑定的账号落入残血保护后
+// 会被重新分配；判据是正积分低于安全红线，0 积分不触发重分配。
+func TestPickSessionAuth_LowCreditAccountReassigns(t *testing.T) {
 	resetSessionRouting(t)
+	resetFailover(t)
+	restoreMin := setMinRoutableCredits(defaultMinRoutableCredits)
+	t.Cleanup(restoreMin)
+	storeCredits(t, "wb-a", 500, 0, 500)
+	storeCredits(t, "wb-b", 500, 0, 500)
 	cands := []activeAuthCandidate{
 		{ID: "wb-a"}, {ID: "wb-b"},
 	}
 	first := pickSessionAuth("conv-1", cands)
-	// Mark the pinned account exhausted; the next pick must switch.
-	exhausted := make([]activeAuthCandidate, len(cands))
-	for i, c := range cands {
-		exhausted[i] = c
-		if c.ID == first {
-			exhausted[i].Exhausted = true
-		}
+	// 把已绑定账号压到安全红线以下，下一次选取必须换号
+	storeCredits(t, first, 5, 495, 500)
+	if got := pickSessionAuth("conv-1", cands); got == first {
+		t.Fatalf("low-credit pinned account should be re-assigned, stuck at %q", got)
 	}
-	if got := pickSessionAuth("conv-1", exhausted); got == first {
-		t.Fatalf("exhausted pinned account should be re-assigned, stuck at %q", got)
+}
+
+// TestPickSessionAuth_ZeroCreditStaysRoutable 验证 0 积分账号仍可承接会话：
+// 免费模型不消耗积分，因此 0 积分不得触发换号或让位。
+func TestPickSessionAuth_ZeroCreditStaysRoutable(t *testing.T) {
+	resetSessionRouting(t)
+	resetFailover(t)
+	storeCredits(t, "wb-zero", 0, 500, 500)
+	cands := []activeAuthCandidate{{ID: "wb-zero"}}
+	if got := pickSessionAuth("conv-1", cands); got != "wb-zero" {
+		t.Fatalf("0-credit account should stay routable for free models, got %q", got)
 	}
 }
 
@@ -240,25 +253,39 @@ func TestPickSessionAuth_NoSessionFallsBackToPanel(t *testing.T) {
 	}
 }
 
-func TestPickSessionAuth_AllExhaustedDefers(t *testing.T) {
+// TestPickSessionAuth_AllCoolingDefers 验证全池处于日限冷却时选取让位；
+// 0 积分账号不属于不可用，故不得作为让位理由。
+func TestPickSessionAuth_AllCoolingDefers(t *testing.T) {
 	resetSessionRouting(t)
-	allExhausted := []activeAuthCandidate{
-		{ID: "wb-a", Exhausted: true},
-		{ID: "wb-b", Exhausted: true},
+	resetFailover(t)
+	storeCredits(t, "wb-a", 0, 100, 100)
+	storeCredits(t, "wb-b", 0, 100, 100)
+	future := time.Now().Add(time.Hour)
+	dailyCoolingMu.Lock()
+	dailyCoolingMap["wb-a"] = future
+	dailyCoolingMap["wb-b"] = future
+	dailyCoolingMu.Unlock()
+	t.Cleanup(func() {
+		dailyCoolingMu.Lock()
+		delete(dailyCoolingMap, "wb-a")
+		delete(dailyCoolingMap, "wb-b")
+		dailyCoolingMu.Unlock()
+	})
+
+	allCooling := []activeAuthCandidate{
+		{ID: "wb-a"},
+		{ID: "wb-b"},
 	}
-	// All exhausted: no healthy account exists, so the picker must return ""
-	// (defer) instead of pinning the conversation to a dead account. The
-	// host's built-in scheduler then fails over to other providers.
-	if got := pickSessionAuth("conv-1", allExhausted); got != "" {
-		t.Fatalf("all-exhausted should defer (empty pick), got %q", got)
+	// 全池冷却中：没有可路由账号，选取必须返回空让位给宿主跨 provider 轮转
+	if got := pickSessionAuth("conv-1", allCooling); got != "" {
+		t.Fatalf("all-cooling should defer (empty pick), got %q", got)
 	}
-	// The binding is kept for sticky recovery: once an account recovers, the
-	// session re-binds normally.
-	recovered := []activeAuthCandidate{
-		{ID: "wb-a", Exhausted: false},
-		{ID: "wb-b", Exhausted: true},
-	}
-	if got := pickSessionAuth("conv-1", recovered); got == "" {
+	// 冷却解除后（积分仍为 0）必须能重新分配：免费模型可用
+	dailyCoolingMu.Lock()
+	delete(dailyCoolingMap, "wb-a")
+	delete(dailyCoolingMap, "wb-b")
+	dailyCoolingMu.Unlock()
+	if got := pickSessionAuth("conv-1", allCooling); got == "" {
 		t.Fatal("recovered pool should assign an account again")
 	}
 }
