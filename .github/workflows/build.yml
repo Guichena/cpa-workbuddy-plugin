@@ -623,7 +623,7 @@ jobs:
               'args=()' \
               'for arg in "$@"; do' \
               '  if [[ "$arg" == *"download.freebsd.org/releases/"*"14.3-RELEASE/base.txz"* ]]; then' \
-              '    arg="${arg/download.freebsd.org\/releases/archive.freebsd.org\/old-releases}"' \
+              '    arg="${arg/14.3-RELEASE/14.4-RELEASE}"' \
               '  fi' \
               '  args+=("$arg")' \
               'done' \
