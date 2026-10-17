@@ -12,6 +12,7 @@
 #   - tag 'traework-provider-v*'            → release traework-provider at that version
 #   - tag 'cursor-provider-v*'              → release cursor-provider at that version
 #   - tag 'copilot-provider-v*'             → release copilot-provider at that version
+#   - tag 'doubao-provider-v*'              → release doubao-provider at that version
 #   - workflow_dispatch                       → pick plugin + version manually
 #   - plain push/PR                          → CI builds for all (artifacts only, no release)
 #
@@ -34,13 +35,14 @@ on:
       - "qoder-ai-provider-v*"
       - "zcode-provider-v*"
       - "copilot-provider-v*"
+      - "doubao-provider-v*"
   workflow_dispatch:
     inputs:
       plugin:
         description: "Plugin to release"
         required: true
         type: choice
-        options: [workbuddy-provider, qoderwork-provider, workbuddy-token-usage, traework-provider, workbuddy-ai-provider, cursor-provider, qoder-ai-provider, zcode-provider, copilot-provider]
+        options: [workbuddy-provider, qoderwork-provider, workbuddy-token-usage, traework-provider, workbuddy-ai-provider, cursor-provider, qoder-ai-provider, zcode-provider, copilot-provider, doubao-provider]
       version:
         description: "Version without v (empty = plugin's VERSION file)"
         required: false
@@ -66,6 +68,7 @@ jobs:
           - dir: qoder-ai
           - dir: zcode
           - dir: copilot
+          - dir: doubao
     defaults:
       run:
         working-directory: ${{ matrix.dir }}
@@ -370,6 +373,37 @@ jobs:
             goarch: amd64
             runner: windows-2025
             ext: dll
+          # doubao-provider native (sources in doubao/)
+          - id: doubao-provider
+            src: doubao
+            goos: linux
+            goarch: amd64
+            runner: ubuntu-24.04
+            ext: so
+          - id: doubao-provider
+            src: doubao
+            goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            ext: so
+          - id: doubao-provider
+            src: doubao
+            goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+            ext: dylib
+          - id: doubao-provider
+            src: doubao
+            goos: darwin
+            goarch: arm64
+            runner: macos-15
+            ext: dylib
+          - id: doubao-provider
+            src: doubao
+            goos: windows
+            goarch: amd64
+            runner: windows-2025
+            ext: dll
     defaults:
       run:
         shell: bash
@@ -541,6 +575,14 @@ jobs:
             src: copilot
             target: freebsd-amd64
             ext: so
+          - id: doubao-provider
+            src: doubao
+            target: windows-arm64
+            ext: dll
+          - id: doubao-provider
+            src: doubao
+            target: freebsd-amd64
+            ext: so
     defaults:
       run:
         shell: bash
@@ -663,7 +705,8 @@ jobs:
         startsWith(github.ref, 'refs/tags/cursor-provider-v') ||
         startsWith(github.ref, 'refs/tags/qoder-ai-provider-v') ||
         startsWith(github.ref, 'refs/tags/zcode-provider-v') ||
-        startsWith(github.ref, 'refs/tags/copilot-provider-v')
+        startsWith(github.ref, 'refs/tags/copilot-provider-v') ||
+        startsWith(github.ref, 'refs/tags/doubao-provider-v')
     needs:
       - build
       - build-cross
@@ -696,6 +739,8 @@ jobs:
             P="zcode-provider"; V="${GITHUB_REF_NAME#zcode-provider-v}"
           elif [[ "${GITHUB_REF_NAME}" == copilot-provider-v* ]]; then
             P="copilot-provider"; V="${GITHUB_REF_NAME#copilot-provider-v}"
+          elif [[ "${GITHUB_REF_NAME}" == doubao-provider-v* ]]; then
+            P="doubao-provider"; V="${GITHUB_REF_NAME#doubao-provider-v}"
           else
             P="workbuddy-token-usage"; V="${GITHUB_REF_NAME#workbuddy-token-usage-v}"
           fi
@@ -780,6 +825,7 @@ jobs:
             qoder-ai-provider)     DISPLAY="Qoder AI" ;;
             zcode-provider)        DISPLAY="ZCode Provider" ;;
             copilot-provider)      DISPLAY="GitHub Copilot" ;;
+            doubao-provider)       DISPLAY="Doubao Provider" ;;
           esac
           TITLE="${DISPLAY:-$PLUGIN} v${VERSION}"
           if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then
