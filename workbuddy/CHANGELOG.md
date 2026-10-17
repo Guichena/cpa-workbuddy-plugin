@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.16.5
+
+### Fix - 流式中途断流时零泄漏换号重试 + 断流信封补状态码
+
+- 变更要点:
+  1. 根因：`pumpUpstreamStream` 与 `collectUpstreamStream` 的 `scanner.Err()` 分支此前只记录失败并透传错误，**没有任何换号路径**。上游中途断流后，即便池中还有健康账号也不会续试，客户端直接收到截断流。与 qoderwork / qoder-ai 同款缺陷，本轮同步修复。
+  2. 零泄漏换号：新增纯决策函数 `isStreamReadError`（识别 `stream read error` / `connection reset by peer` / `INTERNAL_ERROR`）与 `shouldRotateOnStreamReadError`（`emitted` 守卫 + 预算 + 可重建请求体 + 存在候选四条件）。异步路径以 `emitted` 判定是否已向客户端发出分片，并用 `curReq.GetBody != nil` 运行时判定请求体可重建性；同步路径以 `len(chunks) > 0` 反推。**已泄漏分片时一律不换号**，避免客户端收到双份输出。
+  3. 断流信封补 `http_status=502`：该插件此前完全没有 `envelopeHTTPStatusForError`，本轮新增并接入 `marshalStreamErrorEnvelope`；已泄漏时在错误文本中打 `after partial output` 标记抑制该状态码，防止宿主据此重试造成重复输出。
+  4. 同步路径的断流分支插在 `shouldRotateOnUpstreamErr` 判定之前，避免断流错误被既有 4xx/5xx 分类吞掉。
+- 验证: 新增 `TestIsStreamReadError`（8 例）、`TestShouldRotateOnStreamReadError`（8 例）、`TestMarshalStreamErrorEnvelopeCarriesResetStatus`（502 / 已泄漏无状态码 / 普通错误无状态码）；哨兵反证确认测试真实进编译；`cgo-shim-build.py workbuddy` build/vet/test 全绿。
+- 边界说明: `pickNextAuth` 实际选号依赖 host RPC，shim 环境不可注入，未做单测；端到端「断流 → 换号 → 第二次请求成功」未在真实上游复现。
+- 依据: 用户裁定「同轮修 workbuddy / qoder-ai 的同构缺陷」，零泄漏断流策略选「换号重试」。
+- 涉及文件: workbuddy/policy.go、workbuddy/stream.go、workbuddy/stream_error_envelope_test.go、workbuddy/stream_read_error_failover_test.go、workbuddy/main.go、workbuddy/VERSION
+
 ## 0.16.4
 
 ### Fix - 账号故障冷却改为 30s 递增阶梯、上限 10 分钟

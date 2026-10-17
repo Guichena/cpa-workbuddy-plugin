@@ -9,6 +9,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -115,22 +116,15 @@ func getAccountDailyCoolingUntil(authID string) time.Time {
 
 // triggerDailyCooldown 将指定账号置入 24 小时每日调用上限冷却状态，并持久化到物理文件。
 // [参数] authIndex: 宿主 RPC 索引（可空，为空时自动反查）；authID: 账号唯一标识。
-// [返回] 写入与持久化成功返回 nil，失败返回对应错误。
+// [返回] 写入与持久化成功返回 nil；内存冷却已生效但落盘失败时返回包装错误。
+// 最近修改时间 2026-10-17 21:30:00 落盘失败保留内存冷却并返回可定位错误。
 func triggerDailyCooldown(authIndex, authID string) error {
 	authIndex = strings.TrimSpace(authIndex)
 	authID = strings.TrimSpace(authID)
-	if authIndex == "" && authID != "" {
-		if idx, err := hostAuthIndexForPhys(authID); err == nil {
-			authIndex = idx
-		}
-	}
-	if authIndex == "" {
-		return errAuthIndexRequired()
-	}
 
 	until := time.Now().Add(dailyCooldownDuration)
 
-	// 1. 同步更新内存镜像
+	// 1. 先写入内存镜像
 	dailyCoolingMu.Lock()
 	dailyCoolingMap[authID] = until
 	if norm := normalizeFailoverKey(authID); norm != "" {
@@ -138,13 +132,22 @@ func triggerDailyCooldown(authIndex, authID string) error {
 	}
 	dailyCoolingMu.Unlock()
 
+	if authIndex == "" && authID != "" {
+		if idx, err := hostAuthIndexForPhys(authID); err == nil {
+			authIndex = idx
+		}
+	}
+	if authIndex == "" {
+		return fmt.Errorf("daily cooling persist: resolve auth index: %w", errAuthIndexRequired())
+	}
+
 	// 2. 直写物理 auth 文件完成持久化落盘
 	phys, err := hostAuthGetPhysical(authIndex)
 	if err != nil {
-		return err
+		return fmt.Errorf("daily cooling persist: resolve physical auth: %w", err)
 	}
 	if phys == nil || len(phys.JSON) == 0 {
-		return errAuthMissing()
+		return fmt.Errorf("daily cooling persist: %w", errAuthMissing())
 	}
 
 	var doc map[string]any
@@ -155,14 +158,44 @@ func triggerDailyCooldown(authIndex, authID string) error {
 
 	raw, err := json.Marshal(doc)
 	if err != nil {
-		return err
+		return fmt.Errorf("daily cooling persist: marshal auth doc: %w", err)
 	}
 	if err := persistAuthDirect(phys.Name, phys.Path, "", raw); err != nil {
-		return err
+		return fmt.Errorf("daily cooling persist: write auth file: %w", err)
 	}
 
 	log.Printf("[qoderwork] account %s (auth_index=%s) triggered 24h daily cooling until %s", authID, authIndex, until.Format(time.RFC3339))
 	return nil
+}
+
+// dailyCooldownPersistFailureReason 把落盘错误收敛为一行可读原因，供调用点记录日志。
+// [参数] err：triggerDailyCooldown 返回的错误；nil 表示落盘成功。
+// [返回] 失败原因文本；err 为 nil 时返回空串。
+// 最近修改时间 2026-10-17 21:30:00 冷却落盘失败补日志。
+func dailyCooldownPersistFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return "未知落盘错误"
+	}
+	if strings.Contains(msg, "auth file missing or empty") {
+		return "物理路径缺失：" + msg
+	}
+	return "落盘失败：" + msg
+}
+
+// logDailyCooldownPersistFailure 在落盘失败时记录一行中文日志。
+// [参数] authID：账号标识；err：triggerDailyCooldown 返回的错误。
+// [返回] 无。
+// 最近修改时间 2026-10-17 21:30:00 冷却落盘失败补日志。
+func logDailyCooldownPersistFailure(authID string, err error) {
+	reason := dailyCooldownPersistFailureReason(err)
+	if reason == "" {
+		return
+	}
+	log.Printf("[qoderwork] account %s daily cooling persist failed, memory cooling still active: %s", authID, reason)
 }
 
 // clearDailyCooldown 手动解除指定账号的每日限额冷却状态，并从物理文件中移除字段。
@@ -220,6 +253,27 @@ func clearDailyCooldown(authIndex, authID string) error {
 	return nil
 }
 
+// mergeActiveDailyCooling 把仍有效但磁盘上不存在的内存冷却条目并入扫描结果。
+// [参数] fromDisk：磁盘扫描得到的冷却字典；inMemory：当前内存镜像；now：判定时刻。
+// [返回] 合并后的新字典，不修改入参。
+// 最近修改时间 2026-10-17 21:30:00 落盘失败时内存冷却跨 watchdog 刷新保留。
+func mergeActiveDailyCooling(fromDisk, inMemory map[string]time.Time, now time.Time) map[string]time.Time {
+	merged := make(map[string]time.Time, len(fromDisk)+len(inMemory))
+	for key, until := range fromDisk {
+		merged[key] = until
+	}
+	for key, until := range inMemory {
+		if !now.Before(until) {
+			continue
+		}
+		if _, exists := merged[key]; exists {
+			continue
+		}
+		merged[key] = until
+	}
+	return merged
+}
+
 // refreshDailyCoolingSetFromDisk 从磁盘物理文件中重新扫描并同步内存冷却时间字典。
 // [返回] 当前处于冷却窗口内的账号数。
 func refreshDailyCoolingSetFromDisk() int {
@@ -248,8 +302,8 @@ func refreshDailyCoolingSetFromDisk() int {
 	}
 
 	dailyCoolingMu.Lock()
-	dailyCoolingMap = nextMap
-	count := len(nextMap)
+	dailyCoolingMap = mergeActiveDailyCooling(nextMap, dailyCoolingMap, now)
+	count := len(dailyCoolingMap)
 	dailyCoolingMu.Unlock()
 	return count
 }

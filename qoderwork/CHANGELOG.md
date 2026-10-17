@@ -1,5 +1,19 @@
 # QoderWork Plugin Changelog
 
+## 0.9.44
+
+### Fix - 流式中途断流时零泄漏换号重试 + 断流信封补状态码 + 冷却落盘失败可观测
+
+- 变更要点:
+  1. 根因：`pumpUpstreamStream` 与 `collectUpstreamStreamQoder` 的 `scanner.Err()` 分支此前只记录失败并透传错误，**没有任何换号路径**。生产会话 `5fa71566` 的 `qwen-3.8-flash` 请求（ID `202610171157242386880308268d9d6KQb4LXIN`）上游断流后，即便池中还有健康账号也不会续试，客户端直接收到失败。
+  2. 零泄漏换号：新增纯决策函数 `isStreamReadError`（识别 `stream read error` / `connection reset by peer` / `INTERNAL_ERROR`）与 `shouldRotateOnStreamReadError`（`emitted` 守卫 + 预算 + 可重建请求体 + 存在候选四条件）。异步路径以 `emitted` 判定是否已向客户端发出分片；同步路径以 `len(chunks) > 0` 反推。**已泄漏分片时一律不换号**，避免客户端收到双份输出。
+  3. 断流信封补 `http_status=502`：`envelopeHTTPStatusForError` 在既有排队帧 503 分支后追加断流 502；已泄漏时在错误文本中打 `after partial output` 标记抑制该状态码，防止宿主据此重试造成重复输出。
+  4. 冷却落盘可观测与内存兜底：`triggerDailyCooldown` 的内存镜像写入提前到所有 host RPC 之前，落盘失败时冷却仍然生效；新增 `dailyCooldownPersistFailureReason` / `logDailyCooldownPersistFailure` 输出可定位原因，5 处调用点不再 `_ =` 丢弃错误；`refreshDailyCoolingSetFromDisk` 改用 `mergeActiveDailyCooling`，watchdog 刷新不再清空未落盘的内存冷却。
+- 验证: 新增 `TestIsStreamReadError`（8 例）、`TestShouldRotateOnStreamReadError`（8 例）、`TestMarshalStreamErrorEnvelopeCarriesResetStatus`（502 / 排队帧 503 / 已泄漏无状态码 / 普通错误无状态码）、`TestDailyCooldownPersistFailureReason`、`TestTriggerDailyCooldownKeepsMemoryOnPersistFailure`、`TestMergeActiveDailyCooling`、`TestNoCallerDiscardsDailyCooldownError`；8 次哨兵反证均精确命中单例；`cgo-shim-build.py qoderwork` build/vet/test 全绿。
+- 边界说明: `pickNextAuth` 实际选号与冷却落盘成功路径依赖 host RPC，shim 环境不可注入，未做单测；端到端「断流 → 换号 → 第二次请求成功」未在真实上游复现，需发布后观察生产日志。
+- 依据: 用户报障——生产会话 `5fa71566` 中 `qwen-3.8-flash` 推理失败且「失败后没有换号继续」。
+- 涉及文件: qoderwork/policy.go、qoderwork/stream.go、qoderwork/daily_cooldown.go、qoderwork/main.go、qoderwork/stream_error_envelope_test.go、qoderwork/daily_cooldown_test.go、qoderwork/stream_read_error_failover_test.go、qoderwork/VERSION
+
 ## 0.9.43
 
 ### Feat - 面板布局对齐 WorkBuddy：容器加宽、卡片放大

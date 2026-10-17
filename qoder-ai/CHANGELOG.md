@@ -1,5 +1,19 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.24
+
+### Fix - 流式中途断流时零泄漏换号重试 + 断流信封补状态码
+
+- 变更要点:
+  1. 根因：`pumpUpstreamStream` 与 `collectUpstreamStreamQoder` 的 `scanner.Err()` 分支此前只记录失败并透传错误，**没有任何换号路径**。上游中途断流后，即便池中还有健康账号也不会续试，客户端直接收到截断流。与 qoderwork / workbuddy 同款缺陷，本轮同步修复。
+  2. 零泄漏换号：新增纯决策函数 `isStreamReadError`（识别 `stream read error` / `connection reset by peer` / `INTERNAL_ERROR`）与 `shouldRotateOnStreamReadError`（`emitted` 守卫 + 预算 + 可重建请求体 + 存在候选四条件）。异步路径以 `emitted` 判定是否已向客户端发出分片；同步路径以 `len(chunks) > 0` 反推。**已泄漏分片时一律不换号**，避免客户端收到双份输出。
+  3. 断流信封补 `http_status=502`：`envelopeHTTPStatusForError` 在既有排队帧 503 分支后追加断流 502；已泄漏时在错误文本中打 `after partial output` 标记抑制该状态码，防止宿主据此重试造成重复输出。
+  4. 与 qoderwork 的差异：本插件无 `daily_cooldown.go`，冷却落盘修复不在本次范围。
+- 验证: 新增 `TestIsStreamReadError`（8 例）、`TestShouldRotateOnStreamReadError`（8 例）、`TestMarshalStreamErrorEnvelopeCarriesResetStatus`（502 / 排队帧 503 / 已泄漏无状态码 / 普通错误无状态码）；哨兵反证确认测试真实进编译；`cgo-shim-build.py qoder-ai` build/vet/test 全绿。
+- 边界说明: `pickNextAuth` 实际选号依赖 host RPC，shim 环境不可注入，未做单测；端到端「断流 → 换号 → 第二次请求成功」未在真实上游复现。
+- 依据: 用户裁定「同轮修 workbuddy / qoder-ai 的同构缺陷」，零泄漏断流策略选「换号重试」。
+- 涉及文件: qoder-ai/policy.go、qoder-ai/stream.go、qoder-ai/stream_error_envelope_test.go、qoder-ai/stream_read_error_failover_test.go、qoder-ai/main.go、qoder-ai/VERSION
+
 ## 0.1.23
 
 ### Feat - 面板布局对齐 WorkBuddy：容器加宽、卡片放大

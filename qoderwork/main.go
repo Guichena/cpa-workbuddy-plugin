@@ -346,7 +346,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.9.43"
+var version = "0.9.44"
 
 func wbRegistration() registration {
 	return registration{
@@ -793,7 +793,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 			}
 		}
 		if isDailyCountExceeded(statusCode, completionErr.Error()) && currentID != "" {
-			_ = triggerDailyCooldown("", currentID)
+			logDailyCooldownPersistFailure(currentID, triggerDailyCooldown("", currentID))
 		}
 		if !shouldRotateOnUpstreamErr(statusCode, completionErr.Error()) || attempt >= budget || curSA == nil {
 			break
@@ -814,7 +814,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 	if completionErr != nil {
 		statusCode := parseUpstreamStatusFromErr(completionErr)
 		if isDailyCountExceeded(statusCode, completionErr.Error()) {
-			_ = triggerDailyCooldown("", usedAuthID)
+			logDailyCooldownPersistFailure(usedAuthID, triggerDailyCooldown("", usedAuthID))
 		}
 		// After exhausting retries (or a non-account-level error), mirror
 		// the historical accounting path: note the failure on the LAST

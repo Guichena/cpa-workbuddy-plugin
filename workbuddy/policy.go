@@ -184,6 +184,56 @@ func isTransientThrottle(status int, body string) bool {
 	return isSoftRateLimit(status, body) || isEmptyStreamBody(body)
 }
 
+// streamReadErrorLeakedMarker 标记已向客户端发出分片后的断流，抑制换号与状态码分类。
+const streamReadErrorLeakedMarker = "after partial output"
+
+// httpStatusBadGateway 是上游流读取中断对外呈现的状态码。
+const httpStatusBadGateway = 502
+
+// isStreamReadError 判定错误文本是否描述上游 SSE 读取中断。
+// [参数] body：错误文本。
+// [返回] 命中可重试断流语义时返回 true。
+// 最近修改时间 2026-10-17 21:30:00 新增，断流分级换号与状态码分类。
+func isStreamReadError(body string) bool {
+	// 1. 空文本与已泄漏标记不参与断流分类
+	if strings.TrimSpace(body) == "" || strings.Contains(body, streamReadErrorLeakedMarker) {
+		return false
+	}
+	// 2. 命中传输层断流关键字
+	return strings.Contains(body, "stream read error") ||
+		strings.Contains(body, "connection reset by peer") ||
+		strings.Contains(body, "INTERNAL_ERROR")
+}
+
+// shouldRotateOnStreamReadError 判定断流失败是否允许换号重试。
+// [参数] emitted：是否已向客户端发出分片；attempt：当前尝试序号；budget：换号预算；
+// hasEncodedBody：能否重建请求体；hasNextAuth：是否存在可用候选。
+// [返回] 允许换号重试时返回 true。
+// 最近修改时间 2026-10-17 21:30:00 新增，断流分级换号与状态码分类。
+func shouldRotateOnStreamReadError(emitted bool, attempt, budget int, hasEncodedBody, hasNextAuth bool) bool {
+	// 1. 已泄漏、无法重建或没有候选时只透传错误
+	if emitted || !hasEncodedBody || !hasNextAuth {
+		return false
+	}
+	// 2. 预算未耗尽才允许继续换号
+	return attempt < budget
+}
+
+// envelopeHTTPStatusForError 决定失败信封对外携带的 HTTP 状态码。
+//
+// 宿主 statusCodeFromError 只认 StatusCode() int 数字接口，纯文本错误恒得 0；
+// 断流补 502 让宿主看到明确的网关类状态而不是成功帧。该插件无排队帧识别，
+// 因此不返回 503。
+// [参数] message：失败信封的错误文本。
+// [返回] 断流返回 502；其余返回 0，保持既有行为。
+// 最近修改时间 2026-10-17 21:30:00 新增断流信封状态码通道。
+func envelopeHTTPStatusForError(message string) int {
+	if isStreamReadError(message) {
+		return httpStatusBadGateway
+	}
+	return 0
+}
+
 // lifecycleActionFor chooses disable/delete/none from region + credits.
 // Does not consider reenable (that needs disabled flag).
 func lifecycleActionFor(region string, cr *creditsSummary) lifecycleAction {

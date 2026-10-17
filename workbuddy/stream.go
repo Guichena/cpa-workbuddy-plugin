@@ -35,8 +35,17 @@ func streamEmit(streamID string, payload []byte) error {
 }
 
 // marshalStreamErrorEnvelope 构造带 "error" 字段的 stream.emit 信封（纯函数，便于回归测试）。
+// 断流额外带上 http_status（见 envelopeHTTPStatusForError），供宿主识别为网关类失败；
+// 宿主未读取该字段时会被忽略，行为与旧版一致。
+// [参数] streamID：宿主流标识；message：终态错误文本。
+// [返回] 序列化后的 emit 信封；序列化失败返回错误。
+// 最近修改时间 2026-10-17 21:30:00 断流信封补 http_status。
 func marshalStreamErrorEnvelope(streamID, message string) ([]byte, error) {
-	return json.Marshal(map[string]any{"stream_id": streamID, "error": message})
+	body := map[string]any{"stream_id": streamID, "error": message}
+	if status := envelopeHTTPStatusForError(message); status > 0 {
+		body["http_status"] = status
+	}
+	return json.Marshal(body)
 }
 
 // emitStreamErrorEnvelope 通过 host.stream.emit 信封的 "error" 字段发送终态错误。
@@ -221,13 +230,39 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			}
 			emitted = true
 		}
-		// A mid-stream read failure means the client received a truncated stream:
-		// surface it as an error frame and record the attempt as failed.
+		// 断流失败：零泄漏时换号续试，已泄漏时透传错误。
 		stream.Close()
 		if err := scanner.Err(); err != nil {
+			readErrMsg := fmt.Sprintf("upstream stream read error: %v", err)
+			// 已泄漏分片时在错误文本中打标记，抑制信封状态码
+			if emitted {
+				readErrMsg = fmt.Sprintf("upstream stream read error: %v (%s)", err, streamReadErrorLeakedMarker)
+			}
+			// 1. 记录本次尝试失败并计入账号冷却
 			publishUsage(requestedModel, upstreamModel, curAuthUID, started, collector.detail(), true, 0, err.Error(), reasoningEffort, collector.ttftNS(started), curAccountLabel, sessionKey)
 			noteAccountFailure(curAuthID, 0, err.Error())
-			streamEmitError(streamID, fmt.Sprintf("upstream stream read error: %v", err))
+			// 2. 零泄漏且预算允许时换号重建请求
+			if !emitted && attempt < budget && curReq.GetBody != nil {
+				evictSessionBindingsForAuth(curAuthID)
+				nextID, nextSA, hasNext := pickNextAuth(curAuthID)
+				if shouldRotateOnStreamReadError(emitted, attempt, budget, curReq.GetBody != nil, hasNext && nextSA != nil) {
+					nextReq, rebErr := rebuildRequestWithSA(curReq, nextSA)
+					if rebErr != nil {
+						streamEmitError(streamID, fmt.Sprintf("%s (retry rebuild failed: %v)", readErrMsg, rebErr))
+						return
+					}
+					curReq = nextReq
+					curAuthID = nextID
+					curAuthUID = nextSA.Account.UID
+					curAccountLabel = strings.TrimSpace(nextSA.Account.Nickname)
+					if curAccountLabel == "" {
+						curAccountLabel = curAuthUID
+					}
+					continue
+				}
+			}
+			// 3. 不满足换号条件时透传错误收尾
+			streamEmitError(streamID, readErrMsg)
 			return
 		}
 		if sseErr != "" {
@@ -325,6 +360,28 @@ func collectUpstreamStream(body []byte, sa *storedAuth, sseFramed bool, collecto
 		}
 		lastStatus = statusCode
 		lastErr = errOnce
+
+		// 1. 断流且已收集分片即视为已泄漏，禁止换号
+		if isStreamReadError(errOnce.Error()) {
+			emitted := len(chunks) > 0
+			// 2. 零泄漏且预算允许时换号重试
+			if !emitted && attempt < budget && curSA != nil {
+				currentID := strings.TrimSpace(curSA.Auth.AccessToken)
+				if currentID == "" {
+					currentID = strings.TrimSpace(curSA.Account.UID)
+				}
+				if currentID != "" {
+					evictSessionBindingsForAuth(currentID)
+					_, nextSA, hasNext := pickNextAuth(currentID)
+					if shouldRotateOnStreamReadError(emitted, attempt, budget, true, hasNext && nextSA != nil) {
+						curSA = nextSA
+						continue
+					}
+				}
+			}
+			// 3. 不满足换号条件时透传错误
+			return chunks, statusCode, errOnce
+		}
 
 		// Same retry policy as pumpUpstreamStream: account-level 4xx and
 		// (new) account-classified 200 in-stream error frames warrant a

@@ -152,6 +152,9 @@ func isHardCreditError(status int, body string) bool {
 
 const httpStatusPaymentRequired = 402
 
+// httpStatusBadGateway 是上游流读取中断对外呈现的状态码。
+const httpStatusBadGateway = 502
+
 // httpStatusServiceUnavailable 是排队帧对外的状态码（见 queueFrameHTTPStatus）。
 const httpStatusServiceUnavailable = 503
 
@@ -178,6 +181,38 @@ func isEmptyStreamBody(body string) bool {
 	return strings.Contains(body, "closed before first payload") ||
 		strings.Contains(body, "empty stream") ||
 		strings.Contains(body, "invalid SSE response: missing output and done event")
+}
+
+// streamReadErrorLeakedMarker 标记已向客户端发出分片后的断流，抑制换号与状态码分类。
+const streamReadErrorLeakedMarker = "after partial output"
+
+// isStreamReadError 判定错误文本是否描述上游 SSE 读取中断。
+// [参数] body：错误文本。
+// [返回] 命中可重试断流语义时返回 true。
+// 最近修改时间 2026-10-17 21:30:00 新增，断流分级换号与状态码分类。
+func isStreamReadError(body string) bool {
+	// 1. 空文本与已泄漏标记不参与断流分类
+	if strings.TrimSpace(body) == "" || strings.Contains(body, streamReadErrorLeakedMarker) {
+		return false
+	}
+	// 2. 命中传输层断流关键字
+	return strings.Contains(body, "stream read error") ||
+		strings.Contains(body, "connection reset by peer") ||
+		strings.Contains(body, "INTERNAL_ERROR")
+}
+
+// shouldRotateOnStreamReadError 判定断流失败是否允许换号重试。
+// [参数] emitted：是否已向客户端发出分片；attempt：当前尝试序号；budget：换号预算；
+// hasEncodedBody：能否重建请求体；hasNextAuth：是否存在可用候选。
+// [返回] 允许换号重试时返回 true。
+// 最近修改时间 2026-10-17 21:30:00 新增，断流分级换号与状态码分类。
+func shouldRotateOnStreamReadError(emitted bool, attempt, budget int, hasEncodedBody, hasNextAuth bool) bool {
+	// 1. 已泄漏、无法重建或没有候选时只透传错误
+	if emitted || !hasEncodedBody || !hasNextAuth {
+		return false
+	}
+	// 2. 预算未耗尽才允许继续换号
+	return attempt < budget
 }
 
 // isTransientThrottle 判定失败是否属于上游瞬时过载信号：429 无额度标记、
@@ -234,13 +269,18 @@ func isQueueFrame(body string) bool {
 // 宿主 statusCodeFromError（conductor_cooldown.go:1448）只认 StatusCode() int
 // 数字接口，纯文本错误恒得 0，跨 provider 轮转（isCredentialRetryRoundStatus）
 // 永不触发；排队帧据此带上 503，让宿主把请求换到另一家上游。
+// 断流补 502 属同类网关失败信号：本插件内部换号已用尽或已泄漏分片时，
+// 让宿主看到明确的网关类状态而不是成功帧。
 //
 // [参数] message：失败信封的错误文本。
-// [返回] 排队帧返回 503；其余返回 0，保持既有行为。
-// 最近修改时间 2026-10-15（打通宿主跨 provider 轮转的状态码通道）
+// [返回] 排队帧返回 503，断流返回 502；其余返回 0，保持既有行为。
+// 最近修改时间 2026-10-17 21:30:00 断流信封补 502。
 func envelopeHTTPStatusForError(message string) int {
 	if isQueueFrame(message) {
 		return queueFrameHTTPStatus
+	}
+	if isStreamReadError(message) {
+		return httpStatusBadGateway
 	}
 	return 0
 }
