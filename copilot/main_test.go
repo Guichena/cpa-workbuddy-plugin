@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -353,7 +354,10 @@ func TestDeviceCodeFlowStartAndPoll(t *testing.T) {
 		t.Fatalf("poll#1 should be pending, got %s", string(pollRaw))
 	}
 
-	// 7. 第二次轮询应成功并落盘。
+	// 7. 推进到下一次允许轮询的时间点，避免测试真实等待 interval。
+	expirePollWindow(t, state)
+
+	// 8. 第二次轮询应成功并落盘。
 	pollRaw2, err := handlePollLogin(mustJSON(t, map[string]any{"State": state}))
 	if err != nil {
 		t.Fatalf("poll#2: %v", err)
@@ -392,6 +396,121 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return raw
+}
+
+// expirePollWindow 把会话的下次轮询时间提前到过去，免去测试真实等待间隔。
+// [参数] t: 测试上下文；state: 会话标识。
+// [返回] 无。
+// 最近修改时间：2026-10-17 15:00:00；改动原因：新增，配合轮询节流用例。
+func expirePollWindow(t *testing.T, state string) {
+	t.Helper()
+	rawSession, ok := oauthSessions.Load(state)
+	if !ok {
+		t.Fatalf("session %q not found", state)
+	}
+	session, ok := rawSession.(*oauthLoginSession)
+	if !ok || session == nil {
+		t.Fatalf("session %q has unexpected type", state)
+	}
+	session.mu.Lock()
+	session.nextPollAt = time.Now().Add(-time.Second)
+	session.mu.Unlock()
+}
+
+// TestPollDeviceLoginThrottlesWithinInterval 校验未到轮询窗口时不访问上游。
+//
+// 宿主前端固定 3 秒轮询，若每次都转发上游会触发 GitHub slow_down 阶梯，
+// 授权成功后仍长时间拿不到 token。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17 15:00:00；改动原因：新增，锁定轮询节流行为。
+func TestPollDeviceLoginThrottlesWithinInterval(t *testing.T) {
+	// 1. 桩：令牌端点统计调用次数，恒返回 pending。
+	var calls int32
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "authorization_pending"})
+	}))
+	defer tokenSrv.Close()
+	mockGitHubAccessTokenURL = tokenSrv.URL
+	defer func() { mockGitHubAccessTokenURL = "" }()
+
+	// 2. 构造一个间隔 5 秒、刚完成首次轮询的会话。
+	state := "throttle-state"
+	oauthSessions.Store(state, &oauthLoginSession{
+		CreatedAt:  time.Now(),
+		DeviceCode: "device-abc",
+		Interval:   githubDefaultPollSec * time.Second,
+		nextPollAt: time.Now().Add(githubDefaultPollSec * time.Second),
+	})
+	defer oauthSessions.Delete(state)
+
+	// 3. 窗口内的 3 次轮询都应是 pending，且一次都不访问上游。
+	for i := 0; i < 3; i++ {
+		status, _, _, err := pollDeviceLogin(state)
+		if err != nil {
+			t.Fatalf("poll#%d: %v", i, err)
+		}
+		if status != pluginapi.AuthLoginStatusPending {
+			t.Fatalf("poll#%d status=%v, want pending", i, status)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("upstream calls=%d, want 0 within interval window", got)
+	}
+
+	// 4. 窗口过后必须真实访问上游一次。
+	expirePollWindow(t, state)
+	if _, _, _, err := pollDeviceLogin(state); err != nil {
+		t.Fatalf("poll after window: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("upstream calls=%d, want 1 after window", got)
+	}
+}
+
+// TestPollDeviceLoginAdoptsSlowDownInterval 校验 slow_down 采纳上游间隔并延后下次轮询。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17 15:00:00；改动原因：新增，锁定 slow_down 间隔采纳行为。
+func TestPollDeviceLoginAdoptsSlowDownInterval(t *testing.T) {
+	// 1. 桩：返回 slow_down 与上游指定间隔 30 秒。
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":    "slow_down",
+			"interval": 30,
+		})
+	}))
+	defer tokenSrv.Close()
+	mockGitHubAccessTokenURL = tokenSrv.URL
+	defer func() { mockGitHubAccessTokenURL = "" }()
+
+	// 2. 会话已到轮询窗口。
+	state := "slowdown-state"
+	oauthSessions.Store(state, &oauthLoginSession{
+		CreatedAt:  time.Now(),
+		DeviceCode: "device-abc",
+		Interval:   githubDefaultPollSec * time.Second,
+		nextPollAt: time.Now().Add(-time.Second),
+	})
+	defer oauthSessions.Delete(state)
+
+	// 3. 轮询一次后会话间隔应变为上游给的 30 秒，且下次轮询被推后。
+	status, _, _, err := pollDeviceLogin(state)
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if status != pluginapi.AuthLoginStatusPending {
+		t.Fatalf("status=%v, want pending", status)
+	}
+	rawSession, _ := oauthSessions.Load(state)
+	session := rawSession.(*oauthLoginSession)
+	if session.Interval != 30*time.Second {
+		t.Fatalf("interval=%v, want 30s", session.Interval)
+	}
+	if !session.nextPollAt.After(time.Now().Add(25 * time.Second)) {
+		t.Fatalf("nextPollAt=%v, want pushed out by upstream interval", session.nextPollAt)
+	}
 }
 
 // TestMutateModel 校验请求体模型名改写与非法输入兜底。

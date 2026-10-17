@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.6
+
+修复 GitHub 授权成功后长时间停留在「等待认证中」，账号迟迟不落盘的问题。
+
+**Fix**
+
+- `oauth.go`：`pollDeviceLogin` 按 GitHub 设备流的 `interval` 在会话内节流——宿主前端固定 3 秒轮询，此前每次都原样转发上游令牌端点，快于 GitHub 要求的 5 秒间隔，第二次起持续返回 `slow_down` 并把要求间隔阶梯抬到 10/15/20/25/30 秒，导致用户授权完成后仍要等数分钟才拿到 token（生产实测：14:46:16 首次轮询 → 14:54:28 才落盘，约 8 分 12 秒）。现在未到下次允许轮询时间直接返回 pending，不访问上游。
+- `oauth.go`：`oauthLoginSession` 新增 `nextPollAt` 与 `mu`；收到 `slow_down` 时调用新增的 `applySlowDown` 采纳上游给出的间隔（未给出时按 `githubSlowDownStepSec` 递增），并立即推后下次轮询时间。此前 `Interval` 字段写入后从未被读取、`githubSlowDownStepSec` 常量从未被引用。
+- `oauth.go`：同一会话的轮询改为会话级互斥，避免宿主与插件面板同时轮询时重复消费设备码。
+
+**Test**
+
+- 新增 `TestPollDeviceLoginThrottlesWithinInterval`（窗口内 3 次轮询上游调用 0 次、窗口后 1 次）与 `TestPollDeviceLoginAdoptsSlowDownInterval`（采纳 `interval=30` 并推后 `nextPollAt`）；新增 `expirePollWindow` 辅助，`TestDeviceCodeFlowStartAndPoll` 同步适配。
+- 哨兵变异 2/2 精确命中；`cgo-shim-build.py copilot` build/vet/test 全绿。
+
 ## 0.1.5
 
 账号故障冷却由固定 15 秒改为 30s 递增阶梯、上限 10 分钟。

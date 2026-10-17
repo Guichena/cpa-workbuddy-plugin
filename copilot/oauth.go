@@ -80,6 +80,23 @@ type oauthLoginSession struct {
 	Auth            *pluginapi.AuthData
 	Error           string
 	Completed       bool
+
+	// mu 串行化同一会话的并发轮询，避免宿主与面板同时访问令牌端点。
+	mu sync.Mutex
+	// nextPollAt 是下一次允许访问 GitHub 令牌端点的时间。
+	nextPollAt time.Time
+}
+
+// applySlowDown 采纳 GitHub 在 slow_down 中给出的新轮询间隔。
+// [参数] upstreamInterval: 上游返回的间隔秒数，0 表示未给出。
+// [返回] 无。
+// 最近修改时间：2026-10-17 15:00:00；改动原因：新增，slow_down 时按上游间隔拉长轮询节奏。
+func (s *oauthLoginSession) applySlowDown(upstreamInterval int64) {
+	if upstreamInterval > 0 {
+		s.Interval = time.Duration(upstreamInterval) * time.Second
+		return
+	}
+	s.Interval += githubSlowDownStepSec * time.Second
 }
 
 var oauthSessions sync.Map
@@ -278,9 +295,10 @@ func startDeviceLogin() (string, *githubDeviceCodeResponse, error) {
 //
 // 返回值语义与宿主 AuthLoginStatus 一致：pending 表示继续等待，success 表示
 // 已完成并返回凭据，error 表示流程终止。会话仅在 success / error 时销毁。
+// 会话内按 GitHub 设备流的 interval 节流，未到时间直接返回 pending。
 // [参数] state: 会话标识。
 // [返回] 状态、提示文案、凭据记录与错误。
-// 最近修改时间：2026-10-15；改动原因：抽出纯内核，供宿主登录入口与面板路由共用。
+// 最近修改时间：2026-10-17 15:00:00；改动原因：按 interval 节流并采纳 slow_down 间隔。
 func pollDeviceLogin(state string) (pluginapi.AuthLoginStatus, string, *pluginapi.AuthData, error) {
 	state = strings.TrimSpace(state)
 	if state == "" {
@@ -296,12 +314,16 @@ func pollDeviceLogin(state string) (pluginapi.AuthLoginStatus, string, *pluginap
 		return pluginapi.AuthLoginStatusError, "授权会话数据异常", nil, nil
 	}
 
+	// 1. 同一会话的并发轮询串行执行，避免重复消费设备码。
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
 	if time.Since(session.CreatedAt) > githubDeviceCodeTTL {
 		oauthSessions.Delete(state)
 		return pluginapi.AuthLoginStatusError, "授权会话已超时（15分钟），请重新发起", nil, nil
 	}
 
-	// 1. 已完成的会话直接返回结果（宿主可能重复轮询）。
+	// 2. 已完成的会话直接返回结果（宿主可能重复轮询）。
 	if session.Completed {
 		oauthSessions.Delete(state)
 		if session.Error != "" {
@@ -313,7 +335,13 @@ func pollDeviceLogin(state string) (pluginapi.AuthLoginStatus, string, *pluginap
 		return pluginapi.AuthLoginStatusSuccess, "GitHub Copilot 账号授权成功", session.Auth, nil
 	}
 
-	// 2. 查询 GitHub 设备授权端点。
+	// 3. 未到下次允许轮询时间时直接返回 pending，避免触发上游 slow_down。
+	if time.Now().Before(session.nextPollAt) {
+		return pluginapi.AuthLoginStatusPending, "等待在 GitHub 页面输入设备码完成授权...", nil, nil
+	}
+	session.nextPollAt = time.Now().Add(session.Interval)
+
+	// 4. 查询 GitHub 设备授权端点。
 	tokenResp, errPoll := pollAccessToken(session.DeviceCode)
 	if errPoll != nil {
 		// 传输类失败保留会话，等待宿主下一轮轮询重试。
@@ -326,6 +354,8 @@ func pollDeviceLogin(state string) (pluginapi.AuthLoginStatus, string, *pluginap
 	case "authorization_pending":
 		return pluginapi.AuthLoginStatusPending, "等待在 GitHub 页面输入设备码完成授权...", nil, nil
 	case "slow_down":
+		session.applySlowDown(tokenResp.Interval)
+		session.nextPollAt = time.Now().Add(session.Interval)
 		return pluginapi.AuthLoginStatusPending, "GitHub 要求降低轮询频率，继续等待授权...", nil, nil
 	default:
 		session.Completed = true
