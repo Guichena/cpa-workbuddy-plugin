@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>扣子 Provider 面板</title>
+<style>
+/* Theme tokens aligned with CPA management panel (key-policy / themes.scss):
+   default :root = light (paper); data-theme=white | dark; embedded iframe syncs parent. */
+:root{
+  --bg:#faf9f5;--card:#ffffff;--border:#e3e1db;--fg:#2d2a26;--mut:#6d6760;
+  --acc:#4c8dff;--on-acc:#ffffff;--ok:#10b981;--warn:#e0aa14;--err:#c65746;
+  --surface:#f0eee8;--btn-sec:#eef1f6;--btn-sec-hover:#e4e8ef;
+  --input-bg:#ffffff;--placeholder:rgba(109,103,96,.55);
+  --ok-soft:rgba(16,185,129,.10);--ok-border:rgba(16,185,129,.30);
+  --warn-soft:rgba(224,170,20,.12);--warn-border:rgba(224,170,20,.32);
+  --err-soft:rgba(198,87,70,.10);--err-border:rgba(198,87,70,.30);
+  --radius-md:12px;--radius-lg:16px;--acc-ring:rgba(76,141,255,.18);
+  color-scheme:light
+}
+:root[data-theme="white"]{
+  --bg:#f5f5f5;--card:#ffffff;--border:#e6e6e6;--fg:#1f1f1f;--mut:#707070;
+  --surface:#fafafa;--btn-sec:#f0f0f0;--btn-sec-hover:#e8e8e8;
+  --input-bg:#ffffff;--placeholder:rgba(112,112,112,.55);
+  color-scheme:light
+}
+:root[data-theme="dark"]{
+  --bg:#1e1d1b;--card:#26241f;--border:#3a3833;--fg:#ede9e3;--mut:#9a948c;
+  --acc:#4c8dff;--on-acc:#ffffff;--ok:#34d399;--warn:#f0c050;--err:#e07a6a;
+  --surface:#2f2d28;--btn-sec:#35332e;--btn-sec-hover:#3f3c36;
+  --input-bg:#1e1d1b;--placeholder:rgba(154,148,140,.55);
+  --ok-soft:rgba(52,211,153,.12);--ok-border:rgba(52,211,153,.38);
+  --warn-soft:rgba(240,192,80,.14);--warn-border:rgba(240,192,80,.38);
+  --err-soft:rgba(224,122,106,.12);--err-border:rgba(224,122,106,.38);
+  --acc-ring:rgba(76,141,255,.28);
+  color-scheme:dark
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1400px;margin:0 auto;padding:24px 20px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--mut);font-size:13px;margin-bottom:20px}
+.bar{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+button{background:var(--acc);color:var(--on-acc);border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px}
+button.sec{background:var(--btn-sec);color:var(--fg)}
+button.sec:hover{background:var(--btn-sec-hover)}
+button:disabled{opacity:.5;cursor:default}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px}
+.card h2{font-size:14px;margin:0 0 10px;display:flex;align-items:center;gap:8px;justify-content:space-between}
+.card .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin:4px 0;gap:8px}
+.card .row .v{color:var(--fg);text-align:right;word-break:break-all}
+.empty{background:var(--card);border:1px dashed var(--border);border-radius:var(--radius-md);padding:28px;text-align:center;color:var(--mut);font-size:13px}
+.msg{margin-top:14px;padding:10px 14px;border-radius:8px;font-size:13px;display:none}
+.msg.ok{display:block;background:var(--ok-soft);border:1px solid var(--ok-border);color:var(--ok)}
+.msg.err{display:block;background:var(--err-soft);border:1px solid var(--err-border);color:var(--err)}
+.auth{background:var(--card);border:1px solid var(--warn-border);border-radius:var(--radius-md);padding:14px 16px;margin-bottom:16px;display:none}
+.auth .hint{color:var(--mut);font-size:12px;margin-bottom:8px;line-height:1.6}
+.auth .row{display:flex;gap:8px}
+.auth input{flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:7px 11px;color:var(--fg);font-size:13px;outline:none}
+.auth input:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
+.login{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;margin-bottom:16px}
+.login h2{font-size:14px;margin:0 0 6px}
+.login ol{margin:6px 0 12px;padding-left:20px;color:var(--mut);font-size:12px;line-height:1.9}
+.login pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font:12px/1.6 ui-monospace,Consolas,monospace;color:var(--fg);white-space:pre-wrap;word-break:break-all;margin:0;max-height:220px;overflow:auto}
+.login .row{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.login .hint{color:var(--mut);font-size:12px;line-height:1.7;margin-top:10px}
+.login .hint code{background:var(--surface);border-radius:4px;padding:1px 5px}
+.badge{font-size:11px;padding:2px 7px;border-radius:999px;white-space:nowrap}
+.badge.on{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border)}
+.badge.off{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
+.badge.warn{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
+.card .acts{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+.card .acts button{padding:5px 10px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>扣子 Provider</h1>
+  <div class="sub">通过官方登录授权接入扣子账号。授权文件由插件生成并落盘，支持自动续期。</div>
+
+  <div class="auth" id="authBox">
+    <div class="hint">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
+    <div class="row">
+      <input type="password" id="keyInput" placeholder="management key" autocomplete="off">
+      <button id="keySave">连接</button>
+    </div>
+  </div>
+
+  <div class="login">
+    <h2>授权扣子账号</h2>
+    <ol>
+      <li>点击「生成授权脚本」，本页会给出一次性脚本（15 分钟内有效）。</li>
+      <li>点击「打开扣子」，在打开的 <code>https://www.coze.cn</code> 按官方页面完成登录（手机号 / 抖音 / 飞书 / 火山任一）。</li>
+      <li>在扣子页面按 <code>F12</code> 打开开发者工具 → <code>Console</code>，粘贴脚本并回车。</li>
+      <li>页面会跳回本插件并自动完成授权，账号随即出现在下方列表。</li>
+    </ol>
+    <div class="row">
+      <button id="genScript">生成授权脚本</button>
+      <button id="openCoze" class="sec">打开扣子</button>
+      <button id="copyScript" class="sec" disabled>复制脚本</button>
+    </div>
+    <pre id="scriptBox">尚未生成授权脚本。</pre>
+    <div class="hint">脚本只做一件事：在扣子页面内调用令牌接口取 <code>x-tt-token</code>，再把令牌交给本插件兑换会话。它<b>不读取、也不上传</b>你的浏览器 Cookie。</div>
+  </div>
+
+  <div class="bar">
+    <button id="refresh" class="sec">刷新账号</button>
+    <span class="sub" id="count" style="margin:0"></span>
+  </div>
+
+  <div id="list"></div>
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+const API = "/v0/management/plugins/coze-provider";
+
+/* ---------- management key acquisition (3 fallbacks, zero config) ----------
+   1) CPA main panel localStorage "cli-proxy-auth" (XOR+base64, same-origin
+      iframe embed) — same approach as the sibling provider panels.
+   2) ?key= URL param (cleaned from history after read, kept in sessionStorage).
+   3) Manual input (sessionStorage only, never persisted).
+   宿主对 /v0/management/* 统一做鉴权：不带 Authorization 时直接返回
+   401 {"error":"missing management key"}，面板必须自行补齐该请求头。
+*/
+const ENC_PREFIX = "enc::v1::";
+const SECRET_SALT = "cli-proxy-api-webui::secure-storage";
+const PANEL_STORE = "cli-proxy-auth";
+const SS_KEY = "coze-mgmt-key";
+
+function _enc(t){return new TextEncoder().encode(t)}
+function _dec(b){return new TextDecoder().decode(b)}
+function _keyBytes(){try{return _enc(SECRET_SALT+"|"+window.location.host+"|"+navigator.userAgent)}catch(e){return _enc(SECRET_SALT)}}
+function _xor(d,k){const r=new Uint8Array(d.length);for(let i=0;i<d.length;i++)r[i]=d[i]^k[i%k.length];return r}
+function _b64d(s){const bin=atob(s);const b=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);return b}
+function deobfuscate(p){if(!p||!p.startsWith(ENC_PREFIX))return p;try{return _dec(_xor(_b64d(p.slice(ENC_PREFIX.length)),_keyBytes()))}catch(e){return p}}
+function isEmbedded(){try{return window.self!==window.top}catch(e){return false}}
+
+function readPanelKey(){
+  if(!isEmbedded())return null;
+  let raw;try{raw=localStorage.getItem(PANEL_STORE)}catch(e){return null}
+  if(!raw)return null;
+  try{
+    const parsed=JSON.parse(deobfuscate(raw));
+    const st=(parsed&&parsed.state)||parsed||{};
+    return typeof st.managementKey==="string"&&st.managementKey?st.managementKey:null;
+  }catch(e){return null}
+}
+function readUrlKey(){
+  const m=new URLSearchParams(window.location.search).get("key");
+  if(m){
+    // 只剔除 key 参数，保留 theme 等其它 query，避免连带抹掉上下文。
+    try{
+      const u=new URL(window.location.href);
+      u.searchParams.delete("key");
+      history.replaceState(null,"",u.pathname+u.search+u.hash);
+    }catch(e){ /* 历史接口不可用时忽略，key 已落 sessionStorage */ }
+  }
+  return m;
+}
+// readUrlKey() 会立刻把 key 从 URL 上抹掉，而 readPanelKey() 依赖父窗口的
+// localStorage；若解析后不落盘，首次调用之后 getKey() 将永远返回空。
+function persistKey(k){
+  if(!k) return k;
+  try{ sessionStorage.setItem(SS_KEY,k); }catch(e){}
+  return k;
+}
+function getKey(){
+  let stored=null;try{stored=sessionStorage.getItem(SS_KEY)}catch(e){}
+  return stored||persistKey(readPanelKey())||persistKey(readUrlKey());
+}
+function authHeaders(k){return k?{"Authorization":"Bearer "+k}:{}}
+function showAuth(){
+  const box=document.getElementById("authBox");
+  if(!box)return;
+  box.style.display="block";
+  const i=document.getElementById("keyInput");
+  if(i)i.focus();
+}
+function saveKey(){
+  const i=document.getElementById("keyInput");
+  const v=i?i.value.trim():"";
+  if(!v)return;
+  try{ sessionStorage.setItem(SS_KEY,v); }catch(e){}
+  document.getElementById("authBox").style.display="none";
+  refresh();
+}
+/* --------------------------------------------------------------------------- */
+
+async function api(path, opts) {
+  const key = getKey();
+  if (!key) {
+    showAuth();
+    throw new Error("需要管理密钥，请在 CPA 主面板中打开本页，或在下方输入框填入");
+  }
+  const headers = Object.assign(
+    { "Content-Type": "application/json" },
+    authHeaders(key),
+    (opts && opts.headers) || {}
+  );
+  const res = await fetch(API + path, Object.assign({}, opts, { headers, cache: "no-store" }));
+  if (res.status === 401 || res.status === 403) {
+    try { sessionStorage.removeItem(SS_KEY); } catch (e) { /* 隐私模式下不可写时忽略 */ }
+    showAuth();
+    throw new Error("管理密钥无效或已失效，请重新填写");
+  }
+  let data = null;
+  try { data = await res.json(); } catch (e) { data = { error: "响应解析失败" }; }
+  return data;
+}
+
+function showMsg(text, kind) {
+  const el = document.getElementById("msg");
+  el.className = "msg " + (kind || "");
+  el.textContent = text;
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
+function stateBadge(a) {
+  if (a.disabled) return '<span class="badge off">已禁用</span>';
+  if (a.auth_state === "expired") return '<span class="badge warn">待重新授权</span>';
+  return '<span class="badge on">已授权</span>';
+}
+
+function renderAccounts(accounts) {
+  const list = document.getElementById("list");
+  document.getElementById("count").textContent = "共 " + accounts.length + " 个账号";
+  if (!accounts.length) {
+    list.innerHTML = '<div class="empty">暂无账号。请按上方步骤完成一次授权登录。</div>';
+    return;
+  }
+  list.innerHTML = accounts.map(function (a) {
+    const id = esc(a.auth_id);
+    return '<div class="card"><h2><span>' + esc(a.label || a.auth_id || "未命名") + '</span>' + stateBadge(a) + '</h2>' +
+      (a.screen_name ? '<div class="row"><span>昵称</span><span class="v">' + esc(a.screen_name) + '</span></div>' : '') +
+      (a.mobile ? '<div class="row"><span>手机</span><span class="v">' + esc(a.mobile) + '</span></div>' : '') +
+      '<div class="row"><span>账号标识</span><span class="v">' + esc(a.sec_user_id || a.auth_id) + '</span></div>' +
+      (a.login_at ? '<div class="row"><span>授权时间</span><span class="v">' + esc(a.login_at) + '</span></div>' : '') +
+      (a.last_renew_at ? '<div class="row"><span>最近续期</span><span class="v">' + esc(a.last_renew_at) + '</span></div>' : '') +
+      '<div class="acts">' +
+      '<button data-act="renew" data-id="' + id + '">续期</button>' +
+      '<button class="sec" data-act="' + (a.disabled ? "enable" : "disable") + '" data-id="' + id + '">' + (a.disabled ? "启用" : "禁用") + '</button>' +
+      '<button class="sec" data-act="delete" data-id="' + id + '">删除</button>' +
+      '</div></div>';
+  }).join("");
+}
+
+async function refresh() {
+  const btn = document.getElementById("refresh");
+  btn.disabled = true;
+  try {
+    const data = await api("/accounts");
+    if (data && data.error) { showMsg("加载账号失败：" + data.error, "err"); return; }
+    renderAccounts((data && data.accounts) || []);
+  } catch (e) {
+    showMsg("加载账号失败：" + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+let currentScript = "";
+
+async function genScript() {
+  const btn = document.getElementById("genScript");
+  btn.disabled = true;
+  showMsg("正在生成授权脚本…", "");
+  try {
+    const data = await api("/login-start", { method: "POST", body: "{}" });
+    if (!data || !data.state || !data.script) {
+      showMsg("生成失败：" + ((data && data.error) || "响应缺少 state 或 script"), "err");
+      return;
+    }
+    currentScript = data.script;
+    document.getElementById("scriptBox").textContent = data.script;
+    document.getElementById("copyScript").disabled = false;
+    showMsg("脚本已生成，请在 15 分钟内到扣子页面执行。", "ok");
+  } catch (e) {
+    showMsg("生成失败：" + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function copyScript() {
+  if (!currentScript) return;
+  const done = function () { showMsg("已复制，请到扣子页面的 Console 粘贴执行。", "ok"); };
+  const fail = function () { showMsg("自动复制失败，请手动选中脚本文本复制。", "err"); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(currentScript).then(done).catch(fail);
+  } else {
+    fail();
+  }
+}
+
+async function act(kind, id) {
+  if (kind === "delete" && !confirm("确认删除该账号？")) return;
+  try {
+    let data;
+    if (kind === "renew") {
+      showMsg("正在续期…", "");
+      data = await api("/renew", { method: "POST", body: JSON.stringify({ auth_id: id }) });
+    } else {
+      data = await api("/" + kind, { method: "POST", body: JSON.stringify({ auth_id: id }) });
+    }
+    if (data && data.ok) {
+      showMsg(kind === "renew" ? ("续期完成" + (data.note ? "：" + data.note : "")) : "操作成功", "ok");
+      refresh();
+    } else {
+      showMsg("操作失败：" + ((data && data.error) || "未知错误"), "err");
+    }
+  } catch (e) {
+    showMsg("操作失败：" + e.message, "err");
+  }
+}
+
+document.getElementById("keySave").addEventListener("click", saveKey);
+document.getElementById("refresh").addEventListener("click", refresh);
+document.getElementById("genScript").addEventListener("click", genScript);
+document.getElementById("copyScript").addEventListener("click", copyScript);
+document.getElementById("openCoze").addEventListener("click", function () {
+  window.open("https://www.coze.cn", "_blank", "noopener");
+});
+document.getElementById("list").addEventListener("click", function (ev) {
+  const t = ev.target;
+  if (!t || !t.getAttribute) return;
+  const act_ = t.getAttribute("data-act");
+  const id = t.getAttribute("data-id");
+  if (act_ && id) act(act_, id);
+});
+
+/* theme sync：宿主在主面板切换主题时通过 postMessage 下发，嵌入态跟随。 */
+(function () {
+  function applyTheme(t) {
+    if (t === "dark" || t === "white" || t === "light") {
+      document.documentElement.setAttribute("data-theme", t === "light" ? "" : t);
+    }
+  }
+  try {
+    const parentTheme = window.parent && window.parent.document
+      ? window.parent.document.documentElement.getAttribute("data-theme")
+      : null;
+    if (parentTheme) applyTheme(parentTheme);
+  } catch (e) { /* 跨域嵌入时读不到父文档，保持默认主题 */ }
+  window.addEventListener("message", function (ev) {
+    if (ev && ev.data && typeof ev.data === "object" && ev.data.theme) applyTheme(ev.data.theme);
+  });
+})();
+
+refresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,177 @@
+package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+// 本文件集中声明扣子上游端点与协议常量。
+//
+// 扣子网页端迭代频繁，所有路径、请求头、判定口径都收敛到本文件，
+// 改版时只需改这一处；各调用点不再散落字符串字面量。
+
+const (
+	// cozeSiteHost 是网页端主域，业务与护照接口都在此域下。
+	cozeSiteHost = "https://www.coze.cn"
+
+	// tokenBeatPath 是令牌双向换发端点。
+	//
+	// 双向契约（2026-10-17 真实账号实测）：
+	//   - 带会话 Cookie 调用 → 响应头返回 x-tt-token（Set-Cookie 0 条）；
+	//   - 带 x-tt-token 请求头调用（不带 Cookie）→ 返回 13 条 Set-Cookie。
+	// 因此它同时承担「首次授权换 Cookie」与「滚动续期」两个职责。
+	tokenBeatPath = "/passport/token/beat/v2/"
+
+	// accountInfoPath 是登录态判据端点。
+	//
+	// 判据口径：message == "success" 且 data.sec_user_id 非空。
+	// 实测该端点对无会话请求返回 message == "error" 且无 sec_user_id，
+	// 区分度足够；不像豆包的 /alice/basic/launch 那样对未登录也返回 code:0。
+	accountInfoPath = "/passport/account/info/v2/"
+
+	// tokenBeatSDKVersion 是令牌端点要求的 SDK 版本头值，缺失会被拒。
+	tokenBeatSDKVersion = "2"
+
+	// webUserAgent 是网页端 UA，护照接口按 UA 做基础风控。
+	webUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+		"(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+
+	// tokenBeatContentType 是令牌端点接受的 Content-Type。
+	//
+	// 必须精确为 application/json：本仓库豆包插件的 IM 网关要求
+	// application/json; encoding=utf-8，两者不同，不要互相套用。
+	tokenBeatContentType = "application/json"
+
+	// authErrorCodeSessionExpired 是令牌端点「会话过期」的业务错误码。
+	//
+	// 该端点无论成败都返回 HTTP 200，必须读 data.error_code 判定。
+	authErrorCodeSessionExpired = 401
+)
+
+// tokenBeatURL 返回令牌端点的完整 URL。
+// [参数] 无。
+// [返回] 完整 URL。
+// 最近修改时间：2026-10-18；改动原因：新增，端点集中出口。
+func tokenBeatURL() string {
+	return cozeSiteHost + tokenBeatPath
+}
+
+// accountInfoURL 返回登录态判据端点的完整 URL。
+//
+// 实测无需任何 query 参数：带上会话 Cookie 即返回完整 data，
+// 与豆包 /passport/account/info/v2/ 需要 device_platform / aid 等常量块不同。
+// [参数] 无。
+// [返回] 完整 URL。
+// 最近修改时间：2026-10-18；改动原因：新增，端点集中出口。
+func accountInfoURL() string {
+	return cozeSiteHost + accountInfoPath
+}
+
+// tokenBeatResponse 是令牌端点响应体。
+type tokenBeatResponse struct {
+	Message string `json:"message"`
+	Data    struct {
+		ErrorCode   int    `json:"error_code"`
+		Description string `json:"description"`
+	} `json:"data"`
+}
+
+// isSuccess 判断响应是否为业务成功。
+//
+// 该端点始终返回 HTTP 200：未授权时 body 为
+// {"message":"error","data":{"error_code":401,"description":"会话过期，请重新登录"}}，
+// 只看状态码会把失败判成成功（2026-10-17 实测）。
+// [参数] r: 解析后的响应。
+// [返回] 成功时返回 true。
+// 最近修改时间：2026-10-18；改动原因：新增，业务成败判定。
+func (r *tokenBeatResponse) isSuccess() bool {
+	if r == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Message), "success") && r.Data.ErrorCode == 0
+}
+
+// describe 把失败响应转成可展示的错误说明。
+// [参数] r: 解析后的响应。
+// [返回] 错误说明；成功响应返回空串。
+// 最近修改时间：2026-10-18；改动原因：新增，错误文案统一。
+func (r *tokenBeatResponse) describe() string {
+	if r == nil {
+		return "上游无响应"
+	}
+	desc := strings.TrimSpace(r.Data.Description)
+	if desc != "" {
+		return desc
+	}
+	return fmt.Sprintf("上游返回 message=%q error_code=%d", r.Message, r.Data.ErrorCode)
+}
+
+// accountInfoResponse 是登录态判据端点的响应体。
+type accountInfoResponse struct {
+	Message string         `json:"message"`
+	Data    map[string]any `json:"data"`
+}
+
+// isSuccess 判断判据是否通过（message 为 success 且 sec_user_id 非空）。
+// [参数] r: 解析后的响应。
+// [返回] 通过时返回 true。
+// 最近修改时间：2026-10-18；改动原因：新增，登录态判据。
+func (r *accountInfoResponse) isSuccess() bool {
+	if r == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(r.Message), "success") {
+		return false
+	}
+	return strings.TrimSpace(r.secUserID()) != ""
+}
+
+// secUserID 提取 data.sec_user_id。
+// [参数] 无。
+// [返回] 账号句柄；缺失时返回空串。
+// 最近修改时间：2026-10-18；改动原因：新增，账号标识来源。
+func (r *accountInfoResponse) secUserID() string {
+	if r == nil || r.Data == nil {
+		return ""
+	}
+	v, _ := r.Data["sec_user_id"].(string)
+	return strings.TrimSpace(v)
+}
+
+// userID 提取 data.user_id（数字型，JSON 解码为 float64）。
+// [参数] 无。
+// [返回] 数字用户 ID；缺失时为 0。
+// 最近修改时间：2026-10-18；改动原因：新增，账号展示字段。
+func (r *accountInfoResponse) userID() int64 {
+	if r == nil || r.Data == nil {
+		return 0
+	}
+	if v, ok := r.Data["user_id"].(float64); ok {
+		return int64(v)
+	}
+	return 0
+}
+
+// screenName 提取 data.screen_name。
+// [参数] 无。
+// [返回] 昵称；缺失时返回空串。
+// 最近修改时间：2026-10-18；改动原因：新增，账号展示字段。
+func (r *accountInfoResponse) screenName() string {
+	if r == nil || r.Data == nil {
+		return ""
+	}
+	v, _ := r.Data["screen_name"].(string)
+	return strings.TrimSpace(v)
+}
+
+// mobile 提取 data.mobile（脱敏手机号）。
+// [参数] 无。
+// [返回] 手机号；缺失时返回空串。
+// 最近修改时间：2026-10-18；改动原因：新增，账号展示字段。
+func (r *accountInfoResponse) mobile() string {
+	if r == nil || r.Data == nil {
+		return ""
+	}
+	v, _ := r.Data["mobile"].(string)
+	return strings.TrimSpace(v)
+}
