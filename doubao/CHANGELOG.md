@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.2
+
+- 账号卡片补齐「测试模型」（对齐 workbuddy 面板）：
+  卡片新增「测试」按钮 → 弹窗选择模型 → 发起一次真实推理。
+  测试走流式首帧即停（收到首个有效输出立即返回，不等全文），
+  并拦截 HTTP 200 下的 `STREAM_ERROR` 帧（额度耗尽/限流不会被误判为活跃）；
+  上游不回包由 20 秒上下文兜住。模型列表只含对话类别名——生图/生视频
+  会真正触发上游生成，既耗额度又要等数十秒，且失败原因与账号不可用难区分。
+- 修复宿主 OAuth 登录入口报 `failed to generate authorization url`：
+  插件声明了 `auth_provider`，却只实现了 `auth.identifier`，宿主的
+  `/v0/management/<provider>-auth-url` 调用 `auth.login.start` 拿到
+  `unknown_method` 后统一回该错误。现补齐 `auth.login.start` /
+  `auth.login.poll` / `auth.parse` / `auth.refresh`，并把宿主弹窗接到
+  「浏览器 Cookie 导入」桥接页：豆包的登录态是 HttpOnly Cookie，只能由用户
+  从浏览器导出，插件不实现一键授权（与既定认证路线一致）。
+  登录成功的判据是「账号集合出现新成员」或「已有账号 UpdatedAt 晚于会话开始」，
+  不使用宿主文件时间戳——插件刷新存量账号也会重置它，会造成未授权即成功。
+- 新增回归：
+  - Go 单测 20 个（首帧即停、错误帧拦截、空回复、超时兜底、登录起点/轮询/
+    历史账号不误判、账号文件认领、刷新、方法分发、帧判定语义）；
+  - 面板 `test/doubao/panel_test_model_repro.mjs`（19 断言）；
+  - 桥接页 `test/doubao/login_bridge_repro.mjs`（18 断言）。
+
 ## 0.1.1
 
 - 面板补齐 management key 鉴权（修复生产「导入失败：missing management key」）：

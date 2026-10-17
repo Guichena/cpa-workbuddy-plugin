@@ -72,6 +72,22 @@ button:disabled{opacity:.5;cursor:default}
 .badge{font-size:11px;padding:2px 7px;border-radius:999px}
 .badge.on{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border)}
 .badge.off{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
+.mask.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:420px;padding:18px 20px;box-shadow:0 18px 48px rgba(0,0,0,.22)}
+.modal h2{font-size:15px;margin:0 0 4px}
+.modal .hint{color:var(--mut);font-size:12px;margin-bottom:12px}
+.modal .hint b{color:var(--fg)}
+.modal .models{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}
+.modal .models button{background:var(--btn-sec);color:var(--fg);text-align:left;padding:9px 12px;font:13px ui-monospace,Consolas,monospace}
+.modal .models button:hover{background:var(--btn-sec-hover)}
+.modal .result{margin-top:12px;font-size:12px;line-height:1.6;display:none}
+.modal .result.show{display:block}
+.modal .result .hd{font-weight:600;margin-bottom:2px}
+.modal .result .hd.ok{color:var(--ok)}
+.modal .result .hd.err{color:var(--err)}
+.modal .result .body{color:var(--mut);word-break:break-all}
+.modal .foot{display:flex;justify-content:flex-end;margin-top:14px}
 </style>
 </head>
 <body>
@@ -109,6 +125,16 @@ button:disabled{opacity:.5;cursor:default}
 
   <div id="list"></div>
   <div class="msg" id="msg"></div>
+</div>
+
+<div class="mask" id="testModal">
+  <div class="modal">
+    <h2>测试模型</h2>
+    <p class="hint" id="testHint">选择要测试的模型</p>
+    <div class="models" id="testModels"></div>
+    <div class="result" id="testResult"></div>
+    <div class="foot"><button class="sec" id="testClose">关闭</button></div>
+  </div>
 </div>
 
 <script>
@@ -236,6 +262,7 @@ function renderAccounts(accounts) {
       '<div class="row"><span>账号标识</span><span class="v">' + esc(a.sec_user_id || a.auth_id) + '</span></div>' +
       '<div class="row"><span>更新于</span><span class="v">' + esc(a.updated_at || "-") + '</span></div>' +
       '<div class="acts">' +
+      '<button data-act="test" data-id="' + id + '" data-label="' + esc(a.label || a.screen_name || a.auth_id || "") + '">测试</button>' +
       '<button class="sec" data-act="' + (a.disabled ? "enable" : "disable") + '" data-id="' + id + '">' + (a.disabled ? "启用" : "禁用") + '</button>' +
       '<button class="sec" data-act="delete" data-id="' + id + '">删除</button>' +
       '</div></div>';
@@ -280,6 +307,74 @@ async function doImport() {
   }
 }
 
+/* ---------- 测试模型：先选模型，再发起一次真实推理 ----------
+   点卡片「测试」→ GET /models 拉取可测试模型 → 点某个模型 → POST /test-active。
+   后端只等首个有效输出帧就返回，所以结果通常在 1~3 秒内出现。 */
+let testAuthID = "";
+
+function openTestModal(id, label) {
+  testAuthID = id;
+  document.getElementById("testHint").innerHTML = "选择要测试的模型：<b>" + esc(label || id) + "</b>";
+  document.getElementById("testResult").className = "result";
+  document.getElementById("testResult").innerHTML = "";
+  document.getElementById("testModels").innerHTML = '<div class="hint">加载模型中…</div>';
+  document.getElementById("testModal").classList.add("show");
+  loadTestModels(id);
+}
+
+function closeTestModal() {
+  testAuthID = "";
+  document.getElementById("testModal").classList.remove("show");
+}
+
+async function loadTestModels(id) {
+  const box = document.getElementById("testModels");
+  try {
+    const data = await api("/models?auth_index=" + encodeURIComponent(id));
+    // 用户可能已关闭弹窗或换了账号，丢弃过期响应避免错投。
+    if (testAuthID !== id) return;
+    if (data && data.error) { box.innerHTML = '<div class="hint">' + esc(data.error) + '</div>'; return; }
+    const models = (data && data.models) || [];
+    if (!models.length) { box.innerHTML = '<div class="hint">暂无可用模型</div>'; return; }
+    box.innerHTML = models.map(function (m) {
+      return '<button type="button" data-model="' + esc(m) + '">' + esc(m) + '</button>';
+    }).join("");
+  } catch (e) {
+    if (testAuthID !== id) return;
+    box.innerHTML = '<div class="hint">' + esc(e.message) + '</div>';
+  }
+}
+
+async function runTestModel(btn) {
+  const id = testAuthID;
+  const model = btn && btn.getAttribute ? btn.getAttribute("data-model") : "";
+  if (!id || !model) return;
+  const buttons = document.querySelectorAll("#testModels button");
+  Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
+  const res = document.getElementById("testResult");
+  res.className = "result show";
+  res.innerHTML = '<div class="hd">测试中…</div><div class="body">' + esc(model) + '</div>';
+  try {
+    const data = await api("/test-active", {
+      method: "POST",
+      body: JSON.stringify({ auth_index: id, model: model }),
+    });
+    if (data && data.ok) {
+      res.innerHTML = '<div class="hd ok">测试成功</div><div class="body">' + esc(data.message || model) + '</div>';
+      showMsg("测试成功：" + (data.message || model), "ok");
+    } else {
+      const msg = (data && data.error) || "未知错误";
+      res.innerHTML = '<div class="hd err">测试失败</div><div class="body">' + esc(msg) + '</div>';
+      showMsg("测试失败：" + msg, "err");
+    }
+  } catch (e) {
+    res.innerHTML = '<div class="hd err">测试失败</div><div class="body">' + esc(e.message) + '</div>';
+    showMsg("测试失败：" + e.message, "err");
+  } finally {
+    Array.prototype.forEach.call(buttons, function (b) { b.disabled = false; });
+  }
+}
+
 async function act(id, action) {
   const path = action === "delete" ? "/delete" : (action === "enable" ? "/enable" : "/disable");
   try {
@@ -302,12 +397,24 @@ document.getElementById("list").addEventListener("click", function (ev) {
   if (!btn) return;
   const id = btn.getAttribute("data-id");
   const action = btn.getAttribute("data-act");
+  if (action === "test") {
+    openTestModal(id, btn.getAttribute("data-label"));
+    return;
+  }
   if (action === "delete") {
     if (!confirm("确认删除该账号？")) return;
     act(id, "delete");
   } else {
     act(id, action);
   }
+});
+document.getElementById("testClose").addEventListener("click", closeTestModal);
+document.getElementById("testModal").addEventListener("click", function (ev) {
+  if (ev.target === document.getElementById("testModal")) closeTestModal();
+});
+document.getElementById("testModels").addEventListener("click", function (ev) {
+  const btn = ev.target.closest("button[data-model]");
+  if (btn) runTestModel(btn);
 });
 
 // 主题跟随宿主 iframe / 系统偏好

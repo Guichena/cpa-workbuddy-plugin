@@ -64,7 +64,7 @@ const (
 
 var (
 	// version 当前插件版本号。
-	version      = "0.1.1"
+	version      = "0.1.2"
 	hostAPI      *C.cliproxy_host_api
 	hostAPIMu    sync.RWMutex
 	activeConfig atomic.Value
@@ -284,6 +284,18 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 
 	case pluginabi.MethodAuthIdentifier:
 		return okEnvelope(identifierResponse{Identifier: providerName})
+
+	case pluginabi.MethodAuthParse:
+		return handleParseAuth(request)
+
+	case pluginabi.MethodAuthLoginStart:
+		return handleStartLogin(request)
+
+	case pluginabi.MethodAuthLoginPoll:
+		return handlePollLogin(request)
+
+	case pluginabi.MethodAuthRefresh:
+		return handleRefreshAuth(request)
 
 	case pluginabi.MethodModelRegister, pluginabi.MethodModelStatic:
 		return modelStatic(request)

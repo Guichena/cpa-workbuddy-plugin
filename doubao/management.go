@@ -73,9 +73,12 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/delete", Description: "删除一个豆包账号。"},
 			{Method: http.MethodPost, Path: base + "/enable", Description: "启用一个豆包账号。"},
 			{Method: http.MethodPost, Path: base + "/disable", Description: "禁用一个豆包账号。"},
+			{Method: http.MethodGet, Path: base + "/models", Description: "列出账号可测试的模型（query: auth_index）。"},
+			{Method: http.MethodPost, Path: base + "/test-active", Description: "对单个账号发起一次真实推理测试（body: {auth_index, model?}）。"},
 		},
 		Resources: []resourceRoute{
 			{Path: "/panel", Menu: "Doubao", Description: "豆包 Provider 管理面板：登录态导入、账号管理、状态诊断。"},
+			{Path: "/login", Description: "宿主「添加账号」弹窗打开的登录引导页（浏览器 Cookie 导入桥接）。"},
 		},
 	}
 }
@@ -129,11 +132,22 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	subPath, _ := normalizeMgmtSubPath(req.Path)
+	subPath, urlQuery := normalizeMgmtSubPath(req.Path)
 	method := strings.ToUpper(req.Method)
 
 	if method == http.MethodGet && (subPath == "/" || subPath == "/panel") {
 		return handlePanelPage(), nil
+	}
+
+	if method == http.MethodGet && subPath == "/login" {
+		state := ""
+		if vals := req.Query["state"]; len(vals) > 0 {
+			state = strings.TrimSpace(vals[0])
+		}
+		if state == "" && urlQuery != nil {
+			state = strings.TrimSpace(urlQuery.Get("state"))
+		}
+		return okEnvelope(handleLoginBridge(state, req.Path))
 	}
 
 	switch {
@@ -151,6 +165,12 @@ func handleManagement(raw []byte) ([]byte, error) {
 
 	case method == http.MethodPost && subPath == "/disable":
 		return handleSetAccountStatus(req.Body, true)
+
+	case method == http.MethodGet && subPath == "/models":
+		return makeJSONResponse(handleModelsQuery(req))
+
+	case method == http.MethodPost && subPath == "/test-active":
+		return makeJSONResponse(handleTestActive(req))
 
 	default:
 		return makeHTTPResponse(http.StatusNotFound, []byte(`{"error":"not_found"}`))
@@ -170,6 +190,21 @@ func makeHTTPResponse(status int, body []byte) ([]byte, error) {
 		Body: body,
 	}
 	return okEnvelope(resp)
+}
+
+// makeJSONResponse 把 map 结果编码成 200 管理响应。
+//
+// 测试类接口统一用「200 + error 字段」表达失败：面板的 api() 只在 401/403 上
+// 走密钥重填分支，业务失败必须靠响应体区分，否则会被误判成密钥失效。
+// [参数] payload: 结果对象。
+// [返回] 管理响应信封与错误。
+// 最近修改时间：2026-10-17；改动原因：新增，map 结果统一编码。
+func makeJSONResponse(payload map[string]any) ([]byte, error) {
+	body, errMarshal := json.Marshal(payload)
+	if errMarshal != nil {
+		return makeHTTPResponse(http.StatusInternalServerError, []byte(`{"error":"结果编码失败"}`))
+	}
+	return makeHTTPResponse(http.StatusOK, body)
 }
 
 // accountSummary 是面板账号列表项。
