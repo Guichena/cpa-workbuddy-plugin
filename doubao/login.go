@@ -32,10 +32,14 @@ const loginStateTTL = 15 * time.Minute
 
 // loginSession 是一次桥接会话。
 type loginSession struct {
-	// startedAt 是会话创建时间，用于判定账号是否在本次会话中被更新。
+	// startedAt 是会话创建时间，用于判定会话是否过期。
 	startedAt time.Time
-	// knownAuthIDs 是会话创建时的账号集合，用于识别新增账号。
-	knownAuthIDs map[string]struct{}
+	// importedAuthID 是桥接页显式导入成功后登记的账号标识。
+	//
+	// 这是唯一的成功判据：不能靠「账号集合变化」或「UpdatedAt 变新」推断——
+	// 插件在正常请求后会把滚动 Cookie 写回账号文件，那也会刷新 UpdatedAt，
+	// 会让「用户还没粘贴」的会话被误判成登录完成。
+	importedAuthID string
 }
 
 var (
@@ -68,14 +72,10 @@ func handleStartLogin(raw []byte) ([]byte, error) {
 	}
 
 	state := randomUUID()
-	baseline, errList := currentAuthIDSet()
-	if errList != nil {
-		return nil, fmt.Errorf("读取账号失败：%w", errList)
-	}
 
 	loginSessionsMu.Lock()
 	pruneExpiredLoginSessionsLocked()
-	loginSessions[state] = &loginSession{startedAt: time.Now(), knownAuthIDs: baseline}
+	loginSessions[state] = &loginSession{startedAt: time.Now()}
 	loginSessionsMu.Unlock()
 
 	bridgeURL := loginBridgeURL(state)
@@ -94,8 +94,9 @@ func handleStartLogin(raw []byte) ([]byte, error) {
 
 // handlePollLogin 响应宿主 auth.login.poll。
 //
-// 成功判据是「账号集合出现新成员」或「已有账号在本会话开始后被更新」。
-// 不用宿主文件时间戳：插件自己刷新账号也会重置 CreatedAt，那条路会假成功。
+// 成功判据是桥接页显式登记了导入结果（见 markLoginImported）。不能用账号集合
+// 变化或 UpdatedAt 推断：插件在正常请求后会把滚动 Cookie 写回账号文件，那同样
+// 会刷新 UpdatedAt，会让「用户还没粘贴」的会话被误判成登录完成。
 // [参数] raw: 宿主登录轮询请求载荷。
 // [返回] 轮询结果信封与错误。
 // 最近修改时间：2026-10-17；改动原因：新增，桥接页结果回传。
@@ -117,11 +118,9 @@ func handlePollLogin(raw []byte) ([]byte, error) {
 		delete(loginSessions, state)
 		ok = false
 	}
-	var baseline map[string]struct{}
-	var startedAt time.Time
+	var importedAuthID string
 	if ok {
-		baseline = session.knownAuthIDs
-		startedAt = session.startedAt
+		importedAuthID = session.importedAuthID
 	}
 	loginSessionsMu.Unlock()
 
@@ -131,86 +130,69 @@ func handlePollLogin(raw []byte) ([]byte, error) {
 			Message: "登录会话不存在或已过期，请回到管理页重新发起",
 		})
 	}
+	if importedAuthID == "" {
+		return okEnvelope(pluginapi.AuthLoginPollResponse{
+			Status:  pluginapi.AuthLoginStatusPending,
+			Message: "等待在引导页中粘贴 Cookie",
+		})
+	}
 
 	accounts, errList := listAllAuthFiles()
 	if errList != nil {
 		return nil, fmt.Errorf("读取账号失败：%w", errList)
 	}
-	if sa := findFreshAccount(accounts, baseline, startedAt); sa != nil {
-		// 结果只消费一次：成功后立即删除会话，避免同一 state 被重复领取。
-		loginSessionsMu.Lock()
-		delete(loginSessions, state)
-		loginSessionsMu.Unlock()
+	sa := findAccountByID(accounts, importedAuthID)
+	if sa == nil {
+		// 导入成功后账号文件被删除：报错而不是继续 pending，避免宿主空等到超时。
 		return okEnvelope(pluginapi.AuthLoginPollResponse{
-			Status:  pluginapi.AuthLoginStatusSuccess,
-			Message: "豆包登录态导入成功",
-			Auth:    authDataForLogin(sa),
+			Status:  pluginapi.AuthLoginStatusError,
+			Message: "账号已被删除，请重新导入",
 		})
 	}
 
+	// 结果只消费一次：成功后立即删除会话，避免同一 state 被重复领取。
+	loginSessionsMu.Lock()
+	delete(loginSessions, state)
+	loginSessionsMu.Unlock()
 	return okEnvelope(pluginapi.AuthLoginPollResponse{
-		Status:  pluginapi.AuthLoginStatusPending,
-		Message: "等待在引导页中粘贴 Cookie",
+		Status:  pluginapi.AuthLoginStatusSuccess,
+		Message: "豆包登录态导入成功",
+		Auth:    authDataForLogin(sa),
 	})
 }
 
-// findFreshAccount 在账号列表里找出本次会话产生的账号。
-//
-// 判定顺序：先看是否是新出现的 authID（首次导入），再看已有账号的 UpdatedAt
-// 是否晚于会话开始时间（重复导入同一账号）。UpdatedAt 由插件在落盘时写入，
-// 不会被宿主文件监控改写，因此不会出现「未授权即成功」的假阳性。
-// [参数] accounts: 当前账号列表；baseline: 会话开始时的 authID 集合；
-// startedAt: 会话开始时间。
+// markLoginImported 记录桥接页已成功导入的账号，供宿主轮询领取。
+// [参数] state: 登录会话标识；authID: 导入成功的账号标识。
+// [返回] 会话不存在或已过期时返回 false。
+// 最近修改时间：2026-10-17；改动原因：新增，显式成功信号（替代账号集合推断）。
+func markLoginImported(state, authID string) bool {
+	state = strings.TrimSpace(state)
+	authID = strings.TrimSpace(authID)
+	if state == "" || authID == "" {
+		return false
+	}
+	loginSessionsMu.Lock()
+	defer loginSessionsMu.Unlock()
+	session, ok := loginSessions[state]
+	if !ok || time.Since(session.startedAt) > loginStateTTL {
+		delete(loginSessions, state)
+		return false
+	}
+	session.importedAuthID = authID
+	return true
+}
+
+// findAccountByID 按账号标识查找账号。
+// [参数] accounts: 账号列表；authID: 账号标识。
 // [返回] 命中的账号；没有时返回 nil。
-// 最近修改时间：2026-10-17；改动原因：新增，登录结果判定。
-func findFreshAccount(accounts []*StoredAuth, baseline map[string]struct{}, startedAt time.Time) *StoredAuth {
-	var fallback *StoredAuth
+// 最近修改时间：2026-10-17；改动原因：新增，轮询结果定位。
+func findAccountByID(accounts []*StoredAuth, authID string) *StoredAuth {
 	for _, sa := range accounts {
-		if sa == nil {
-			continue
-		}
-		if _, known := baseline[sa.AuthID]; !known {
+		if sa != nil && sa.AuthID == authID {
 			return sa
 		}
-		updated, errParse := time.Parse(time.RFC3339, sa.UpdatedAt)
-		if errParse != nil {
-			continue
-		}
-		if updated.After(startedAt) && (fallback == nil || updated.After(mustParseTime(fallback.UpdatedAt))) {
-			fallback = sa
-		}
 	}
-	return fallback
-}
-
-// mustParseTime 解析 RFC3339 时间，失败时返回零值。
-// [参数] value: 时间字符串。
-// [返回] 解析结果。
-// 最近修改时间：2026-10-17；改动原因：新增，比较用的容错解析。
-func mustParseTime(value string) time.Time {
-	t, errParse := time.Parse(time.RFC3339, value)
-	if errParse != nil {
-		return time.Time{}
-	}
-	return t
-}
-
-// currentAuthIDSet 返回当前全部账号标识的集合。
-// [参数] 无。
-// [返回] 集合与错误。
-// 最近修改时间：2026-10-17；改动原因：新增，登录会话基线快照。
-func currentAuthIDSet() (map[string]struct{}, error) {
-	accounts, errList := listAllAuthFiles()
-	if errList != nil {
-		return nil, errList
-	}
-	set := make(map[string]struct{}, len(accounts))
-	for _, sa := range accounts {
-		if sa != nil && sa.AuthID != "" {
-			set[sa.AuthID] = struct{}{}
-		}
-	}
-	return set, nil
+	return nil
 }
 
 // pruneExpiredLoginSessionsLocked 清理过期会话，避免 map 无限增长。
@@ -433,7 +415,7 @@ func writeBridgeScript(b *strings.Builder) {
 	b.WriteString("  if(!cookie){show(\"请先粘贴 Cookie\",\"err\");return}")
 	b.WriteString("  if(!key){show(\"需要管理密钥：请在管理面板中打开本页，或在上方输入\",\"err\");return}")
 	b.WriteString("  remember(key);btn.disabled=true;show(\"正在校验登录态…\",\"\");")
-	b.WriteString("  fetch(API+\"/import\",{method:\"POST\",cache:\"no-store\",headers:{\"Content-Type\":\"application/json\",\"Authorization\":\"Bearer \"+key},body:JSON.stringify({cookie:cookie,label:\"\"})})")
+	b.WriteString("  fetch(API+\"/import\",{method:\"POST\",cache:\"no-store\",headers:{\"Content-Type\":\"application/json\",\"Authorization\":\"Bearer \"+key},body:JSON.stringify({cookie:cookie,label:\"\",login_state:STATE})})")
 	b.WriteString("    .then(function(res){return res.json().then(function(d){return {status:res.status,data:d}}).catch(function(){return {status:res.status,data:{error:\"响应解析失败\"}}})})")
 	b.WriteString("    .then(function(r){")
 	b.WriteString("      if(r.status===401||r.status===403){try{sessionStorage.removeItem(SS)}catch(e){}show(\"管理密钥无效或已失效，请重新填写\",\"err\");return}")

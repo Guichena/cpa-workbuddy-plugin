@@ -156,7 +156,6 @@ func handleManagement(raw []byte) ([]byte, error) {
 
 	case method == http.MethodPost && subPath == "/import":
 		return handleImportCredentials(req.Body)
-
 	case method == http.MethodPost && subPath == "/delete":
 		return handleDeleteAccount(req.Body)
 
@@ -283,6 +282,9 @@ func handleImportCredentials(body []byte) ([]byte, error) {
 	var req struct {
 		Cookie string `json:"cookie"`
 		Label  string `json:"label"`
+		// LoginState 非空时表示这次导入来自宿主「添加账号」桥接页，
+		// 导入成功后要把结果登记到该会话，供宿主轮询领取。
+		LoginState string `json:"login_state"`
 	}
 	if errUnmarshal := json.Unmarshal(body, &req); errUnmarshal != nil {
 		return makeHTTPResponse(http.StatusBadRequest, []byte(fmt.Sprintf(`{"error":%q}`, "请求体格式错误，应为 JSON")))
@@ -297,6 +299,18 @@ func handleImportCredentials(body []byte) ([]byte, error) {
 		// 校验失败是预期路径（垃圾 Cookie / 缺字段 / 会话过期），返回 400 并给出可操作提示。
 		msg, _ := json.Marshal(map[string]any{"error": errSave.Error()})
 		return makeHTTPResponse(http.StatusBadRequest, msg)
+	}
+	if state := strings.TrimSpace(req.LoginState); state != "" {
+		if !markLoginImported(state, sa.AuthID) {
+			// 账号已落盘但会话已失效：不把用户辛苦导入的账号丢掉，只提示宿主重来。
+			respBody, _ := json.Marshal(map[string]any{
+				"ok":      true,
+				"auth_id": sa.AuthID,
+				"label":   sa.Label,
+				"message": "登录态导入成功，但登录会话已过期；账号已保存，可直接在面板使用",
+			})
+			return makeHTTPResponse(http.StatusOK, respBody)
+		}
 	}
 
 	respBody, _ := json.Marshal(map[string]any{

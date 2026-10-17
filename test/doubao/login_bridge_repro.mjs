@@ -29,14 +29,25 @@ const loginGoPath = path.join(repoRoot, plugin, "login.go");
 function renderBridgePage(state) {
   const src = fs.readFileSync(loginGoPath, "utf8");
   const parts = [];
-  const re = /b\.WriteString\(("(?:[^"\\]|\\.)*")\)/g;
+  // 每行 b.WriteString(<expr>) 里可能含 Go 侧字符串拼接（如 data-state 属性），
+  // 因此先按整行取表达式，再抽出其中的字面量并把变量占位符替换成实际值。
+  const re = /b\.WriteString\((.+)\)\s*$/gm;
   let m;
   while ((m = re.exec(src)) !== null) {
-    parts.push(JSON.parse(m[1]));
+    const expr = m[1];
+    if (!expr.includes('"')) continue;
+    let text = "";
+    const lit = /("(?:[^"\\]|\\.)*")/g;
+    let l;
+    while ((l = lit.exec(expr)) !== null) {
+      text += JSON.parse(l[1]);
+    }
+    text = text.replace(/htmlEscape\(providerName\)/g, "").replace(/htmlEscape\(state\)/g, "");
+    parts.push(text);
   }
   let html = parts.join("");
-  html = html.replace('"+ providerName +"', plugin + "-provider");
-  html = html.replace('"+ jsString(state) +"', JSON.stringify(state));
+  html = html.replace('data-provider=""', `data-provider="${plugin}-provider"`);
+  html = html.replace('data-state=""', `data-state="${state}"`);
   return html;
 }
 
@@ -168,6 +179,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   check("Authorization 头", req.opts.headers.Authorization, "Bearer sk-from-panel");
   check("Content-Type 头", req.opts.headers["Content-Type"], "application/json");
   check("Cookie 正文", req.body.cookie, "sessionid=abc; flow_cur_user_sec_id=xyz");
+  check("携带登录会话 state", req.body.login_state, "state-1");
   checkTrue("成功提示", first.document.getElementById("result").className === "ok");
   check("按钮文案改为已导入", first.document.getElementById("submit").textContent, "已导入");
 

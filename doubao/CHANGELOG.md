@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.3
+
+- 修复登录桥接页的假成功：0.1.2 用「账号集合变化 / UpdatedAt 变新」判定登录完成，
+  但插件每次正常请求后会把滚动 Cookie 写回账号文件，那同样刷新 UpdatedAt。
+  生产实测复现：用户尚未粘贴 Cookie，只要期间有任意请求经过，宿主轮询就会
+  返回 `status: ok` 并显示认证成功。
+  现改为**只认桥接页的显式导入信号**：`/import` 携带 `login_state`，导入成功后
+  插件把账号标识登记到该会话，轮询只在该登记存在时返回 success。
+  账号已落盘但会话过期时仍保留账号并提示重来，不丢用户已导入的凭据。
+- 新增回归：`TestPollLoginIgnoresRefreshedAccounts`（账号被刷新仍须 pending）、
+  桥接页断言「提交携带 login_state」。
+
 ## 0.1.2
 
 - 账号卡片补齐「测试模型」（对齐 workbuddy 面板）：

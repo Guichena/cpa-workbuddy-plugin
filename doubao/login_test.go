@@ -111,7 +111,7 @@ func TestPollLoginPendingBeforeImport(t *testing.T) {
 	}
 }
 
-// TestPollLoginDetectsNewAccount 校验新增账号后轮询返回 success 且带凭据。
+// TestPollLoginDetectsNewAccount 校验桥接页登记导入后轮询返回 success 且带凭据。
 // [参数] t: 测试上下文。
 // [返回] 无。
 // 最近修改时间：2026-10-17；改动原因：新增，桥接页结果回传验证。
@@ -124,6 +124,9 @@ func TestPollLoginDetectsNewAccount(t *testing.T) {
 	decodeEnvelopeResult(t, startRaw, &start)
 
 	writeLoginFixture(t, dir, "doubao-login0001", "登录测试号", time.Now().Format(time.RFC3339))
+	if !markLoginImported(start.State, "doubao-login0001") {
+		t.Fatal("导入成功后应能登记到登录会话")
+	}
 
 	pollBody, _ := json.Marshal(pluginapi.AuthLoginPollRequest{State: start.State})
 	pollRaw, _ := handlePollLogin(pollBody)
@@ -152,13 +155,15 @@ func TestPollLoginDetectsNewAccount(t *testing.T) {
 	}
 }
 
-// TestPollLoginIgnoresStaleAccounts 校验会话开始前就存在的账号不算成功。
+// TestPollLoginIgnoresRefreshedAccounts 校验账号被刷新不算登录成功。
 //
-// 防的是「插件后台刷新账号 → 宿主误判登录完成」的假成功。
+// 生产实测发现的假成功：插件每次正常请求后会把滚动 Cookie 写回账号文件，
+// 那会刷新 UpdatedAt。若轮询靠「账号变新」判断，用户还没粘贴 Cookie 时
+// 宿主就会显示认证成功。成功信号只能来自桥接页的显式登记。
 // [参数] t: 测试上下文。
 // [返回] 无。
 // 最近修改时间：2026-10-17；改动原因：新增，历史账号不误判。
-func TestPollLoginIgnoresStaleAccounts(t *testing.T) {
+func TestPollLoginIgnoresRefreshedAccounts(t *testing.T) {
 	dir := isolateAccounts(t)
 	resetLoginSessions()
 
@@ -169,12 +174,15 @@ func TestPollLoginIgnoresStaleAccounts(t *testing.T) {
 	var start pluginapi.AuthLoginStartResponse
 	decodeEnvelopeResult(t, startRaw, &start)
 
+	// 模拟一次正常请求后的 Cookie 回写：账号内容变了，但没人导入。
+	writeLoginFixture(t, dir, "doubao-stale001", "历史账号", time.Now().Format(time.RFC3339))
+
 	pollBody, _ := json.Marshal(pluginapi.AuthLoginPollRequest{State: start.State})
 	pollRaw, _ := handlePollLogin(pollBody)
 	var poll pluginapi.AuthLoginPollResponse
 	decodeEnvelopeResult(t, pollRaw, &poll)
 	if poll.Status != pluginapi.AuthLoginStatusPending {
-		t.Fatalf("历史账号不应判为本次登录成功，实际 %q", poll.Status)
+		t.Fatalf("账号被刷新不应判为登录成功，实际 %q", poll.Status)
 	}
 }
 
