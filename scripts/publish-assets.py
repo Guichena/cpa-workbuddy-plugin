@@ -6,7 +6,7 @@ Usage:
 
 Steps:
   1. scan release-assets/<id>-<version>/ for <id>_<version>_<goos>_<goarch>.zip + checksums.txt
-  2. verify all 7 platforms present
+  2. verify all 6 platforms present
   3. update registry.json: version + install.artifacts[*].{url,sha256,size}
      (URLs keep the raw.githubusercontent.com/main/release-assets/... layout)
   4. validate with scripts/validate-registry.py
@@ -23,17 +23,11 @@ import sys
 PLATFORMS = [
     "darwin_amd64",
     "darwin_arm64",
-    "freebsd_amd64",
     "linux_amd64",
     "linux_arm64",
     "windows_amd64",
     "windows_arm64",
 ]
-
-# FreeBSD 14.3 已从官方源下架（2026-10-17 实测 download/old-releases 均 404），
-# CI 的 go-cross 动作固定请求该版本，导致所有插件的 freebsd 构建集体失败。
-# 在镜像版本修好前，freebsd 包按可选处理：存在就登记，缺失不阻断发布。
-OPTIONAL_PLATFORMS = {"freebsd_amd64"}
 
 RAW_BASE = "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets"
 
@@ -69,12 +63,9 @@ def main() -> int:
     def present_platforms() -> list[str]:
         return [t for t in PLATFORMS if zip_path(t).exists()]
 
-    missing = [t for t in PLATFORMS if not zip_path(t).exists() and t not in OPTIONAL_PLATFORMS]
+    missing = [t for t in PLATFORMS if not zip_path(t).exists()]
     if missing:
         raise SystemExit(f"missing zips: {missing}")
-    skipped = [t for t in PLATFORMS if not zip_path(t).exists()]
-    if skipped:
-        print(f"NOTE optional platforms absent (not registered): {skipped}")
 
     # checksums.txt sanity (regenerate if absent)
     cksum = out / "checksums.txt"

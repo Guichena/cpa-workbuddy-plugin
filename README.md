@@ -188,7 +188,7 @@ cpa-workbuddy-plugin/
 ├── copilot/                    # 插件 8：GitHub Copilot Provider（设备码登录 / 内部令牌保活 / 指纹模拟）
 ├── token-usage-tracker/        # 插件 9：统一 Token 用量看板（共享 NDJSON / 明细表 / 维度分析）
 ├── registry.json               # 插件商店自定义源元数据（schema v2，direct install，包含 sha256 与 size）
-├── release-assets/             # 各版本 7 平台架构 zip 与 checksums 产物（发布后仅保留各插件最新版）
+├── release-assets/             # 各版本 6 平台架构 zip 与 checksums 产物（发布后仅保留各插件最新版）
 ├── assets/                     # 共享资源（官方高清图标 icons/ 等）
 ├── scripts/                    # 运维与发布脚本
 │   ├── cgo-shim-build.py       # 本地跨平台 cgo 验证 shim（Windows 无 C 工具链专用验证工具）
@@ -211,7 +211,7 @@ cpa-workbuddy-plugin/
 
 ## 多平台 Release 规范
 
-每个插件发布时均通过 GitHub Actions 构建包含 7 大目标平台的动态链接库发布包，并附带权威的 `checksums.txt`：
+每个插件发布时均通过 GitHub Actions 构建包含 6 大目标平台的动态链接库发布包，并附带权威的 `checksums.txt`：
 
 ```text
 <id>_<version>_linux_amd64.zip      # 包含 <id>.so
@@ -220,8 +220,7 @@ cpa-workbuddy-plugin/
 <id>_<version>_darwin_arm64.zip     # 包含 <id>.dylib
 <id>_<version>_windows_amd64.zip    # 包含 <id>.dll
 <id>_<version>_windows_arm64.zip    # 包含 <id>.dll
-<id>_<version>_freebsd_amd64.zip    # 包含 <id>.so
-checksums.txt                       # 7 平台产物的 SHA-256 校验清单
+checksums.txt                       # 6 平台产物的 SHA-256 校验清单
 ```
 
 **CI/CD 构建与发布触发模式：**
@@ -229,7 +228,7 @@ checksums.txt                       # 7 平台产物的 SHA-256 校验清单
 | 触发条件 | 执行动作 |
 |---|---|
 | `push` / `pull_request` | 触发全量矩阵编译、单元测试（`go test`）、静态检查（`go vet`）与 `validate-registry.py` 校验（仅验证不发 Release）。 |
-| `workflow_dispatch` | 手动在 Actions 界面输入 `plugin=<id>` 与 `version=<ver>`，编译 7 平台构建包并自动创建该插件的独立 GitHub Release。 |
+| `workflow_dispatch` | 手动在 Actions 界面输入 `plugin=<id>` 与 `version=<ver>`，编译 6 平台构建包并自动创建该插件的独立 GitHub Release。 |
 
 ---
 

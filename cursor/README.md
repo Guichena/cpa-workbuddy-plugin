@@ -25,7 +25,7 @@
  `cursor` 安装。商店会从最新的 `v<version>` GitHub Release 下载当前平台 ZIP，
  并用同一 Release 中的 `checksums.txt` 校验文件。
 
-本仓库通过自定义插件源 `registry.json` 提供 7 平台构建（darwin/linux/freebsd/windows × amd64/arm64），插件 id 为 `cursor-provider`：
+本仓库通过自定义插件源 `registry.json` 提供 6 平台构建（darwin/linux/windows × amd64/arm64），插件 id 为 `cursor-provider`：
 
 ```text
 cursor-provider_0.1.0_linux_amd64.zip
@@ -122,7 +122,7 @@ sudo ./uninstall.sh --plugins-dir /opt/cpa-manager-plus/cliproxyapi/plugins
 - Cursor 没有公开、稳定的 OAuth 订阅剩余额度接口；管理页不会伪造百分比或余额。
 - 成功/失败请求来自 CLIProxyAPI 的 `request.complete` 终态回调；同一用户请求即使发生宿主重试，最多记录一次最终结果。近期请求 ID 通过两个独立的 15 分钟 Bloom 时间窗去重，固定占用 16 MiB；在单窗不超过 100 万个完成事件（约 1,111 次/秒）的设计负载内，双窗查询的理论误判概率低于 `6e-8`。误判会跳过一条本地终态样本，使计数少计并保留此前的最近结果。宿主自身的成功/失败值按“调度尝试”单独展示。
 - token usage 为每次 Cursor 插件执行的本地估算值（包括宿主重试触发的再次执行），不代表 Cursor 账单或订阅额度，进程重启后重新计数。
-- 当前发布包提供 7 平台构建（darwin/linux/freebsd/windows × amd64/arm64），由 CI 在对应平台原生构建后随 Release 发布。
+- 当前发布包提供 6 平台构建（darwin/linux/windows × amd64/arm64），由 CI 在对应平台原生构建后随 Release 发布。
 
 CLIProxyAPI 动态库插件是进程内受信代码。请只安装来自可信来源且校验过 `SHA256SUMS` 的构建。使用时应遵守 Cursor 的服务条款和可接受使用政策，不应共享账号、转售访问或规避配额与安全控制。
 

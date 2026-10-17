@@ -306,9 +306,9 @@
 
 - 仓库：`luode0320/cpa-workbuddy-plugin`（原 cpa-plugin，2026-08-22 改名）；物理目录 F:\cpa-plugin。
 - 三插件独立版本、独立发布：`workbuddy-provider`（主，腾讯 CodeBuddy CN+Global）、`qoderwork-provider`（QoderWork CN 逆向）、`workbuddy-token-usage`（用量 dashboard）。
-- registry.json：schema v2；`plugins` 是 **list**，条目按 `id` 匹配（`name` 只是展示名）；zip 列表在 `install.artifacts`（7 平台：darwin/linux/windows/freebsd × amd64/arm64）。
+- registry.json：schema v2；`plugins` 是 **list**，条目按 `id` 匹配（`name` 只是展示名）；zip 列表在 `install.artifacts`（6 平台：linux amd64/arm64、darwin amd64/arm64、windows amd64/arm64；freebsd-amd64 已于 2026-10-18 下线）。
 - tag pattern：`workbuddy-provider-v*` / `qoderwork-provider-v*` / `workbuddy-token-usage-v*`；workflow_dispatch 必须传 `plugin=<id> version=<ver>`，否则 release job 跳过。
-- 发布链路（不可跳步）：bump VERSION+main.go `var version` → commit → push main → dispatch CI → 下载 8 assets（7 zip + checksums）→ **git add assets + push**（0.9.7 教训：漏 add 会 404）→ `publish-assets.py` → commit registry + push → 远端验证 raw URL 200。
+- 发布链路（不可跳步）：bump VERSION+main.go `var version` → commit → push main → dispatch CI → 下载 7 assets（6 zip + checksums）→ **git add assets + push**（0.9.7 教训：漏 add 会 404）→ `publish-assets.py` → commit registry + push → 远端验证 raw URL 200。
 - push 必须带：`GIT_TERMINAL_PROMPT=0 GIT_ASKPASS='C:\Users\luode\.github\git-askpass.sh' git -c credential.helper= push https://...`；askpass 用完即删；Windows 路径必须用 `C:\...` 形式（Git 不认 `/c/`）。
 - 并行工作区安全发布：`git add` 必须显式列文件（禁 `git add <dir>`），staged 后 `git diff --cached --name-only | grep` 反向确认无外来文件混入。
 - 资产下载：`scripts/download-release-assets.py`（urllib 直连 releases/download + sha256 自校验）；registry 校验 `scripts/validate-registry.py`。
