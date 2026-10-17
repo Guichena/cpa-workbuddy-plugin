@@ -48,11 +48,13 @@ func textModelIDs() []string {
 
 // handleModelsQuery 返回指定账号可测试的模型列表。
 //
-// 豆包各账号共享同一套能力目录（差别在账号额度而非模型），因此这里不需要
-// 访问上游：直接返回静态目录中的文本模型即可。
-// [参数] req: 管理请求，query 参数 auth_index 指定账号。
-// [返回] {models:[...]}；缺少 auth_index 时返回 {error}。
-// 最近修改时间：2026-10-17；改动原因：新增，面板测试弹窗模型列表。
+// 优先返回上游真实模型（/alice/basic/launch 的 model_list），这样用户在测试
+// 弹窗里看到的就是账号实际拥有的模型，而不是插件自造的几个能力别名。上游不可达
+// 时回落到能力别名，并在 error 字段说明原因——面板据此提示「当前为离线目录」，
+// 避免把回落结果误当成账号真实模型。
+// [参数] req: 管理请求，query 参数 auth_index 指定账号；force=1 强制刷新。
+// [返回] {models:[...], source, notice}；缺少 auth_index 时返回 {error}。
+// 最近修改时间：2026-10-17；改动原因：改为优先动态发现上游模型。
 func handleModelsQuery(req pluginapi.ManagementRequest) map[string]any {
 	authIndex := ""
 	if vals := req.Query["auth_index"]; len(vals) > 0 {
@@ -61,7 +63,31 @@ func handleModelsQuery(req pluginapi.ManagementRequest) map[string]any {
 	if authIndex == "" {
 		return map[string]any{"error": "auth_index 不能为空"}
 	}
-	return map[string]any{"models": textModelIDs()}
+	force := false
+	if vals := req.Query["force"]; len(vals) > 0 {
+		force = strings.TrimSpace(vals[0]) == "1"
+	}
+
+	sa, errFind := findAccountForTest(authIndex)
+	if errFind != nil {
+		return map[string]any{"error": errFind.Error()}
+	}
+
+	models, errDiscover := cachedUpstreamModels(sa, force)
+	if errDiscover != nil {
+		// 回落到能力别名，但必须如实说明：否则用户会以为账号只有这几个模型。
+		return map[string]any{
+			"models": textModelIDs(),
+			"source": "fallback",
+			"notice": fmt.Sprintf("未能读取上游模型清单（%v），当前显示插件内置能力别名", errDiscover),
+		}
+	}
+
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
+		ids = append(ids, m.ID)
+	}
+	return map[string]any{"models": ids, "source": "upstream"}
 }
 
 // handleTestActive 处理面板「测试」按钮发起的单账号活跃测试。

@@ -139,8 +139,8 @@ func TestPollLoginDetectsNewAccount(t *testing.T) {
 	if poll.Status != pluginapi.AuthLoginStatusSuccess {
 		t.Fatalf("导入后应为 success，实际 %q（%s）", poll.Status, poll.Message)
 	}
-	if poll.Auth.ID != "doubao-login0001" {
-		t.Fatalf("应回传命中的账号，实际 %q", poll.Auth.ID)
+	if poll.Auth.ID != "doubao-login0001.json" {
+		t.Fatalf("应回传宿主文件形态的账号标识，实际 %q", poll.Auth.ID)
 	}
 	if len(poll.Auth.StorageJSON) == 0 {
 		t.Fatal("必须回传 StorageJSON，否则宿主无法落盘凭据")
@@ -280,8 +280,8 @@ func TestParseAuthClaimsDoubaoFiles(t *testing.T) {
 	if !resp.Handled {
 		t.Fatal("豆包账号文件必须被认领")
 	}
-	if resp.Auth.ID != "doubao-parse0001" {
-		t.Fatalf("应返回账号标识，实际 %q", resp.Auth.ID)
+	if resp.Auth.ID != "doubao-parse0001.json" {
+		t.Fatalf("应返回宿主文件形态的账号标识，实际 %q", resp.Auth.ID)
 	}
 
 	// 非豆包文件必须交回宿主，不能抢占别人的账号。
@@ -329,8 +329,8 @@ func TestRefreshAuthKeepsCredentials(t *testing.T) {
 	}
 	var resp pluginapi.AuthRefreshResponse
 	decodeEnvelopeResult(t, raw, &resp)
-	if resp.Auth.ID != sa.AuthID {
-		t.Fatalf("应原样返回账号，实际 %q", resp.Auth.ID)
+	if resp.Auth.ID != authFileNameOf(sa.AuthID) {
+		t.Fatalf("应原样返回账号（宿主文件形态），实际 %q", resp.Auth.ID)
 	}
 	if !resp.NextRefreshAfter.After(time.Now()) {
 		t.Fatalf("下次刷新时间应在未来，实际 %v", resp.NextRefreshAfter)
@@ -432,8 +432,8 @@ func TestLoginBridgeImportWithoutManagementKey(t *testing.T) {
 	if poll.Status != pluginapi.AuthLoginStatusSuccess {
 		t.Fatalf("桥接页导入后轮询应为 success，实际 %q（%s）", poll.Status, poll.Message)
 	}
-	if poll.Auth.ID != authID {
-		t.Fatalf("轮询回传账号应为 %q，实际 %q", authID, poll.Auth.ID)
+	if poll.Auth.ID != authFileNameOf(authID) {
+		t.Fatalf("轮询回传账号应为 %q，实际 %q", authFileNameOf(authID), poll.Auth.ID)
 	}
 }
 
@@ -551,5 +551,61 @@ func writeLoginFixture(t *testing.T, dir, authID, label, updatedAt string) {
 	}
 	if errWrite := writeAuthFileDirect(dir+"/"+authID+".json", sa); errWrite != nil {
 		t.Fatalf("写账号夹具失败：%v", errWrite)
+	}
+}
+
+// TestAuthDataIDMatchesHostFileName 校验登录回传的注册 ID 与宿主文件名同形。
+//
+// 宿主两条注册路径的 ID 来源不同：host.auth.save 用相对路径（含 .json），
+// 登录结果直接用 AuthData.ID。ID 不一致时同一个物理文件会注册成两条记录，
+// 管理页和插件面板都会出现两个一模一样的账号（2026-10-17 生产实测）。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17；改动原因：新增，防重复注册回归。
+func TestAuthDataIDMatchesHostFileName(t *testing.T) {
+	sa := &StoredAuth{
+		Type:         providerName,
+		Provider:     providerName,
+		AuthID:       "doubao-idform0001",
+		CookieHeader: validCookieHeader,
+		Label:        "ID 形态测试",
+	}
+
+	auth := authDataForLogin(sa)
+	if auth.ID != auth.FileName {
+		t.Fatalf("注册 ID 必须与文件名一致，实际 ID=%q FileName=%q", auth.ID, auth.FileName)
+	}
+	if auth.ID != "doubao-idform0001.json" {
+		t.Fatalf("注册 ID 应为宿主文件形态，实际 %q", auth.ID)
+	}
+
+	// 已带后缀的标识不得叠成 .json.json。
+	again := authDataForLogin(&StoredAuth{AuthID: "doubao-idform0002.json", CookieHeader: validCookieHeader})
+	if again.ID != "doubao-idform0002.json" {
+		t.Fatalf("重复后缀应被归一，实际 %q", again.ID)
+	}
+}
+
+// TestListAllAuthFilesDedupesByAuthID 校验同一账号的多种 ID 形态只保留一条。
+//
+// 修复前的重复注册会在宿主侧留下「doubao-xxx」与「doubao-xxx.json」两条记录，
+// 它们指向同一物理文件。宿主来源在测试环境不可用，故直接覆盖去重内核。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17；改动原因：新增，列表去重回归。
+func TestListAllAuthFilesDedupesByAuthID(t *testing.T) {
+	first := &StoredAuth{AuthID: "doubao-dedupe0001", Label: "先出现的"}
+	duplicate := &StoredAuth{AuthID: "doubao-dedupe0001", Label: "重复的"}
+	other := &StoredAuth{AuthID: "doubao-dedupe0002", Label: "另一个号"}
+
+	out := dedupeAuthByID([]*StoredAuth{first, duplicate, nil, other})
+	if len(out) != 2 {
+		t.Fatalf("应保留 2 个不同账号，实际 %d", len(out))
+	}
+	if out[0].Label != "先出现的" {
+		t.Fatalf("应保留先出现的条目，实际 %q", out[0].Label)
+	}
+	if out[1].AuthID != "doubao-dedupe0002" {
+		t.Fatalf("不同账号不应被合并，实际 %q", out[1].AuthID)
 	}
 }

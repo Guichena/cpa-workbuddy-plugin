@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -42,7 +43,7 @@ var capabilityAliases = []modelAlias{
 	{
 		ID:          "pro",
 		DisplayName: "深度思考",
-		Description: "开启深度思考的对话模型，回复更慢但推理更充分。",
+		Description: "深度思考对话。注意：当前版本与 default 发出的上游请求相同——上游开关 need_deep_think / model_item_key 的正确取值尚未验证（账号风控期无法做参数消融），深度思考尚未真正生效。",
 	},
 	{
 		ID:          "image",
@@ -214,11 +215,12 @@ func modelStatic(request []byte) ([]byte, error) {
 
 // modelForAuth 响应 model.for_auth。
 //
-// 豆包各账号共享同一套能力目录（差别在账号额度而非模型），因此每个账号都返回
-// 全量目录；宿主会按 provider 合并去重。
+// 这是按账号的模型目录：优先返回该账号的上游真实模型（model_list 透传），
+// 再补上插件的能力别名（default / pro / image / video）。上游不可达时只返回
+// 能力别名——宿主模型目录必须始终可用，不能因为一次网络失败让用户没模型可选。
 // [参数] request: 宿主请求体。
 // [返回] 信封 JSON 与错误。
-// 最近修改时间：2026-10-17；改动原因：新增，按账号目录入口。
+// 最近修改时间：2026-10-17；改动原因：接入上游动态模型清单。
 func modelForAuth(request []byte) ([]byte, error) {
 	var req pluginapi.AuthModelRequest
 	if len(request) > 0 {
@@ -226,6 +228,78 @@ func modelForAuth(request []byte) ([]byte, error) {
 	}
 	return okEnvelope(pluginapi.ModelResponse{
 		Provider: providerName,
-		Models:   filterExcludedModels(catalogueModels(), req.Host),
+		Models:   filterExcludedModels(catalogueWithUpstream(req), req.Host),
 	})
+}
+
+// catalogueWithUpstream 组合能力别名与上游真实模型。
+//
+// 顺序固定为能力别名在前：它们是稳定语义（生图/生视频必须靠别名激活 skill），
+// 上游代号在后。同名时以能力别名为准，避免上游恰好返回 default/pro 时把
+// 语义别名挤掉。
+// [参数] req: 宿主按账号请求（含该账号的凭据快照）。
+// [返回] 合并后的模型列表。
+// 最近修改时间：2026-10-17；改动原因：新增，动态与静态目录合并。
+func catalogueWithUpstream(req pluginapi.AuthModelRequest) []pluginapi.ModelInfo {
+	aliases := catalogueModels()
+
+	sa, errAuth := authForModelRequest(&req)
+	if errAuth != nil {
+		return aliases
+	}
+	upstream, errDiscover := cachedUpstreamModels(sa, false)
+	if errDiscover != nil || len(upstream) == 0 {
+		return aliases
+	}
+
+	seen := make(map[string]struct{}, len(aliases)+len(upstream))
+	out := make([]pluginapi.ModelInfo, 0, len(aliases)+len(upstream))
+	for _, m := range aliases {
+		seen[strings.ToLower(m.ID)] = struct{}{}
+		out = append(out, m)
+	}
+	for _, m := range upstream {
+		if _, exists := seen[strings.ToLower(m.ID)]; exists {
+			continue
+		}
+		seen[strings.ToLower(m.ID)] = struct{}{}
+		out = append(out, m)
+	}
+	return out
+}
+
+// authForModelRequest 从宿主请求中解析出要查询模型的账号。
+//
+// 宿主在 model.for_auth 里下发该账号的凭据快照；没有快照时按 AuthID 回落。
+// 解析不出来不算错误路径——调用方会退回纯能力别名。
+// [参数] req: 宿主按账号请求。
+// [返回] 账号与错误。
+// 最近修改时间：2026-10-17；改动原因：新增，模型发现的账号解析。
+func authForModelRequest(req *pluginapi.AuthModelRequest) (*StoredAuth, error) {
+	if req == nil {
+		return nil, fmt.Errorf("请求为空")
+	}
+	if len(req.StorageJSON) > 0 {
+		var sa StoredAuth
+		if errUnmarshal := json.Unmarshal(req.StorageJSON, &sa); errUnmarshal == nil && sa.CookieHeader != "" {
+			if sa.AuthID == "" {
+				sa.AuthID = strings.TrimSuffix(req.AuthID, ".json")
+			}
+			return &sa, nil
+		}
+	}
+	authID := strings.TrimSuffix(strings.TrimSpace(req.AuthID), ".json")
+	if authID == "" {
+		return nil, fmt.Errorf("缺少账号标识")
+	}
+	accounts, errList := listAllAuthFiles()
+	if errList != nil {
+		return nil, errList
+	}
+	for _, account := range accounts {
+		if account.AuthID == authID {
+			return account, nil
+		}
+	}
+	return nil, fmt.Errorf("账号不存在：%s", authID)
 }

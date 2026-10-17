@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.5
+
+- 修复导入一个账号后面板出现两条完全相同记录。宿主有两条注册路径：`host.auth.save`
+  用文件相对路径派生 ID（带 `.json`），登录结果直接用 `AuthData.ID`。插件回传的 ID
+  不带后缀，同一个物理文件因此被登记成 `doubao-xxx` 与 `doubao-xxx.json` 两条记录。
+  现统一为宿主文件形态（`authFileNameOf`），`auth.parse` 也回传同名 ID；账号列表
+  另按 `AuthID` 去重，兜住旧版本已写进宿主的历史重复项。
+- 模型清单改为动态发现：新增 `model_discovery.go`，从 `/alice/basic/launch` 的
+  `model_list` 拉取账号真实模型（实测 67 条 / 26 个去重代号），与 4 个能力别名合并
+  后按账号返回。上游不可达时回落到能力别名并在面板显示原因，不会让目录变空。
+  缓存按账号隔离、10 分钟 TTL，面板提供「刷新模型清单」强制刷新。
+- 上游风控提示改为可操作文案：`710022004` 由 `shark_admin/verify/semantic_reasoning`
+  下发，同一 Cookie 换出口 IP、换设备标识、换深度思考参数都照样触发，而账号信息端点
+  仍返回 `success`——这不是网络抖动，等几分钟通常无效，只有换账号或等风控窗口解除。
+- `doubao/pro`（深度思考）的说明如实标注：当前与 `default` 发出的上游请求相同，
+  `need_deep_think` / `model_item_key` 的正确取值尚未验证（风控期无法做参数消融），
+  深度思考尚未真正生效。
+- 新增回归：`TestAuthDataIDMatchesHostFileName`、`TestListAllAuthFilesDedupesByAuthID`、
+  `TestDiscoverUpstreamModels`（含同名去重）、`TestCachedUpstreamModelsReusesPerAccount`
+  （缓存按账号隔离）、`TestModelForAuthMergesUpstreamAndAliases`、
+  `TestHandleModelsQueryFallsBackToAliases`；面板回归补回落提示与动态清单两阶段。
+
 ## 0.1.4
 
 - 登录桥接页不再要求管理密钥。0.1.3 的桥接页让浏览器直接请求

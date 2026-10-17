@@ -244,6 +244,33 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   checkTrue("迟到响应未写入弹窗", !document.getElementById("testModels").innerHTML.includes("doubao/late"));
   checkTrue("关闭后弹窗隐藏", !document.getElementById("testModal").classList.contains("show"));
 
+  // 阶段6：上游清单读不到时必须显示回落说明，否则用户会以为账号只有这几个模型。
+  console.log("阶段6 回落提示：");
+  route("/models", () => ({
+    models: ["doubao/default", "doubao/pro"],
+    source: "fallback",
+    notice: "未能读取上游模型清单（请求失败），当前显示插件内置能力别名",
+  }));
+  ctx.openTestModal("doubao-aaaa1111", "豆包主号");
+  await tick();
+  await tick();
+  const fallbackHTML = document.getElementById("testModels").innerHTML;
+  checkTrue("显示回落原因", fallbackHTML.includes("内置能力别名"));
+  checkTrue("回落时仍渲染模型按钮", (fallbackHTML.match(/data-model=/g) || []).length === 2);
+
+  // 阶段7：动态清单必须完整渲染上游代号，并提供刷新入口。
+  console.log("阶段7 上游动态清单：");
+  const upstreamModels = ["doubao/default", "doubao/pro", "doubao/ogt", "doubao/Aoe", "doubao/anceba"];
+  route("/models", () => ({ models: upstreamModels, source: "upstream" }));
+  ctx.openTestModal("doubao-aaaa1111", "豆包主号");
+  await tick();
+  await tick();
+  const upstreamHTML = document.getElementById("testModels").innerHTML;
+  check("渲染全部上游模型", (upstreamHTML.match(/data-model=/g) || []).length, upstreamModels.length);
+  checkTrue("上游代号完整展示", upstreamHTML.includes("doubao/ogt") && upstreamHTML.includes("doubao/anceba"));
+  checkTrue("提供刷新入口", upstreamHTML.includes("reloadModels"));
+  checkTrue("上游成功时无回落提示", !upstreamHTML.includes("内置能力别名"));
+
   if (failures.length) {
     console.log(`\n[结果] ${failures.length} 项失败`);
     failures.forEach((f) => console.log("   - " + f));

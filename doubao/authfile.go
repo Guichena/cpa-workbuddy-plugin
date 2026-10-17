@@ -266,20 +266,24 @@ func listHostAuthFiles() []*StoredAuth {
 }
 
 // listAllAuthFiles 列出所有有效账号（合并宿主与本地目录，按 AuthID 去重）。
+//
+// 去重键是账号标识而不是文件名：同一个物理文件可能被宿主以两种 ID 形态注册
+// （带 .json 的路径形态与插件回传的裸标识），旧版本因此让面板出现两条一模一样的
+// 账号。这里统一按 AuthID 收敛，保留先出现的那条。
 // [参数] 无。
 // [返回] 账号列表与错误。
-// 最近修改时间：2026-10-17；改动原因：新增，账号聚合读取入口。
+// 最近修改时间：2026-10-17；改动原因：宿主来源补去重，修复一个账号显示两条。
 func listAllAuthFiles() ([]*StoredAuth, error) {
-	seen := make(map[string]*StoredAuth)
-	var list []*StoredAuth
+	hostAccounts := dedupeAuthByID(listHostAuthFiles())
 
-	// 1. 宿主来源优先。
-	for _, sa := range listHostAuthFiles() {
+	seen := make(map[string]*StoredAuth, len(hostAccounts))
+	list := make([]*StoredAuth, 0, len(hostAccounts))
+	for _, sa := range hostAccounts {
 		seen[sa.AuthID] = sa
 		list = append(list, sa)
 	}
 
-	// 2. 本地目录补充。
+	// 本地目录补充。
 	dir := getAccountsDir()
 	authFilesMu.RLock()
 	entries, errReadDir := os.ReadDir(dir)
@@ -310,6 +314,30 @@ func listAllAuthFiles() ([]*StoredAuth, error) {
 	}
 	authFilesMu.RUnlock()
 	return list, nil
+}
+
+// dedupeAuthByID 按账号标识去重，保留首次出现的条目。
+//
+// 宿主同一物理文件可能以两种 ID 形态出现（路径形态带 .json、插件回传形态不带），
+// 两者账号标识相同。抽成独立函数是为了让这条收敛规则可被单测直接覆盖：
+// 宿主来源在测试环境不可用，无法通过 listAllAuthFiles 走到该分支。
+// [参数] accounts: 原始账号列表，允许含 nil。
+// [返回] 去重后的列表，顺序按首次出现。
+// 最近修改时间：2026-10-17；改动原因：新增，重复注册收敛。
+func dedupeAuthByID(accounts []*StoredAuth) []*StoredAuth {
+	seen := make(map[string]struct{}, len(accounts))
+	out := make([]*StoredAuth, 0, len(accounts))
+	for _, sa := range accounts {
+		if sa == nil {
+			continue
+		}
+		if _, exists := seen[sa.AuthID]; exists {
+			continue
+		}
+		seen[sa.AuthID] = struct{}{}
+		out = append(out, sa)
+	}
+	return out
 }
 
 // saveCredentials 校验并落盘一份导入的登录态凭据。

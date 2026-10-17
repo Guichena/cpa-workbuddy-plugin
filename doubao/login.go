@@ -212,15 +212,20 @@ func pruneExpiredLoginSessionsLocked() {
 //
 // StorageJSON 用账号文件的完整 JSON：宿主会原样写回 auth 目录，字段与插件
 // 自己落盘的一致（含 device_id 等业务 query 需要的标识）。
+//
+// ID 必须与宿主文件扫描派生的 ID 同形（相对 auth 目录的文件名，含 .json）：
+// 宿主有两条注册路径——host.auth.save 走 authIDForPath（含扩展名），
+// 登录结果走 AuthData.ID（原样使用）。两者不一致时同一个物理文件会被注册成
+// 两个 auth 记录，管理页与插件面板都会出现两条一模一样的账号。
 // [参数] sa: 账号。
 // [返回] AuthData。
-// 最近修改时间：2026-10-17；改动原因：新增，登录结果回传结构。
+// 最近修改时间：2026-10-17；改动原因：ID 改为带 .json 的文件名形态，消除重复注册。
 func authDataForLogin(sa *StoredAuth) pluginapi.AuthData {
 	storage, _ := json.Marshal(sa)
-	fileName := sa.AuthID + ".json"
+	fileName := authFileNameOf(sa.AuthID)
 	return pluginapi.AuthData{
 		Provider:    providerName,
-		ID:          sa.AuthID,
+		ID:          fileName,
 		FileName:    fileName,
 		Label:       sa.Label,
 		StorageJSON: storage,
@@ -231,6 +236,15 @@ func authDataForLogin(sa *StoredAuth) pluginapi.AuthData {
 			"mobile":      sa.Mobile,
 		},
 	}
+}
+
+// authFileNameOf 把账号标识规范成宿主 auth 目录下的文件名。
+// [参数] authID: 账号标识（可带或不带 .json 后缀）。
+// [返回] 形如 doubao-<hash>.json 的文件名。
+// 最近修改时间：2026-10-17；改动原因：新增，宿主注册 ID 与文件名统一口径。
+func authFileNameOf(authID string) string {
+	authID = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(authID), ".json"))
+	return authID + ".json"
 }
 
 // handleParseAuth 响应宿主 auth.parse。
@@ -257,7 +271,11 @@ func handleParseAuth(raw []byte) ([]byte, error) {
 	if sa.AuthID == "" {
 		sa.AuthID = strings.TrimSuffix(fileName, ".json")
 	}
-	return okEnvelope(pluginapi.AuthParseResponse{Handled: true, Auth: authDataForLogin(&sa)})
+	// 宿主扫描文件时已按相对路径派生过 ID（含 .json）。这里回传同形 ID，
+	// 否则同一次扫描会既登记路径 ID、又登记本函数返回的裸 ID。
+	auth := authDataForLogin(&sa)
+	auth.ID = fileName
+	return okEnvelope(pluginapi.AuthParseResponse{Handled: true, Auth: auth})
 }
 
 // handleRefreshAuth 响应宿主 auth.refresh。

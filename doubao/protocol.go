@@ -173,9 +173,14 @@ func (e *upstreamError) isRateLimit() bool {
 //
 // 码值来自实测与上游客户端行为：直接回显数字对用户没有意义，
 // 提示里写清「该查什么」。
+//
+// 710022004 的提示必须点明「账号级风控」而不是笼统的「稍后重试」：2026-10-17
+// 对照实测确认它由 shark_admin/verify/semantic_reasoning 下发，同一 Cookie 换
+// 出口 IP、换设备标识、换深度思考参数都照样触发，而账号信息端点仍返回 success。
+// 也就是说这不是网络抖动，等几分钟通常无效，只有换账号或等风控窗口解除。
 // [参数] code: 上游业务码；desc: 上游原始描述（可空）。
 // [返回] 中文提示。
-// 最近修改时间：2026-10-17；改动原因：新增，错误码映射。
+// 最近修改时间：2026-10-17；改动原因：限流提示改为可操作的账号级风控说明。
 func statusCodeHint(code int, desc string) string {
 	switch code {
 	case 0:
@@ -183,7 +188,7 @@ func statusCodeHint(code int, desc string) string {
 	case 710012001:
 		return "登录态已失效，请在面板重新导入 Cookie"
 	case 710022004, 710022005:
-		return "上游限流，请稍后重试"
+		return "账号触发上游风控（semantic_reasoning），非网络问题；该账号的推理请求被临时拦截，请换用其他账号或等待风控解除（账号信息与登录态本身仍有效）"
 	case 710020202:
 		return "上游拒绝了请求参数：请确认 Content-Type 为 application/json 且请求体结构完整"
 	case 710010202:

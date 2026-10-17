@@ -327,18 +327,27 @@ function closeTestModal() {
   document.getElementById("testModal").classList.remove("show");
 }
 
-async function loadTestModels(id) {
+async function loadTestModels(id, force) {
   const box = document.getElementById("testModels");
   try {
-    const data = await api("/models?auth_index=" + encodeURIComponent(id));
+    const url = "/models?auth_index=" + encodeURIComponent(id) + (force ? "&force=1" : "");
+    const data = await api(url);
     // 用户可能已关闭弹窗或换了账号，丢弃过期响应避免错投。
     if (testAuthID !== id) return;
     if (data && data.error) { box.innerHTML = '<div class="hint">' + esc(data.error) + '</div>'; return; }
     const models = (data && data.models) || [];
-    if (!models.length) { box.innerHTML = '<div class="hint">暂无可用模型</div>'; return; }
-    box.innerHTML = models.map(function (m) {
+    // 上游清单读不到时后端会回落到内置能力别名；把原因如实显示出来，
+    // 否则用户会以为账号真的只有这几个模型。
+    const notice = data && data.notice
+      ? '<div class="hint">' + esc(data.notice) + '</div>'
+      : "";
+    if (!models.length) { box.innerHTML = notice + '<div class="hint">暂无可用模型</div>'; return; }
+    box.innerHTML = notice + models.map(function (m) {
       return '<button type="button" data-model="' + esc(m) + '">' + esc(m) + '</button>';
-    }).join("");
+    }).join("") +
+      '<div class="hint"><button type="button" class="sec" id="reloadModels">刷新模型清单</button></div>';
+    const reload = document.getElementById("reloadModels");
+    if (reload) reload.addEventListener("click", function () { loadTestModels(id, true); });
   } catch (e) {
     if (testAuthID !== id) return;
     box.innerHTML = '<div class="hint">' + esc(e.message) + '</div>';

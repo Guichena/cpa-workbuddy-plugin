@@ -104,7 +104,7 @@ func TestRunActiveTestRejectsStreamError(t *testing.T) {
 		t.Fatalf("错误帧被误判为成功：%+v", res)
 	}
 	msg, _ := res["error"].(string)
-	if !strings.Contains(msg, "限流") {
+	if !strings.Contains(msg, "上游风控") {
 		t.Fatalf("错误提示应含可操作说明，实际 %q", msg)
 	}
 }
@@ -128,20 +128,39 @@ func TestRunActiveTestRejectsEmptyReply(t *testing.T) {
 	}
 }
 
-// TestHandleModelsQueryReturnsTextModels 校验测试模型列表只含对话类别名。
+// TestHandleModelsQueryFallsBackToAliases 校验上游不可达时回落到能力别名。
 //
-// 生图/生视频会真正触发上游生成：既耗额度又要等数十秒，且失败原因与账号
-// 不可用难区分，不应出现在活跃测试的候选里。
+// 上游模型清单需要真实账号凭据；这里把端点指向一个必然失败的地址，确保走的是
+// 回落路径。此时必须返回可用的能力别名并显式标注 source=fallback，而不是让弹窗空白。
+// 生图/生视频别名不在此列：它们会真正触发上游生成，既耗额度又要等数十秒，
+// 失败原因与账号不可用难区分。
 // [参数] t: 测试上下文。
 // [返回] 无。
-// 最近修改时间：2026-10-17；改动原因：新增，模型列表边界锁定。
-func TestHandleModelsQueryReturnsTextModels(t *testing.T) {
+// 最近修改时间：2026-10-17；改动原因：改为覆盖动态发现失败后的回落路径。
+func TestHandleModelsQueryFallsBackToAliases(t *testing.T) {
+	dir := isolateAccounts(t)
+	resetModelCache()
+	t.Cleanup(resetModelCache)
+	// 指向已关闭的本地端口，模拟上游不可达，避免误打真实上游。
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+	defer swapLaunchEndpoint(deadURL)()
+
+	writeLoginFixture(t, dir, "doubao-modeltest01", "模型测试号", time.Now().Format(time.RFC3339))
+
 	res := handleModelsQuery(pluginapi.ManagementRequest{
-		Query: map[string][]string{"auth_index": {"doubao-test"}},
+		Query: map[string][]string{"auth_index": {"doubao-modeltest01"}},
 	})
 	models, _ := res["models"].([]string)
 	if len(models) == 0 {
-		t.Fatalf("模型列表不应为空：%+v", res)
+		t.Fatalf("回落时模型列表不应为空：%+v", res)
+	}
+	if res["source"] != "fallback" {
+		t.Fatalf("上游不可达时应标注 fallback，实际 %+v", res)
+	}
+	if notice, _ := res["notice"].(string); !strings.Contains(notice, "能力别名") {
+		t.Fatalf("回落应说明当前显示的是能力别名，实际 %q", notice)
 	}
 	for _, m := range models {
 		if m == "doubao/image" || m == "doubao/video" {
@@ -150,6 +169,23 @@ func TestHandleModelsQueryReturnsTextModels(t *testing.T) {
 		if !strings.HasPrefix(m, modelIDPrefix) {
 			t.Fatalf("模型名必须带 doubao/ 前缀，实际 %q", m)
 		}
+	}
+}
+
+// TestHandleModelsQueryRejectsUnknownAccount 校验账号不存在时明确报错。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-17；改动原因：新增，动态发现需要先定位账号。
+func TestHandleModelsQueryRejectsUnknownAccount(t *testing.T) {
+	isolateAccounts(t)
+	resetModelCache()
+	t.Cleanup(resetModelCache)
+
+	res := handleModelsQuery(pluginapi.ManagementRequest{
+		Query: map[string][]string{"auth_index": {"doubao-doesnotexist"}},
+	})
+	if res["error"] == nil {
+		t.Fatalf("账号不存在时应报错，实际 %+v", res)
 	}
 }
 

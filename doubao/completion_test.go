@@ -351,7 +351,7 @@ func TestBuildBusinessQueryComplete(t *testing.T) {
 func TestStatusCodeHint(t *testing.T) {
 	cases := map[int]string{
 		710012001: "重新导入",
-		710022004: "限流",
+		710022004: "上游风控",
 		710020202: "Content-Type",
 		710010202: "重新导入账号",
 	}
